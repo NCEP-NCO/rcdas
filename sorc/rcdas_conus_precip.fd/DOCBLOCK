@@ -1,0 +1,105 @@
+C***********************************************************************
+C  PROGRAM:  PRECFORCE              MAKE PRECIP FORCING FIELDS FOR LDAS 
+C  PRGMMR:  MARSHALL                ORG:  W/NP20
+C
+C  ABSTRACT:  MERGE STAGE IV HOURLY PRECIP DATA (MULTISENSOR ANALYSES) 
+C  AND CPC DAILY TOTAL PRECIP (GAUGE ONLY) TO GENERATE HOURLY PRECIP
+C  FORCING FIELDS TO BE USED FOR FORCING THE LDAS.  HOURLY STAGE IV
+C  ESTIMATES ARE SUMMED OVER THE 24 HOUR PERIOD OF THE CPC ANALYSIS.  
+C  WEIGHTS ARE DERIVED FOR EACH HOUR BY FINDING THE FRACTION OF 24 H
+C  SUM OVER ALL HOURS. THESE HOURLY WEIGHTS, DERIVED ONLY FROM THE STAGE
+C  IV, ARE THEN MULTIPLIED BY THE CPC DAILY TOTAL TO "SPLIT OUR" HOURLY
+C  PRECIPITATION AMOUNTS.  NOTE THAT WHEN A STAGE IV DATA POINT IS    
+C  MISSING, IT IS REPLACED WITH ITS NEAREST NEIGHBOR, OUT TO 240 KM.  
+C  BEYOND THAT RANGE, EDAS HOURLY PRECIPS ARE USED.  PRACTICALLY, THIS
+C  MEANS AREAS OUTSIDE THE EDGE OF THE STAGE IV DOMAIN, BUT INSIDE THE 
+C  LDAS DOMAIN, ARE DOMINATED BY EDAS IN THE DERIVATION OF THE WEIGHTS.  
+C
+C  PROGRAM HISTORY LOG:
+C  99-01-21  MARSHALL  ORIGINAL CODING
+C  99-11-16  MARSHALL  ADDED STAGE IV ON LDAS GRID TO OUTPUT FILES
+C  02-02-01  LOHMANN   CHANGED TO PRIZM BASED PRECIP
+C  02-03-18  LOHMANN   CHANGED GRID on STAGE IV
+C  04-07-06  EBISUZAKI USE 3 HOURLY NDAS FILES
+C
+C  INPUT FILES
+C
+C    UNIT5  STDIN, LIST OF DATES
+C    UNIT09 OCEANMASK.GRB  
+C    UNIT11 NDAS 12Z 
+C    UNIT14 NDAS 15Z
+C    UNIT17 NDAS 18Z
+C    UNIT20 NDAS 21Z
+C    UNIT23 NDAS 00Z (NEXT DAY)
+C    UNIT26 NDAS 03Z (NEXT DAY)
+C    UNIT29 NDAS 06Z (NEXT DAY)
+C    UNIT31 NDAS 09Z (NEXT DAY)
+C    UNIT35-58 STAGE IV PRECIP 
+C    UNIT08 DAILY GAUGE PRECIP FOR CONUS (BINARY)
+C
+C  OUTPUT FILES
+C
+C    UNIT60-83 GRIB CONUS PRECIP
+C
+C  SUBPROGRAMS CALLED:
+C     MAKGDS
+C     BAOPEN, BAOPENR
+C     BACLOSE
+C     GETGB
+C     PUTGB
+C     IPOLATES
+C
+C   EXIT STATES:
+C     COND =   0 - SUCCESSFUL RUN
+C
+C   REMARKS:
+C
+C ATTRIBUTES:
+C   LANGUAGE: STANDARD FORTRAN 90
+C$$$
+C***********************************************************************
+
+Dimensions of input data:
+
+      PARAMETER (NLDAS = 103936, NX = 464, NY = 224, BOUND=16,
+     +             NSTAGE4 = 987601, NNDAS=185*129)
+C
+        REAL EDAS(NLDAS), S4IN(NSTAGE4), S4OUT(NLDAS), RLAT(NLDAS),
+     +       RLON(NLDAS), S42DTEMP(NX,NY), EDAS2D(NX,NY), S42D(NX,NY),
+     +       S4(24,NLDAS), LSUM(NLDAS), WEIGHT(24,NLDAS), CPC(NLDAS),
+     +       HOURPREC(NLDAS), WEIGHTSUM(NLDAS),
+     +       CPCTMP(NX,NY), WTSUMTMP(NX,NY), WT2DTMP(24,NX,NY),
+     +       WT2D(24,NX,NY), NDAS(NNDAS)
+C
+        LOGICAL*1 OCEANMASK(NLDAS), LB(NSTAGE4), LO(NLDAS),
+     +            MASKTEMP(NX,NY), FOUND,
+     +            NDASMASK(NNDAS), EDASMASK(NLDAS)
+
+wgrib -V gauge_precip.20140707.grb.ldas
+rec 1:0:date 2014070712 PRATE kpds5=59 kpds6=1 kpds7=0 levels=(0,0) grid=255 sfc 0-1d ave: bitmap: 49432 undef
+  PRATE=Precipitation rate [kg/m^2/s]
+  timerange 3 P1 0 P2 1 TimeU 2  nx 464 ny 224 GDS grid 0 num_in_ave 0 missing 0
+  center 7 subcenter 0 process 0 Table 2 scan: WE:SN winds(N/S) 
+  latlon: lat  25.063000 to 52.938000 by 0.125000  nxny 103936
+          long -124.938000 to -67.063000 by 0.125000, (464 x 224) scan 64 mode 128 bdsgrid 1
+  min/max data 0 0.0010293  num bits 14  BDS_Ref 0  DecScale 7 BinScale 0
+
+Stage IV data after WCOSS conversion -- num grid points unchanged .. assume same grid
+ wgrib -V  ST2gg2014070707.Grb
+rec 1:0:date 2014070706 APCP kpds5=61 kpds6=1 kpds7=0 levels=(0,0) grid=255 sfc 0-1hr acc: bitmap: 525674 undef
+  APCP=Total precipitation [kg/m^2]
+  timerange 4 P1 0 P2 1 TimeU 1  nx 1121 ny 881 GDS grid 5 num_in_ave 0 missing 0
+  center 7 subcenter 4 process 152 Table 2 scan: WE:SN winds(grid) 
+  polar stereo: Lat1 23.117000 Long1 -119.023000 Orient -105.000000
+     north pole (1121 x 881) Dx 4763 Dy 4763 scan 64 mode 8
+  min/max data 0 23.9  num bits 8  BDS_Ref 0  DecScale 1 BinScale 0
+
+wgrib -V NDAS.2014070709 
+rec 1:0:date 2014070709 APCP kpds5=61 kpds6=1 kpds7=0 levels=(0,0) grid=212 sfc 0-3hr acc:
+  APCP=Total precipitation [kg/m^2]
+  timerange 4 P1 0 P2 3 TimeU 1  nx 185 ny 129 GDS grid 3 num_in_ave 0 missing 0
+  center 7 subcenter 0 process 84 Table 2 scan: WE:SN winds(grid) 
+  Lambert Conf: Lat1 12.190000 Lon1 -133.459000 Lov -95.000000
+      Latin1 25.000000 Latin2 25.000000 LatSP 0.000000 LonSP 0.000000
+      North Pole (185 x 129) Dx 40.635000 Dy 40.635000 scan 64 mode 8
+  min/max data 0 13  num bits 7  BDS_Ref 0  DecScale 0 BinScale -3

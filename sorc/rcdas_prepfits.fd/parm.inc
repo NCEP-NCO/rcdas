@@ -1,0 +1,7 @@
+	PARAMETER (ilim = 350,jlim = 280,maxlev = 39)
+	PARAMETER (itot = ilim*jlim)
+	PARAMETER (mbuf = 2000000,jf = 1000000)
+	PARAMETER (msk1 = 32000,msk2 = 4000)
+ 	PARAMETER (mxr = 13000,mxl = 39,mxb = 12)
+C	PARAMETER (mxr = 13000,mxl = 20,mxb = 1)
+	PARAMETER (factor = 3.1415926 / 180.0)

@@ -1,0 +1,2379 @@
+Page 1           Source Listing                  SURFCE
+2022-02-15 16:37                                 /tmp/ifortArG5PR.i
+
+      1 # 1 "SURFCE.F"
+      2            SUBROUTINE SURFCE(APE,ZINT,CKLQ)
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .
+      5 C SUBPROGRAM:    SURFCE      CALCULATE SURFACE CONDITIONS
+      6 C   PRGRMMR: JANJIC  ORG: W/NP22     DATE: 95-03-23
+      7 C
+      8 C ABSTRACT:
+      9 C   THIS ROUTINE IS THE DRIVER FOR COMPUTATION OF GROUND
+     10 C   CONDITIONS.  FOR GCIP, ACCUMULATOR AND OTHER
+     11 C   INSTANTANEOUS HOLDING ARRAYS ARE INCLUDED.
+     12 C
+     13 C PROGRAM HISTORY LOG:
+     14 C   95-03-23  JANJIC - ORIGINATOR
+     15 C   95-03-28  BLACK  - CONVERSION FROM 1-D TO 2-D IN HORIZONTAL
+     16 C   96-03-29  BLACK  - REMOVED SCRCH COMMON
+     17 C   12-11-14  EBISUZAKI INITIALIZE IERR1 and IERR2
+     18 C
+     19 C USAGE:    CALL SURFCE FROM SUBROUTINE TURBL
+     20 C   INPUT ARGUMENT LIST:
+     21 C     APE  - EXNER FUNCTION
+     22 C     ZINT - INTERFACE HEIGHTS
+     23 C     CKLQ - MASK VALUE
+     24 C
+     25 C   OUTPUT ARGUMENT LIST:
+     26 C     NONE
+     27 C
+     28 C   OUTPUT FILES:
+     29 C     NONE
+     30 C
+     31 C   SUBPROGRAMS CALLED:
+     32 C     SFLX
+     33 C
+     34 C     UTILITIES:
+     35 C       NONE
+     36 C     LIBRARY:
+     37 C       COMMON   - CTLBLK
+     38 C                  LOOPS
+     39 C                  MASKS
+     40 C                  PHYS
+     41 C                  VRBLS
+     42 C                  PVRBLS
+     43 C                  SOIL
+     44 C                  ACMSFC
+     45 C                  ACMPRE
+     46 C                  ACMRDS
+     47 C                  ACMRDL
+     48 C                  OPTIONS
+     49 C
+     50 C
+     51 C   ATTRIBUTES:
+     52 C     LANGUAGE: FORTRAN 90
+     53 C     MACHINE : IBM SP
+     54 C$$$
+     55 C
+     56 C     SET LOCAL PARAMETERS.
+     57 C-----------------------------------------------------------------------
+
+Page 2           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+     58                           P A R A M E T E R
+     59      & (EPSWET=.001
+     60      &, PQ0=379.90516,SEAFC=.98,TRESH=.95
+     61      &, A2=17.2693882,A3=273.16,A4=35.86
+     62      &, T0=273.16,T1=274.16,CAPA=0.28589641
+     63      &, CP=1004.6,STBOL=5.67E-8,R=287.04,ROW=1.E3
+     64      &, ELWV=2.50E6,ELIV=2.834E6,ELIW=.334E6)
+     65 C
+     66                           P A R A M E T E R
+     67      & (A23M4=A2*(A3-A4),PQ0SEA=PQ0*SEAFC,PQ0C=PQ0*TRESH
+     68      &, RLIVWV=ELIV/ELWV,ROWLIW=ROW*ELIW,ROWLIV=ROW*ELIV)
+     69 C-----------------------------------------------------------------------
+     70 C***  INCLUDE GLOBAL PARAMETERS.
+     71 C-----------------------------------------------------------------------
+     72       INCLUDE "parmeta"
+     95       INCLUDE "parm.tbl"
+     97       INCLUDE "parmsoil"
+     99       INCLUDE "mpp.h"
+    100 # 1 "./sp.h" 1 
+    101 # 4
+    102 
+    103 # 76 "SURFCE.F" 2 
+    104 C-----------------------------------------------------------------------
+    105 C***  SET LOCAL PARAMETERS DEPENDENT ON GLOBAL PARAMETERS.
+    106 C-----------------------------------------------------------------------
+    165                           P A R A M E T E R
+    166      & (LP1=LM+1,JAM=6+2*(JM-10))
+    167 C-----------------------------------------------------------------------
+    168                           L O G I C A L
+    169      & RUN,FIRST,RESTRT,SIGMA
+    170 C-----------------------------------------------------------------------
+    171                           D I M E N S I O N
+    172      & ZLM   (idim1:idim2,jdim1:jdim2)
+    173      &,PS    (idim1:idim2,jdim1:jdim2),APES  (idim1:idim2,jdim1:jdim2)
+    174      &,ETALM (idim1:idim2,jdim1:jdim2),PLM   (idim1:idim2,jdim1:jdim2)
+    175      &,APELM (idim1:idim2,jdim1:jdim2),RDSIN (idim1:idim2,jdim1:jdim2)
+    176      &,TLM   (idim1:idim2,jdim1:jdim2),THLM  (idim1:idim2,jdim1:jdim2)
+    177      &,QLM   (idim1:idim2,jdim1:jdim2),QLMS  (idim1:idim2,jdim1:jdim2)
+    178      &,DQSDT (idim1:idim2,jdim1:jdim2)
+    179      &,CKLQ  (idim1:idim2,jdim1:jdim2)
+    180      &,FFS   (idim1:idim2,jdim1:jdim2),QFC1  (idim1:idim2,jdim1:jdim2)
+    181      &,APE   (idim1:idim2,jdim1:jdim2,LM)
+    182      &,ZINT  (idim1:idim2,jdim1:jdim2,LP1)
+    183 C-----------------------------------------------------------------------
+    184                           D I M E N S I O N
+    185 c Ek 18 Jan 2000 - add SH2OK array
+    186      & SMCK  (NSOIL),STCK  (NSOIL), SH2OK  (NSOIL)
+    187 C-----------------------------------------------------------------------
+    188 C
+    189 c Ek 10 Feb 2000 - add declarations
+    190 C DECLARATIONS
+    191 C
+    192       LOGICAL LFIRST
+    193       LOGICAL LFIRSTa
+    194 C
+    195       INTEGER ICE
+    196       INTEGER ISLTPK
+
+Page 3           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    197       INTEGER IVGTPK
+    198 C 12-12 WNE defined in parmsoil      INTEGER NSOIL
+    199       INTEGER ISPTPK
+    200 C
+    201       REAL ALB
+    202       REAL ALB2D
+    203       REAL ALBASE
+    204       REAL ALBEDO
+    205       REAL DQSDTK
+    206       REAL DTK
+    207       REAL CHK
+    208       REAL CMCK
+    209       REAL ELFLX
+    210       REAL GFLX
+    211       REAL HFLX
+    212       REAL LWDN
+    213 Cdule      REAL MXSNAL
+    214       REAL PLFLX
+    215       REAL PRCP
+    216       REAL PTU
+    217       REAL Q1K
+    218       REAL Q2K
+    219       REAL Q2SAT
+    220       REAL RNOF1K
+    221       REAL RNOF2K
+    222       REAL SFCPRS
+    223       REAL SFCSPD
+    224       REAL SFCTH2
+    225       REAL SFCTMP
+    226       REAL SH2OK
+    227       REAL SI
+    228       REAL SLDPTH
+    229       REAL SMCK
+    230       REAL SMELTK
+    231       REAL SNDENS
+    232       REAL SNO
+    233       REAL SNOALB
+    234       REAL SNODPK
+    235       REAL SNOWH
+    236       REAL SOILQM
+    237       REAL SOILQW
+    238       REAL SOLDN
+    239       REAL STCK
+    240       REAL T1K
+    241       REAL TBOT
+    242       REAL VGFRCK
+    243       REAL Z
+    244 C-----------------------------------------------------------------------
+    245 C***  INCLUDE COMMON BLOCKS.
+    246 C***     COMMON BLOCKS SOIL, ACMPRE, ACMSFC WERE ADDED FOR GCIP.
+    247 C***     COMMON BLOCK OPTIONS WAS ADDED FOR THE POST.
+    248 C-----------------------------------------------------------------------
+    249       INCLUDE "CTLBLK.comm"
+    250 C-----------------------------------------------------------------------
+    260       INCLUDE "LOOPS.comm"
+    261 C-----------------------------------------------------------------------
+    268       INCLUDE "MASKS.comm"
+
+Page 4           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    269 C-----------------------------------------------------------------------
+    280       INCLUDE "PHYS.comm"
+    281 C-----------------------------------------------------------------------
+    309       INCLUDE "VRBLS.comm"
+    310 C-----------------------------------------------------------------------
+    320       INCLUDE "PVRBLS.comm"
+    321 C-----------------------------------------------------------------------
+    351       INCLUDE "SOIL.comm"
+    352 C-----------------------------------------------------------------------
+    365       INCLUDE "ACMPRE.comm"
+    366 C-----------------------------------------------------------------------
+    373       INCLUDE "ACMSFC.comm"
+    374 C-----------------------------------------------------------------------
+    384       INCLUDE "ACMRDS.comm"
+    385 C-----------------------------------------------------------------------
+    394       INCLUDE "ACMRDL.comm"
+    395 C-----------------------------------------------------------------------
+    404       INCLUDE "OPTIONS.comm"
+    405 C-----------------------------------------------------------------------
+    447                           C H A R A C T E R 
+    448      &  WORD*80
+    449       DATA    LFIRST /.TRUE./
+    450 C     DATA    LFIRST /.FALSE./
+    451       DATA    LFIRSTa /.TRUE./
+    452 C***********************************************************************
+    453 C                         START SURFCE HERE
+    454 C
+    455 C
+    456 C***  initial ize errors WNE 2012-11
+    457       IERR1 = 0
+    458       IERR2 = 0
+    459 
+    460 C***  INITIALIZE SOME WORKING ARRAYS
+    461 C
+    462       CALL ZERO2(QLM)
+    463       CALL ZERO2(QLM)
+    464       CALL ZERO2(QLMS)
+    465 C***
+    466 C***  SET CONSTANTS CALCULATED HERE FOR CLARITY.
+    467 C***
+    468       FDTLIW=DTQ2/ROWLIW
+    469       FDTLIV=DTQ2/ROWLIV
+    470       FDTW=DTQ2/2.5E9
+    471 C***
+    472 C***  SET NOAH LSM CONSTANTS AND TIME INDEPENDENT VARIABLES
+    473 C***  INITIALIZE NOAH LSM HISTORICAL VARIABLES
+    474 C***
+    475 C-----------------------------------------------------------------------
+    476       IF(NTSD.LT.NPHS)THEN
+    477 !$omp parallel do private(i,j)
+    478         DO 50 J=MYJS,MYJE
+    479         DO 50 I=MYIS,MYIE
+    480         PS(I,J)=PD(I,J)+PT
+    481         APES(I,J)=(1.E5/PS(I,J))**CAPA
+    482         PCTSNO(I,J)=-999.0
+    483 
+    484 C
+
+Page 5           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    485 C ----------------------------------------------------------------------
+    486 C Set default values for sea-ice or ocean states
+    487 C open ocean, SM=1
+    488 C sea-ice, SM=0, SICE=1
+    489 C land, SM=0, SICE=0
+    490 C*** SET ZERO-VALUE FOR SOME OUTPUT DIAGNOSTIC ARRAYS
+    491         IF(SM(I,J).LT.0.5)THEN
+    492           IF(SICE(I,J).GT.0.5) THEN
+    493 C***        SEA-ICE CASE
+    494             SMSTAV(I,J)=1.0
+    495             SMSTOT(I,J)=1.0
+    496             SSROFF(I,J)=0.0
+    497             BGROFF(I,J)=0.0
+    498             CMC(I,J)=0.0
+    499             DO NS=1,NSOIL
+    500               SMC(I,J,NS)=1.0
+    501               SH2O(I,J,NS)=1.0
+    502             ENDDO
+    503           ENDIF
+    504         ELSE
+    505 C***       Water Case
+    506           SMSTAV(I,J)=1.0
+    507           SMSTOT(I,J)=1.0
+    508           SSROFF(I,J)=0.0
+    509           BGROFF(I,J)=0.0
+    510           SOILTB(I,J)=280.99
+    511           GRNFLX(I,J)=0.
+    512           SUBSHX(I,J)=0.0
+    513           ACSNOW(I,J)=0.0
+    514           ACSNOM(I,J)=0.0
+    515           SNOPCX(I,J)=0.0
+    516           CMC(I,J)=0.0
+    517           SNO(I,J)=0.0
+    518 c add SI (snow depth), ^^^SNO=snow water equivalent
+    519           SI(I,J)=0.0
+    520           DO NS=1,NSOIL
+    521             SMC(I,J,NS)=1.0
+    522             SH2O(I,J,NS)=1.0
+    523             STC(I,J,NS)=273.16
+    524           ENDDO
+    525         ENDIF
+    526 C
+    527    50   CONTINUE
+    528       ENDIF
+    529 C-----------------------------------------------------------------------
+    530 C***
+    531 C***  SET LOWEST MODEL LAYER VARIABLES.
+    532 C***
+    533 !$omp parallel do private(i,j,llmh)
+    534       DO 100 J=MYJS2,MYJE2
+    535       DO 100 I=MYIS,MYIE
+    536       LLMH=LMH(I,J)
+    537       ETALM(I,J)=AETA(LLMH)
+    538       APELM(I,J)=APE(I,J,LLMH)
+    539       TLM(I,J)=T(I,J,LLMH)
+    540       QLM(I,J)=Q(I,J,LLMH)
+    541       ZLM(I,J)=(ZINT(I,J,LLMH)-ZINT(I,J,LLMH+1))*0.50
+
+Page 6           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    542   100 CONTINUE
+    543 C
+    544 !$omp parallel do private(i,j)
+    545       DO 110 J=MYJS2,MYJE2
+    546       DO 110 I=MYIS,MYIE
+    547       PS(I,J)=PD(I,J)+PT
+    548       APES(I,J)=(1.E5/PS(I,J))**CAPA
+    549       PLM(I,J)=ETALM(I,J)*PD(I,J)*RES(I,J)+PT
+    550       QLMS(I,J)=((1.-SM(I,J))*PQ0+SM(I,J)*PQ0SEA)
+    551      1           /PLM(I,J)*EXP(A2*(TLM(I,J)-A3)/(TLM(I,J)-A4))
+    552       DQSDT(I,J)=QLMS(I,J)*A23M4/(TLM(I,J)-A4)**2
+    553       FFSK=AKHS(I,J)*PLM(I,J)*HBM2(I,J)/((QLM(I,J)*.608+1.)*TLM(I,J)*R)
+    554       QFC1(I,J)=APES(I,J)*FFSK*ELWV
+    555       FFS(I,J)=FFSK*CP
+    556   110 CONTINUE
+    557 C-----------------------------------------------------------------------
+    558 !$omp parallel do private(i,j,factrs,factrl,tlmh)
+    559       DO 120 J=MYJS2,MYJE2
+    560       DO 120 I=MYIS,MYIE
+    561 C***
+    562 C***  COMPUTE RADIN AND RDSIN FOR THIS TIMESTEP
+    563 C***  CZEN IS IN PHYS COMMON AND IS CURRENT FROM CALL TO RDTEMP
+    564 C***
+    565       IF(CZMEAN(I,J).GT.0.)THEN
+    566         FACTRS=CZEN(I,J)/CZMEAN(I,J)
+    567       ELSE
+    568         FACTRS=0.
+    569       ENDIF
+    570 C
+    571       IF(SIGT4(I,J).GT.0.)THEN
+    572         TLMH=TLM(I,J)
+    573         FACTRL=STBOL*TLMH*TLMH*TLMH*TLMH/SIGT4(I,J)
+    574       ELSE
+    575         FACTRL=0.
+    576       ENDIF
+    577 C
+    578 c Ek 10 feb 2000 - RADIN no longer needed in SFLX (via FK)
+    579 c now use RADIN array for incoming longwave
+    580 c perhaps change the name later to e.g. RDLIN for consistency
+    581 c      RADIN(I,J)=((RSWIN(I,J)-RSWOUT(I,J))*FACTRS+
+    582 c     &            RLWIN(I,J)*FACTRL)*HBM2(I,J)
+    583 c     if(i.eq.25.and.j.eq.31.and.mype.eq.1) then
+    584 c       print*,'RLWIN,FACTRL,HBM2=',rlwin(i,j),factrl,hbm2(i,j)
+    585 c     endif
+    586       RADIN(I,J)= RLWIN(I,J)*FACTRL*HBM2(I,J)
+    587       RDSIN(I,J)= RSWIN(I,J)*FACTRS*HBM2(I,J)
+    588 C***
+    589 C***  DIAGNOSTIC RADIATION ACCUMULATION
+    590 C***
+    591       ASWIN (I,J)=ASWIN (I,J)+RSWIN (I,J)*HBM2(I,J)*FACTRS
+    592       ASWOUT(I,J)=ASWOUT(I,J)-RSWOUT(I,J)*HBM2(I,J)*FACTRS
+    593       ASWTOA(I,J)=ASWTOA(I,J)+RSWTOA(I,J)*HBM2(I,J)*FACTRS
+    594       ALWIN (I,J)=ALWIN (I,J)+RLWIN (I,J)*HBM2(I,J)*FACTRL
+    595       ALWOUT(I,J)=ALWOUT(I,J)-RADOT (I,J)*HBM2(I,J)
+    596       ALWTOA(I,J)=ALWTOA(I,J)+RLWTOA(I,J)*HBM2(I,J)
+    597 C***
+    598 C***  CHECK FOR SATURATION AT THE LOWEST MODEL LEVEL
+
+Page 7           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    599 C***
+    600       IF((QLM(I,J).GE.QLMS(I,J)*TRESH).AND.(QLM(I,J).LT.QZ0(I,J)))THEN
+    601         CKLQ(I,J)=0.
+    602       ELSE
+    603         CKLQ(I,J)=HBM2(I,J)
+    604       ENDIF
+    605  120  CONTINUE
+    606 C-----------------------------------------------------------------------
+    607 C***
+    608 C***  THS, THLM, CHEATING WET FOR PROFS
+    609 C***
+    610 !$omp parallel do private(i,j)
+    611       DO 130 J=MYJS2,MYJE2
+    612       DO 130 I=MYIS,MYIE
+    613       THLM(I,J)=TLM(I,J)*APELM(I,J)
+    614       QFC1(I,J)=QFC1(I,J)*CKLQ(I,J)
+    615   130 CONTINUE
+    616 C
+    617 c Ek 10 feb 2000 - update these private statements
+    618 c add new variables:  alb2d,snoalb,alb,ISPTPK
+    619 c remove old variables no longer needed:
+    620 C
+    621 !!$omp parallel do
+    622 !!$omp&  private(chk,chkff,cmck,dqsdtk,dtk,elflx,fk,gflx)
+    623 !!$omp&  private (hflx,i,ice,isltpk,ivgtpk,j,ns,plflx,prcp)
+    624 !!$omp&  private (q1k,q2k,q2sat,rnof1k,rnof2k,satflg,scheck)
+    625 !!$omp&  private (sfcprs,sfcth2,sfctmp,smck,smeltk,snodpk)
+    626 !!$omp&  private (soilqm,soilqw,soldn,stck,t1k,tbot,vgfrck,z)
+    627 c Ek 10 feb 2000 - private statements
+    628 c add new variables
+    629 c remove old variables no longer needed later
+    630 !!$omp&  private (lwdn,sh2ok,alb2d,snoalb,alb,ISPTPK,snowh)
+    631 C
+    632 C Ek 18 jan 2000 - temporarily set ISPTPK=1 (2-D fixed field: x,y)
+    633 c comes from ISLSCP data set 2-d fixed field
+    634         ISPTPK=1
+    635 C ----------------------------------------------------------------------
+    636 C Begin main 'workhorse' loop over entire model domain
+    637 C ----------------------------------------------------------------------
+    638       DO 160 J=MYJS2,MYJE2
+    639       DO 155 I=MYIS,MYIE
+    640 C ----------------------------------------------------------------------
+    641       IF(HBM2(I,J).LT.0.5)GO TO 155
+    642 c Check to see that when ocean, ALBASE=ALBEDO=0.06,MXSNAL=0,
+    643       IF (SM(I,J) .GT. 0.5) THEN
+    644           IF ((ALBASE(I,J) .NE. 0.0) .OR.
+    645      .       (ALBEDO(I,J) .LT. 0.059) .OR.
+    646      .       (ALBEDO(I,J) .GT. 0.061) .OR.
+    647      .       (MXSNAL(I,J) .NE. 0.0) ) THEN	    
+    648             WRITE(6,*)'ALBo:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+    649      .      I,J,MYPE,ICE,SNO(I,J),ALBASE(I,J),ALBEDO(I,J),MXSNAL(I,J)   
+    650 	    IERR1=1
+    651           ENDIF
+    652       ENDIF
+    653 C ----------------------------------------------------------------------
+    654       IF(SM(I,J).GT.0.5)THEN
+    655         THS(I,J)=SST(I,J)*APES(I,J)
+
+Page 8           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    656         QS(I,J)=HBM2(I,J)*PQ0SEA/PS(I,J)
+    657      1         *EXP(A2*(THS(I,J)-A3*APES(I,J))/(THS(I,J)-A4*APES(I,J)))
+    658       ENDIF
+    659 C ----------------------------------------------------------------------
+    660 C Land or sea-ice
+    661 C ----------------------------------------------------------------------
+    662 C***
+    663 C***  LOADING AND UNLOADING NOAH LSM LAND SOIL VARIABLES
+    664 C***
+    665       IF(SM(I,J).LT.0.5)THEN
+    666 c        ICE=INT(SICE(I,J)+0.3)
+    667         ICE=NINT(SICE(I,J))
+    668 c Ek 10 feb 2000 - SATFLG no longer needed in SFLX
+    669 c        SATFLG=CKLQ(I,J)
+    670 C
+    671        DTK=DTQ2
+    672         Z=ZLM(I,J)
+    673 c Ek 10 feb 2000 - FK no longer needed in SFLX
+    674 c        FK=RADIN(I,J)
+    675 c Ek 18 jan 2000 - add longwave radiation calc needed for call SFLX
+    676         LWDN=RADIN(I,J)
+    677         SOLDN=RDSIN(I,J)
+    678         SFCPRS=PLM(I,J)
+    679         PRCP=PREC(I,J)*ROW/DTQ2
+    680         Q2K=QLM(I,J)
+    681         Q2SAT=QLMS(I,J)
+    682 C ----------------------------------------------------------------------
+    683 C Q2K may slightly exceed Q2SAT in some cases due to atmospheric physics
+    684 C parameterizations previously called
+    685         IF (Q2K .GT. Q2SAT) Q2K=Q2SAT
+    686         DQSDTK=DQSDT(I,J)
+    687         TBOT=TG(I,J)
+    688         CHK=AKHS(I,J)
+    689         CHKFF=FFS(I,J)
+    690         IVGTPK=IVGTYP(I,J)
+    691         ISLTPK=ISLTYP(I,J)
+    692 C  MEB  PREVENT ROUTINES IN SFLX FROM GOING OUT OF BOUNDS
+    693         IF (IVGTPK.EQ.0) IVGTPK=13
+    694         IF (ISLTPK.EQ.0) ISLTPK=9
+    695 C  MEB  PREVENT ROUTINES IN SFLX FROM GOING OUT OF BOUNDS
+    696         VGFRCK=VEGFRC(I,J)
+    697         Q1K=QS(I,J)
+    698         SFCTMP=THLM(I,J)/APELM(I,J)
+    699         SFCTH2=THLM(I,J)/APES(I,J)
+    700         T1K=THS(I,J)/APES(I,J)
+    701         CMCK=CMC(I,J)
+    702         SNODPK=SNO(I,J)
+    703 c use 2-d prognostic field of snowdepth, SI(x,y) for
+    704 C SNOWH (local snowdepth variable)
+    705 C Ek 17 Jan 2001
+    706         SNOWH=SI(I,J)
+    707 C
+    708         DO 140 NS=1,NSOIL
+    709           SMCK(NS)=SMC(I,J,NS)
+    710 c         print*,'i,j,ns,smc(i,j,ns),smck(ns)=',
+    711 c    *       i,j,ns,smc(i,j,ns),smck(ns)
+    712 C use 3-d prognostic field of liquid soil moisture, SH2O(x,y,4) for
+
+Page 9           Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    713 C SH2OK(NS) (local liquid soil moisture variable)
+    714 C Ek 11 Jan 2001
+    715           SH2OK(NS)=SH2O(I,J,NS)
+    716 c          print*,'mype,i,j,ns,sh2ok=',mype,i,j,ns,sh2ok(ns)
+    717 C
+    718           STCK(NS)=STC(I,J,NS)
+    719 c         if(mype.eq.13) then
+    720 c          print*,'i,j,ns,stc(i,j,ns)=',i,j,ns,stc(i,j,ns)
+    721 c         endif
+    722   140   CONTINUE
+    723 C
+    724 c OLD CALL SFLX
+    725 C-----------------------------------------------------------------------
+    726 c        CALL SFLX
+    727 c     &     (ICE   ,SATFLG,DTK   ,Z, NSOIL, NROOT, SLDPTH
+    728 c     &,     FK    ,SOLDN ,SFCPRS,PRCP  ,SFCTMP,SFCTH2
+    729 c     &,     Q2K   ,Q2SAT ,DQSDTK,TBOT  ,CHK,   CHKFF
+    730 c     &,     IVGTPK,ISLTPK,VGFRCK
+    731 c     &,     PLFLX ,ELFLX ,HFLX  ,GFLX  ,RNOF1K,RNOF2K
+    732 c     &,     Q1K   ,SMELTK,T1K   ,CMCK  ,SMCK  ,STCK  ,SNODPK
+    733 c     &,     SOILQW,SOILQM )
+    734 C-----------------------------------------------------------------------
+    735 C
+    736 C Ek 18 jan 2000 - temporarily set ISPTPK=1 (2-D fixed field: x,y)
+    737 c comes from ISLSCP data set 2-d fixed field
+    738 c        ISPTPK=1
+    739 C SNOALB (fixed value, max snow albedo) from MXSNAL
+    740 c via 2-d fixed field from David Robinson
+    741         SNOALB=MXSNAL(I,J)
+    742 C ALB (fixed value, snow-free albedo) from ALBASE
+    743 C via 2-d fixed field from Matthews
+    744         ALB=ALBASE(I,J)
+    745 C Set dynamic albedo from the dynamic albedo 2-d array, which is updated
+    746 C only for the land in SFLX, not for sea-ice, so we must 'pass through'
+    747 C ALB2D=0.60 for sea-ice.
+    748 C turn this off, and instead, do it within SFLX
+    749 c        ALB2D=ALBEDO(I,J)
+    750 C
+    751 C ----------------------------------------------------------------------
+    752 c Initial range check for variables/parameters for entire I,J domain for
+    753 C first timestep (when LFIRST=true).  Set LFIRST=false after end of the
+    754 C 155/160 loop.
+    755 
+    756       IF (LFIRST) THEN
+    757 c      IF ( (LFIRST)            .OR.
+    758 c     .     (NTSD .EQ.       2) .OR.
+    759 c     .     (NTSD .EQ.       3) .OR.
+    760 c     .     (NTSD .EQ. NTSTM/2) .OR.
+    761 c     .     (NTSD .EQ.   NTSTM) ) THEN
+    762 C ----------------------------------------------------------------------
+    763 C land OR sea-ice checks
+    764 C land checks first
+    765         IF (ICE .LT. 0.5) THEN
+    766 C ----------------------------------------------------------------------
+    767 C albedo checks
+    768 C ALB = ALBASE(I,J)  = snow free albedo
+    769 C   min = 0.11 (Matthews data base)
+
+Page 10          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    770 C   max = 0.80 (Matthews data base)
+    771 C ALBEDO(I,J) = dynamic albedo (=ALBASE when SNODPK=0)
+    772 C  (=ALB2D on return from SFLX)
+    773 C SNOALB = MAXSNAL(I,J) = maximum snow albedo
+    774 C   min = 0.21 (Robinson data base)
+    775 C   max = 0.75 (Robinson data base)
+    776           IF ( (ALB         .GT.(SNOALB+0.051)) .OR.
+    777      .         (ALB         .GT.(ALBEDO(I,J)+0.051)) .OR.
+    778      .         (ALBEDO(I,J) .GT.(SNOALB+0.051)     ) ) THEN
+    779             write(6,*)'ALBl1:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+    780      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+    781            IERR1=1
+    782           ENDIF
+    783           IF ( (ALB    .LT. 0.10) .OR.
+    784      .         (ALB    .GT. 0.81) .OR.
+    785      .         (SNOALB .LT. 0.20) .OR.
+    786      .         (SNOALB .GT. 0.81) ) THEN
+    787             write(6,*)'ALBl2:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+    788      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+    789            IERR1=1
+    790           ENDIF
+    791 C ----------------------------------------------------------------------
+    792 C Veg,soil,slope type, veg fraction, No. soil layers checks
+    793           IF ( ( (IVGTPK .LT. 1) .OR.  (IVGTPK .GT. 13) ) .OR.
+    794      .         ( (ISLTPK .LT. 1) .OR.  (ISLTPK .GT.  9) ) .OR.
+    795      .                       (ISPTPK .NE. 1)              .OR.
+    796      .         ( (VGFRCK .LT. 0.) .OR. (VGFRCK .GT. 1.) ) .OR.
+    797      .                       (NSOIL .NE. 4)               ) THEN
+    798            WRITE(6,*)'LANDSFC:I,J,MYPE,IVGTPK,ISLTPK,ISPTPK,VGFRCK=',
+    799      .        I,J,MYPE,IVGTPK,ISLTPK,ISPTPK,VGFRCK
+    800              IERR1=1
+    801           ENDIF
+    802 C ----------------------------------------------------------------------
+    803           DO index=1,NSOIL
+    804 c         do index=1,nsoil
+    805 C ----------------------------------------------------------------------
+    806 C debug
+    807               indexp = min(index+1,nsoil)
+    808               indexm = max(index-1,1)
+    809 C ----------------------------------------------------------------------
+    810 C Soil temp (STC) range check
+    811 c            IF ((STCK(index) .LT. 223.15) .OR.
+    812             IF ((STCK(index) .LT. 200.00) .OR.
+    813      .          (STCK(index) .GT. 323.15)) THEN
+    814               write(6,*)'STCl:INDEX,I,J,MYPE,STC=',
+    815      .          index,I,J,MYPE,STCK(index)
+    816                IERR1=2
+    817             ENDIF
+    818 C ----------------------------------------------------------------------
+    819 C Total soil moisture (SMC) check
+    820             IF ( (SMCK(index) .LT. 0.02) .OR.
+    821      .           (SMCK(index) .GT. 0.468) ) THEN
+    822               write(6,*)'SMC:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+    823      .        index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+    824                IERR1=1
+    825             ENDIF
+    826 C ----------------------------------------------------------------------
+
+Page 11          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    827 C Liquid soil moisture<=total soil moisture (SH2O<=SMC) maximum check
+    828             IF ( (SH2OK(index) .LT. 0.02) .OR.
+    829      .           (SH2OK(index) .GT. SMCK(index)) ) THEN
+    830               write(6,*)'aSH2Ol1:INDEX,I,J,MYPE,ICE,STCK,SMC,SH2O=',
+    831      .        index,I,J,MYPE,ICE,STCK(index),SMCK(index),SH2OK(index)
+    832                IERR1=1
+    833             ENDIF
+    834 C ----------------------------------------------------------------------
+    835 C Note SH2O, SMC when STC > +1.5C
+    836 	    IF (STCK(index) .GT. T0+1.5) THEN
+    837 	      IF (SMCK(index)-SH2OK(index) .GT. 0.03) THEN
+    838 		write(6,*)'SH2Ol2a:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+    839      .  	  index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+    840           write(6,*)'SH2Ol2a:I,J,MYPE,N-1,N,N+1,    STCK(N-1),STCK(N),ST
+    841      *CK(N+1), =',
+    842      .    I,J,MYPE,indexm,index,indexp,
+    843      .    STCK(indexm),STCK(index),STCK(indexp)
+    844 	      IERR1=1
+    845                 ENDIF
+    846 	    ELSEIF (STCK(index) .LT. T0-0.5) THEN
+    847 C Note SH2O, SMC when STC < -0.5C
+    848 	      IF (SMCK(index)-SH2OK(index) .LT. 0.005) THEN
+    849 		write(6,*)'SH2Ol2b:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+    850      .  	  index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+    851           write(6,*)'SH2Ol2b:I,J,MYPE,N-1,N,N+1,    STCK(N-1),STCK(N),ST
+    852      *CK(N+1), =',
+    853      .    I,J,MYPE,indexm,index,indexp,
+    854      .    STCK(indexm),STCK(index),STCK(indexp)
+    855 	      IERR1=1
+    856 	      ENDIF
+    857 	    ENDIF
+    858 C ----------------------------------------------------------------------
+    859 c         print*,'index at the end of loop=',i,j,index
+    860           END DO
+    861 C ----------------------------------------------------------------------
+    862 C Soil column bottom temp (TBOT) check
+    863 c	  IF ((TBOT .LT. 223.15) .OR. (TBOT .GT. 323.15)) THEN
+    864 	  IF ((TBOT .LT. 200.00) .OR. (TBOT .GT. 323.15)) THEN 
+    865             write(6,*)'TBOTl:INDEX,I,J,MYPE,TBOT=',
+    866      .        index,I,J,MYPE,TBOT
+    867                IERR2=1
+    868           ENDIF
+    869 C ----------------------------------------------------------------------
+    870 C sfc/skin temp (T1K) check
+    871 c 	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+    872 	 IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+    873              write(6,*)'T1:INDEX,I,J,MYPE,T1=',
+    874      .        index,I,J,MYPE,T1K
+    875                IERR2=1
+    876           ENDIF
+    877 C ----------------------------------------------------------------------
+    878 C Canopy water content (CMC) check
+    879 	  IF ((CMCK .LT. 0.) .OR. (CMCK .GT. 0.5E-3)) THEN 
+    880             write(6,*)'CMC:INDEX,I,J,MYPE,CMC=',
+    881      .        index,I,J,MYPE,CMCK
+    882 c              IERR1=1
+    883           ENDIF
+
+Page 12          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    884 C ----------------------------------------------------------------------
+    885 C Snow water equivalent, snow depth check
+    886 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LT. 1.0E-09)) .OR.
+    887      .        ((SNODPK .LT. 1.0E-09) .AND. (SNOWH .GT. 0.)) .OR.
+    888      .         (SNODPK .GT. SNOWH)) THEN
+    889 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+    890      .        I,J,MYPE,SNODPK,SNOWH
+    891 	       IERR1=1
+    892            ENDIF
+    893 C ----------------------------------------------------------------------
+    894 C Snow density check
+    895 	  IF (SNODPK .GT. 0.) THEN
+    896             SNDENS=SNODPK/SNOWH
+    897             IF (SNDENS .LT. 0.05) THEN
+    898 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+    899      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+    900               IERR1=1
+    901             ENDIF
+    902             IF (SNDENS .GT. 0.42) THEN
+    903 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+    904      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+    905               IERR1=1
+    906             ENDIF
+    907           ENDIF
+    908 C ----------------------------------------------------------------------
+    909 C end land checks
+    910 C ----------------------------------------------------------------------
+    911         ELSE
+    912 C ----------------------------------------------------------------------
+    913 C sea-ice checks next
+    914 C ----------------------------------------------------------------------
+    915 C sea-ice bottom temp (TBOT) check
+    916           IF ( (TBOT .LT. 271.159) .OR.
+    917      .         (TBOT .GT. 271.161) ) THEN
+    918             WRITE(6,*)'TBOTi:INDEX,I,J,MYPE,TBOT=',
+    919      .        index,I,J,MYPE,TBOT
+    920           ENDIF
+    921 C ----------------------------------------------------------------------
+    922 C sea-ice temp with depth (STC) range check
+    923           DO index=1,4
+    924 c            IF ((STCK(index) .LT. 223.15) .OR.
+    925             IF ((STCK(index) .LT. 200.00) .OR.
+    926 c     .          (STCK(index) .GT. 323.15)) THEN
+    927      .          (STCK(index) .GT. 274.15)) THEN
+    928               write(6,*)'STCi:INDEX,I,J,MYPE,STC=',
+    929      .          index,I,J,MYPE,STCK(index)
+    930 c              IERR1=2
+    931             ENDIF
+    932           END DO
+    933 C ----------------------------------------------------------------------
+    934 C sfc/skin temp (T1K) check
+    935 c	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+    936 	  IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+    937             write(6,*)'T1:INDEX,I,J,MYPE,ICE,T1=',
+    938      .        index,I,J,MYPE,ICE,T1K
+    939               IERR2=1
+    940           ENDIF
+
+Page 13          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    941 C ----------------------------------------------------------------------
+    942 C Snow water equivalent, snow depth check
+    943 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LT. 1.0E-09)) .OR.
+    944      .        ((SNODPK .LT. 1.0E-09) .AND. (SNOWH .GT. 0.)) .OR.
+    945      .         (SNODPK .GT. SNOWH)) THEN
+    946 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+    947      .        I,J,MYPE,SNODPK,SNOWH
+    948 	       IERR1=1
+    949           ENDIF
+    950 C ----------------------------------------------------------------------
+    951 C Snow density check
+    952 	  IF (SNODPK .GT. 0.) THEN
+    953             SNDENS=SNODPK/SNOWH
+    954             IF (SNDENS .LT. 0.05) THEN
+    955 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+    956      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+    957               IERR1=1
+    958             ENDIF
+    959             IF (SNDENS .GT. 0.42) THEN
+    960 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+    961      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+    962               IERR1=1
+    963             ENDIF
+    964           ENDIF
+    965 C ----------------------------------------------------------------------
+    966 c Check to see that when sea-ice, ALBASE=ALBEDO=0.65,MXSNAL=0,
+    967           IF ( (ALB         .NE. 0.0) .OR.
+    968      .         (ALBEDO(I,J) .LT. 0.64) .OR.
+    969      .         (ALBEDO(I,J) .GT. 0.66) .OR.
+    970      .         (SNOALB      .NE. 0.0) ) THEN         
+    971 	    WRITE(6,*)'ALBi:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+    972      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+    973               IERR1=1
+    974           ENDIF
+    975 C ----------------------------------------------------------------------
+    976 c Check to see that when sea-ice, SH2O=SMC=1.0
+    977           DO index=1,4
+    978             IF ( (SMCK(index) .NE.          1.0) .OR.
+    979      .           (SMCK(index) .NE. SH2OK(index)) ) THEN
+    980               write(6,*)'SMCi:INDEX,I,J,MYPE,ICE,STCK,SMC,SH2O=',
+    981      .          index,I,J,MYPE,ICE,STCK(index),SMCK(index),SH2OK(index)
+    982               IERR1=1
+    983             ENDIF
+    984           END DO
+    985 C ----------------------------------------------------------------------
+    986 C check to see that veg type=soil type=veg frac=0
+    987 	  IF ( (IVGTYP(I,J) .NE. 0 ) .OR.
+    988      .         (ISLTYP(I,J) .NE. 0 ) .OR.
+    989      .         (VGFRCK .GT. 0.) ) THEN
+    990 	    WRITE(6,*)'IVGTYPi:I,J,MYPE,IVGTYP,ISLTYP,VGFRCK=',
+    991      .        I,J,MYPE,IVGTYP(I,J),ISLTYP(I,J),VGFRCK
+    992 	    WRITE(6,*)'IVGTYPi:I,J,MYPE,SNODPK,ALB,ALBEDO,SNOALB=',
+    993      .        I,J,MYPE,SNODPK,ALB,ALBEDO(I,J),SNOALB
+    994 	  ENDIF
+    995 C ----------------------------------------------------------------------
+    996 C end sea-ice checks
+    997 C end of separate land AND sea-ice checks
+
+Page 14          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+    998 C ----------------------------------------------------------------------
+    999         ENDIF
+   1000 C ----------------------------------------------------------------------
+   1001 C both land AND sea-ice checks
+   1002 C Snow water equivalent, snow depth check
+   1003 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LE. 0.)) .OR.
+   1004      .        ((SNODPK .LE. 0.) .AND. (SNOWH .GT. 0.)) .OR.
+   1005      .         (SNODPK .GT. SNOWH)) THEN
+   1006 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+   1007      .        I,J,MYPE,SNODPK,SNOWH
+   1008 c	       IERR1=1
+   1009           ENDIF
+   1010 C ----------------------------------------------------------------------
+   1011 C Snow density check
+   1012 	  IF (SNODPK .GT. 0.) THEN
+   1013             SNDENS=SNODPK/SNOWH
+   1014             IF (SNDENS .LT. 0.05) THEN
+   1015 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1016      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1017 c              IERR1=1
+   1018             ENDIF
+   1019             IF (SNDENS .GT. 0.42) THEN
+   1020 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1021      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1022 c              IERR1=1
+   1023             ENDIF
+   1024           ENDIF
+   1025 C ----------------------------------------------------------------------
+   1026 C sfc/skin temp (T1K) check
+   1027 c	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+   1028 	  IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+   1029             write(6,*)'T1:INDEX,I,J,MYPE,T1=',
+   1030      .        index,I,J,MYPE,T1K
+   1031 c              IERR2=1
+   1032           ENDIF
+   1033 C ----------------------------------------------------------------------
+   1034 c check to see that 223.15K (-50C) =< SFCTMP,SFCTH2 <= 323.15K (+50C)
+   1035 C SFCTMP = lowest model level temp
+   1036 C SFCTH2 = lowest model level pot temp
+   1037         IF ( ( (SFCTMP .LT. 223.15) .OR. (SFCTMP .GT. 323.15) ) .OR.
+   1038      .       ( (SFCTH2 .LT. 223.15) .OR. (SFCTH2 .GT. 323.15) ) ) THEN
+   1039 	  WRITE(6,*)'SFCTMP:I,J,MYPE,SFCTMP,SFCTH2=',
+   1040      .      I,J,MYPE,SFCTMP,SFCTH2
+   1041         ENDIF
+   1042 C ----------------------------------------------------------------------
+   1043 c check to see that 0W/m2 =< LWDN <= 500W/m2
+   1044 c check to see that 0W/m2 =< SOLDN <= 1200W/m2
+   1045 C LWDN  = downward longwave radiation
+   1046 C SOLDN = downward solar radiation
+   1047         IF ( ( (LWDN  .LT. 0.) .OR. (LWDN  .GT.  500.) ) .OR.
+   1048      .      ( (SOLDN .LT. 0.) .OR. (SOLDN .GT. 1200.) ) ) THEN
+   1049           WRITE(6,*)'LWSOLDN:I,J,MYPE,LWDN,SOLDN=',
+   1050      .      I,J,MYPE,LWDN,SOLDN
+   1051         ENDIF
+   1052 C ----------------------------------------------------------------------
+   1053 c check to see that 0g/kg < Q2K,Q2SAT <= 40g/kg
+   1054 c check to see that Q2K <= Q2SAT
+
+Page 15          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1055 C Q2K   = lowest model level spec hum
+   1056 C Q2SAT = lowest model level sat spec hum
+   1057 c        IF ( ( (Q2K   .LE. 0.) .OR. (Q2K   .GT. 0.04) ) .OR.
+   1058 c     .       ( (Q2SAT .LE. 0.) .OR. (Q2SAT .GT. 0.04) ) .OR.
+   1059         IF ( ( (Q2K   .LE. 0.) .OR. (Q2K   .GT. 0.05) ) .OR.
+   1060      .       ( (Q2SAT .LE. 0.) .OR. (Q2SAT .GT. 0.05) ) .OR.
+   1061      .       (Q2K .GT. Q2SAT) ) THEN
+   1062 	  WRITE(6,*)'Q2:I,J,MYPE,Q2K,Q2SAT=',
+   1063      .      I,J,MYPE,Q2K,Q2SAT
+   1064         ENDIF
+   1065 C ----------------------------------------------------------------------
+   1066 c check to see that 600mb =< SFCPRS <= 1050mb
+   1067 C SFCPRS = surface pressure (Pa)
+   1068        IF ( (SFCPRS .LE. 60000.) .OR. (SFCPRS .GT. 105000.) ) THEN
+   1069          WRITE(6,*)'SFCPRS:I,J,MYPE,SFCPRS=',
+   1070      .     I,J,MYPE,SFCPRS
+   1071        ENDIF
+   1072 C ----------------------------------------------------------------------
+   1073 c check to see that 0 =< PRCP <= 0.04 KG M-2 S-1 (=0.04mm/s = 144mm/hr)
+   1074 C PRCP = precip rate (KG M-2 S-1)
+   1075        IF ( (PRCP .LT. 0.) .OR. (PRCP .GT. 0.04) ) THEN
+   1076          WRITE(6,*)'PRCP:I,J,MYPE,PRCP=',
+   1077      .     I,J,MYPE,PRCP
+   1078        ENDIF
+   1079 C ----------------------------------------------------------------------
+   1080 c check to see that 0m/s < CHK <= 0.1m/s
+   1081 C CHK = sfc heat exchange coeff (m/s)
+   1082        IF ( (CHK .LE. 0.) .OR. (CHK .GT. 0.1) ) THEN
+   1083 	 WRITE(6,*)'CH:I,J,MYPE,CHK=',
+   1084      .     I,J,MYPE,CHK
+   1085        ENDIF
+   1086 C ----------------------------------------------------------------------
+   1087        IF (IERR2 .EQ. 1) THEN
+   1088           WRITE(6,*) 'RANGE CHECK IN SURFCE: EXTREME VALUES BEFORE SFLX'
+   1089        ENDIF
+   1090        IF (IERR1 .EQ. 1) THEN
+   1091 c 	  WRITE(6,*) 'RANGE CHECK FAILURE IN SURFCE - STOP'
+   1092 c	  STOP
+   1093        ENDIF
+   1094 C ----------------------------------------------------------------------
+   1095 C End of initial (logical LFIRST) range check for variables/parameters.
+   1096       ENDIF
+   1097 C ----------------------------------------------------------------------
+   1098 C Ek 18 jan 2000 - NEW CALL SFLX
+   1099         CALL SFLX
+   1100      I    (ICE,DTK,Z,NSOIL,SLDPTH,
+   1101      I    LWDN,SOLDN,SFCPRS,PRCP,SFCTMP,SFCTH2,Q2K,SFCSPD,Q2SAT,DQSDTK,
+   1102      I    IVGTPK,ISLTPK,ISPTPK,
+   1103      I    VGFRCK,PTU,TBOT,ALB,SNOALB,
+   1104      2    CMCK,T1K,STCK,SMCK,SH2OK,SNOWH,SNODPK,ALB2D,CHK,CMK,
+   1105      O    PLFLX,ELFLX,HFLX,GFLX,RNOF1K,RNOF2K,Q1K,SMELTK,
+   1106      O    SOILQW,SOILQM,DUM1,DUM2,DUM3,DUM4)
+   1107 C-----------------------------------------------------------------------
+   1108       IF (LFIRSTa) THEN
+   1109 c      IF ( (LFIRST)            .OR.
+   1110 c     .     (NTSD .EQ.       2) .OR.
+   1111 c     .     (NTSD .EQ.       3) .OR.
+
+Page 16          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1112 c     .     (NTSD .EQ. NTSTM/2) .OR.
+   1113 c     .     (NTSD .EQ.   NTSTM) ) THEN
+   1114 C ----------------------------------------------------------------------
+   1115 C land OR sea-ice checks
+   1116 C land checks first
+   1117         IF (ICE .LT. 0.5) THEN
+   1118 C ----------------------------------------------------------------------
+   1119 C albedo checks
+   1120 C ALB = ALBASE(I,J)  = snow free albedo
+   1121 C   min = 0.11 (Matthews data base)
+   1122 C   max = 0.80 (Matthews data base)
+   1123 C ALBEDO(I,J) = dynamic albedo (=ALBASE when SNODPK=0)
+   1124 C  (=ALB2D on return from SFLX)
+   1125 C SNOALB = MAXSNAL(I,J) = maximum snow albedo
+   1126 C   min = 0.21 (Robinson data base)
+   1127 C   max = 0.75 (Robinson data base)
+   1128           IF ( (ALB         .GT.(SNOALB+0.051)) .OR.
+   1129      .         (ALB         .GT.(ALBEDO(I,J)+0.051)) .OR.
+   1130      .         (ALBEDO(I,J) .GT.(SNOALB+0.051)     ) ) THEN
+   1131 	    write(6,*)'ALBl1:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+   1132      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+   1133           IERR1=1
+   1134           ENDIF
+   1135           IF ( (ALB    .LT. 0.10) .OR.
+   1136      .         (ALB    .GT. 0.81) .OR.
+   1137      .         (SNOALB .LT. 0.20) .OR.
+   1138      .         (SNOALB .GT. 0.81) ) THEN
+   1139 	    write(6,*)'ALBl2:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+   1140      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+   1141           IERR1=1
+   1142           ENDIF
+   1143 C ----------------------------------------------------------------------
+   1144 C Veg,soil,slope type, veg fraction, No. soil layers checks
+   1145 	  IF ( ( (IVGTPK .LT. 1) .OR.  (IVGTPK .GT. 13) ) .OR.
+   1146      .         ( (ISLTPK .LT. 1) .OR.  (ISLTPK .GT.  9) ) .OR.
+   1147      .                       (ISPTPK .NE. 1)              .OR.
+   1148      .         ( (VGFRCK .LT. 0.) .OR. (VGFRCK .GT. 1.) ) .OR.
+   1149      .                       (NSOIL .NE. 4)               ) THEN
+   1150 	    WRITE(6,*)'LANDSFC:I,J,MYPE,IVGTPK,ISLTPK,ISPTPK,VGFRCK=',
+   1151      .        I,J,MYPE,IVGTPK,ISLTPK,ISPTPK,VGFRCK
+   1152             IERR1=1
+   1153 	  ENDIF
+   1154 C ----------------------------------------------------------------------
+   1155           DO index=1,NSOIL
+   1156 C ----------------------------------------------------------------------
+   1157 C debug
+   1158             indexp = min(index+1,nsoil)
+   1159             indexm = max(index-1,1)
+   1160 C ----------------------------------------------------------------------
+   1161 C Soil temp (STC) range check
+   1162 c            IF ((STCK(index) .LT. 223.15) .OR.
+   1163             IF ((STCK(index) .LT. 200.00) .OR.
+   1164      .          (STCK(index) .GT. 323.15)) THEN
+   1165               write(6,*)'STCl:INDEX,I,J,MYPE,STC=',
+   1166      .          index,I,J,MYPE,STCK(index)
+   1167               IERR1=2
+   1168             ENDIF
+
+Page 17          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1169 C ----------------------------------------------------------------------
+   1170 C Total soil moisture (SMC) check
+   1171             IF ( (SMCK(index) .LT. 0.02) .OR.
+   1172      .           (SMCK(index) .GT. 0.468) ) THEN
+   1173               write(6,*)'SMC:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+   1174      .          index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+   1175               IERR1=1
+   1176             ENDIF
+   1177 C ----------------------------------------------------------------------
+   1178 C Liquid soil moisture<=total soil moisture (SH2O<=SMC) maximum check
+   1179             IF ( (SH2OK(index) .LT. 0.02) .OR.
+   1180      .           (SH2OK(index) .GT. SMCK(index)) ) THEN
+   1181               write(6,*)'bSH2Ol1:INDEX,I,J,MYPE,ICE,STCK,SMC,SH2O=',
+   1182      .          index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+   1183               IERR1=1
+   1184             ENDIF
+   1185 C ----------------------------------------------------------------------
+   1186 C Note SH2O, SMC when STC > +1.5C
+   1187 	    IF (STCK(index) .GT. T0+1.5) THEN
+   1188 	      IF (SMCK(index)-SH2OK(index) .GT. 0.005) THEN
+   1189 		write(6,*)'SH2Ol2a:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+   1190      .  	  index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+   1191         write(6,*)'SH2Ol2a:I,J,MYPE,N-1,N,N+1,    STCK(N-1),STCK(N),STCK
+   1192      *(N+1), =',
+   1193      .    I,J,MYPE,indexm,index,indexp,
+   1194      .    STCK(indexm),STCK(index),STCK(indexp)
+   1195 	      IERR1=1
+   1196               ENDIF
+   1197 	    ELSEIF (STCK(index) .LT. T0-0.5) THEN
+   1198 C Note SH2O, SMC when STC < -0.5C
+   1199 	      IF (SMCK(index)-SH2OK(index) .LT. 0.005) THEN
+   1200 		write(6,*)'SH2Ol2b:INDEX,I,J,MYPE,STCK,SMC,SH2O=',
+   1201      .  	  index,I,J,MYPE,STCK(index),SMCK(index),SH2OK(index)
+   1202         write(6,*)'SH2Ol2b:I,J,MYPE,N-1,N,N+1,    STCK(N-1),STCK(N),STCK
+   1203      *(N+1), =',
+   1204      .    I,J,MYPE,indexm,index,indexp,
+   1205      .    STCK(indexm),STCK(index),STCK(indexp)
+   1206 	      IERR1=1
+   1207 	      ENDIF
+   1208 	    ENDIF
+   1209 C ----------------------------------------------------------------------
+   1210           END DO
+   1211 C ----------------------------------------------------------------------
+   1212 C Soil column bottom temp (TBOT) check
+   1213 c	  IF ((TBOT .LT. 223.15) .OR. (TBOT .GT. 323.15)) THEN
+   1214 	  IF ((TBOT .LT. 200.00) .OR. (TBOT .GT. 323.15)) THEN 
+   1215             write(6,*)'TBOTl:INDEX,I,J,MYPE,TBOT=',
+   1216      .        index,I,J,MYPE,TBOT
+   1217               IERR2=1
+   1218           ENDIF
+   1219 C ----------------------------------------------------------------------
+   1220 C sfc/skin temp (T1K) check
+   1221 c	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+   1222 	  IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+   1223             write(6,*)'T1:INDEX,I,J,MYPE,T1=',
+   1224      .        index,I,J,MYPE,T1K
+   1225               IERR2=1
+
+Page 18          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1226           ENDIF
+   1227 C ----------------------------------------------------------------------
+   1228 C Canopy water content (CMC) check
+   1229 	  IF ((CMCK .LT. 0.) .OR. (CMCK .GT. 0.5E-3)) THEN 
+   1230             write(6,*)'CMC:INDEX,I,J,MYPE,CMC=',
+   1231      .        index,I,J,MYPE,CMCK
+   1232               IERR1=1
+   1233           ENDIF
+   1234 C ----------------------------------------------------------------------
+   1235 C Snow water equivalent, snow depth check
+   1236 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LT. 1.0E-09)) .OR.
+   1237      .        ((SNODPK .LT. 1.0E-09) .AND. (SNOWH .GT. 0.)) .OR.
+   1238      .         (SNODPK .GT. SNOWH)) THEN
+   1239 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+   1240      .        I,J,MYPE,SNODPK,SNOWH
+   1241 	       IERR1=1
+   1242           ENDIF
+   1243 C ----------------------------------------------------------------------
+   1244 C Snow density check
+   1245 	  IF (SNODPK .GT. 0.) THEN
+   1246             SNDENS=SNODPK/SNOWH
+   1247             IF (SNDENS .LT. 0.05) THEN
+   1248 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1249      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1250               IERR1=1
+   1251             ENDIF
+   1252             IF (SNDENS .GT. 0.42) THEN
+   1253 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1254      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1255               IERR1=1
+   1256             ENDIF
+   1257           ENDIF
+   1258 C ----------------------------------------------------------------------
+   1259 C end land checks
+   1260 C ----------------------------------------------------------------------
+   1261         ELSE
+   1262 C ----------------------------------------------------------------------
+   1263 C sea-ice checks next
+   1264 C ----------------------------------------------------------------------
+   1265 C sea-ice bottom temp (TBOT) check
+   1266           IF ( (TBOT .LT. 271.159) .OR.
+   1267      .         (TBOT .GT. 271.161) ) THEN
+   1268             WRITE(6,*)'TBOTi:INDEX,I,J,MYPE,TBOT=',
+   1269      .        index,I,J,MYPE,TBOT
+   1270           ENDIF
+   1271 C ----------------------------------------------------------------------
+   1272 C sea-ice temp with depth (STC) range check
+   1273           DO index=1,4
+   1274 c            IF ((STCK(index) .LT. 223.15) .OR.
+   1275             IF ((STCK(index) .LT. 200.00) .OR.
+   1276 c     .          (STCK(index) .GT. 323.15)) THEN
+   1277      .          (STCK(index) .GT. 274.15)) THEN
+   1278               write(6,*)'STCi:INDEX,I,J,MYPE,STC=',
+   1279      .          index,I,J,MYPE,STCK(index)
+   1280               IERR1=2
+   1281             ENDIF
+   1282           END DO
+
+Page 19          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1283 C ----------------------------------------------------------------------
+   1284 C sfc/skin temp (T1K) check
+   1285 c	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+   1286 	  IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+   1287             write(6,*)'T1:INDEX,I,J,MYPE,ICE,T1=',
+   1288      .        index,I,J,MYPE,ICE,T1K
+   1289               IERR2=1
+   1290           ENDIF
+   1291 C ----------------------------------------------------------------------
+   1292 C Snow water equivalent, snow depth check
+   1293 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LT. 1.0E-09)) .OR.
+   1294      .        ((SNODPK .LT. 1.0E-09) .AND. (SNOWH .GT. 0.)) .OR.
+   1295      .         (SNODPK .GT. SNOWH)) THEN
+   1296 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+   1297      .        I,J,MYPE,SNODPK,SNOWH
+   1298 	       IERR1=1
+   1299           ENDIF
+   1300 C ----------------------------------------------------------------------
+   1301 C Snow density check
+   1302 	  IF (SNODPK .GT. 0.) THEN
+   1303             SNDENS=SNODPK/SNOWH
+   1304             IF (SNDENS .LT. 0.05) THEN
+   1305 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1306      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1307               IERR1=1
+   1308             ENDIF
+   1309             IF (SNDENS .GT. 0.42) THEN
+   1310 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1311      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1312               IERR1=1
+   1313             ENDIF
+   1314           ENDIF
+   1315 C ----------------------------------------------------------------------
+   1316 c Check to see that when sea-ice, ALBASE=ALBEDO=0.65,MXSNAL=0,
+   1317           IF ( (ALB         .NE. 0.0 ) .OR.
+   1318      .         (ALBEDO(I,J) .LT. 0.64) .OR.
+   1319      .         (ALBEDO(I,J) .GT. 0.66) .OR.
+   1320      .         (SNOALB      .NE. 0.0 ) ) THEN         
+   1321 	    WRITE(6,*)'ALBi:I,J,MYPE,ICE,SNODPK,ALB,ALB2D,SNOALB=',
+   1322      .        I,J,MYPE,ICE,SNODPK,ALB,ALBEDO(I,J),SNOALB         
+   1323               IERR1=1
+   1324           ENDIF
+   1325 C ----------------------------------------------------------------------
+   1326 c Check to see that when sea-ice, SH2O=SMC=1.0
+   1327           DO index=1,4
+   1328             IF ( (SMCK(index) .NE.          1.0) .OR.
+   1329      .           (SMCK(index) .NE. SH2OK(index)) ) THEN
+   1330               write(6,*)'SMCi:INDEX,I,J,MYPE,ICE,STCK,SMC,SH2O=',
+   1331      .          index,I,J,MYPE,ICE,STCK(index),SMCK(index),SH2OK(index)
+   1332               IERR1=1
+   1333             ENDIF
+   1334           END DO
+   1335 C ----------------------------------------------------------------------
+   1336 C check to see that veg type=soil type=veg frac=0
+   1337 	  IF ( (IVGTYP(I,J) .NE. 0 ) .OR.
+   1338      .         (ISLTYP(I,J) .NE. 0 ) .OR.
+   1339      .         (VGFRCK .GT. 0.) ) THEN
+
+Page 20          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1340 	    WRITE(6,*)'IVGTYPi:I,J,MYPE,IVGTYP,ISLTYP,VGFRCK=',
+   1341      .        I,J,MYPE,IVGTYP(I,J),ISLTYP(I,J),VGFRCK
+   1342 	    WRITE(6,*)'IVGTYPi:I,J,MYPE,SNODPK,ALB,ALBEDO,SNOALB=',
+   1343      .        I,J,MYPE,SNODPK,ALB,ALBEDO(I,J),SNOALB
+   1344 	  ENDIF
+   1345 C ----------------------------------------------------------------------
+   1346 C end sea-ice checks
+   1347 C end of separate land AND sea-ice checks
+   1348 C ----------------------------------------------------------------------
+   1349         ENDIF
+   1350 C ----------------------------------------------------------------------
+   1351 C both land AND sea-ice checks
+   1352 C Snow water equivalent, snow depth check
+   1353 	  IF (((SNODPK .GT. 0.) .AND. (SNOWH .LE. 0.)) .OR.
+   1354      .        ((SNODPK .LE. 0.) .AND. (SNOWH .GT. 0.)) .OR.
+   1355      .         (SNODPK .GT. SNOWH)) THEN
+   1356 	    WRITE(6,*)'SNOW:I,J,MYPE,SNODPK,SNOWH=',
+   1357      .        I,J,MYPE,SNODPK,SNOWH
+   1358 	       IERR1=1
+   1359           ENDIF
+   1360 C ----------------------------------------------------------------------
+   1361 C Snow density check
+   1362 	  IF (SNODPK .GT. 0.) THEN
+   1363             SNDENS=SNODPK/SNOWH
+   1364             IF (SNDENS .LT. 0.05) THEN
+   1365 	      WRITE(6,*)'SNDENS<5%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1366      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1367               IERR1=1
+   1368             ENDIF
+   1369             IF (SNDENS .GT. 0.42) THEN
+   1370 	      WRITE(6,*)'SNDENS>42%:I,J,MYPE,SNODPK,SNOWH,SNDENS=',
+   1371      .          I,J,MYPE,SNODPK,SNOWH,SNDENS
+   1372               IERR1=1
+   1373             ENDIF
+   1374           ENDIF
+   1375 C ----------------------------------------------------------------------
+   1376 C sfc/skin temp (T1K) check
+   1377 c	  IF ((T1K .LT. 223.15) .OR. (T1K .GT. 323.15)) THEN
+   1378 	  IF ((T1K .LT. 200.00) .OR. (T1K .GT. 323.15)) THEN 
+   1379             write(6,*)'T1:INDEX,I,J,MYPE,T1=',
+   1380      .        index,I,J,MYPE,T1K
+   1381               IERR2=1
+   1382           ENDIF
+   1383 C ----------------------------------------------------------------------
+   1384 c check to see that 223.15K (-50C) =< SFCTMP,SFCTH2 <= 323.15K (+50C)
+   1385 C SFCTMP = lowest model level temp
+   1386 C SFCTH2 = lowest model level pot temp
+   1387         IF ( ( (SFCTMP .LT. 223.15) .OR. (SFCTMP .GT. 323.15) ) .OR.
+   1388      .       ( (SFCTH2 .LT. 223.15) .OR. (SFCTH2 .GT. 323.15) ) ) THEN
+   1389 	  WRITE(6,*)'SFCTMP:I,J,MYPE,SFCTMP,SFCTH2=',
+   1390      .      I,J,MYPE,SFCTMP,SFCTH2
+   1391         ENDIF
+   1392 C ----------------------------------------------------------------------
+   1393 c check to see that 0W/m2 =< LWDN <= 500W/m2
+   1394 c check to see that 0W/m2 =< SOLDN <= 1200W/m2
+   1395 C LWDN  = downward longwave radiation
+   1396 C SOLDN = downward solar radiation
+
+Page 21          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1397         IF ( ( (LWDN  .LT. 0.) .OR. (LWDN  .GT.  500.) ) .OR.
+   1398      .      ( (SOLDN .LT. 0.) .OR. (SOLDN .GT. 1200.) ) ) THEN
+   1399           WRITE(6,*)'LWSOLDN:I,J,MYPE,LWDN,SOLDN=',
+   1400      .      I,J,MYPE,LWDN,SOLDN
+   1401         ENDIF
+   1402 C ----------------------------------------------------------------------
+   1403 c check to see that 0g/kg < Q2K,Q2SAT <= 40g/kg
+   1404 c check to see that Q2K <= Q2SAT
+   1405 C Q2K   = lowest model level spec hum
+   1406 C Q2SAT = lowest model level sat spec hum
+   1407 c        IF ( ( (Q2K   .LE. 0.) .OR. (Q2K   .GT. 0.04) ) .OR.
+   1408 c     .       ( (Q2SAT .LE. 0.) .OR. (Q2SAT .GT. 0.04) ) .OR.
+   1409         IF ( ( (Q2K   .LE. 0.) .OR. (Q2K   .GT. 0.05) ) .OR.
+   1410      .       ( (Q2SAT .LE. 0.) .OR. (Q2SAT .GT. 0.05) ) .OR.
+   1411      .       (Q2K .GT. Q2SAT) ) THEN
+   1412 	  WRITE(6,*)'Q2:I,J,MYPE,Q2K,Q2SAT=',
+   1413      .      I,J,MYPE,Q2K,Q2SAT
+   1414         ENDIF
+   1415 C ----------------------------------------------------------------------
+   1416 c check to see that 600mb =< SFCPRS <= 1050mb
+   1417 C SFCPRS = surface pressure (Pa)
+   1418        IF ( (SFCPRS .LE. 60000.) .OR. (SFCPRS .GT. 105000.) ) THEN
+   1419          WRITE(6,*)'SFCPRS:I,J,MYPE,SFCPRS=',
+   1420      .     I,J,MYPE,SFCPRS
+   1421        ENDIF
+   1422 C ----------------------------------------------------------------------
+   1423 c check to see that 0 =< PRCP <= 0.04 KG M-2 S-1 (=0.04mm/s = 144mm/hr)
+   1424 C PRCP = precip rate (KG M-2 S-1)
+   1425        IF ( (PRCP .LT. 0.) .OR. (PRCP .GT. 0.04) ) THEN
+   1426          WRITE(6,*)'PRCP:I,J,MYPE,PRCP=',
+   1427      .     I,J,MYPE,PRCP
+   1428        ENDIF
+   1429 C ----------------------------------------------------------------------
+   1430 c check to see that 0m/s < CHK <= 0.1m/s
+   1431 C CHK = sfc heat exchange coeff (m/s)
+   1432        IF ( (CHK .LE. 0.) .OR. (CHK .GT. 0.1) ) THEN
+   1433 	 WRITE(6,*)'CH:I,J,MYPE,CHK=',
+   1434      .     I,J,MYPE,CHK
+   1435        ENDIF
+   1436 C ----------------------------------------------------------------------
+   1437         IF (IERR2 .EQ. 1) THEN
+   1438           WRITE(6,*) 'RANGE CHECK IN SURFCE: EXTREME VALUES AFTER SFLX'
+   1439         ENDIF
+   1440 	IF (IERR1 .EQ. 1) THEN
+   1441 c	  WRITE(6,*) 'RANGE CHECK FAILURE IN SURFCE - STOP'
+   1442 c	  STOP
+   1443 	ENDIF
+   1444 C ----------------------------------------------------------------------
+   1445 C End of initial (logical LFIRST) range check for variables/parameters.
+   1446       ENDIF
+   1447 C ----------------------------------------------------------------------
+   1448 
+   1449       SCHECK=Z*CHK
+   1450       IF(SCHECK.LE.1.3E-3)THEN
+   1451         PLFLX=0.
+   1452         ELFLX=0.
+   1453       ENDIF
+
+Page 22          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1454 C***
+   1455 C***  GCIP DIAGNOSTICS & MODIFICATION OF QFC1 OVER SNOW
+   1456 C***
+   1457         SSROFF(I,J)=SSROFF(I,J)+RNOF1K*DTQ2
+   1458         BGROFF(I,J)=BGROFF(I,J)+RNOF2K*DTQ2
+   1459         SMSTAV(I,J)=SOILQW
+   1460         SOILTB(I,J)=TBOT
+   1461         SFCEXC(I,J)=CHK
+   1462         GRNFLX(I,J)=GFLX
+   1463         IF(SNO (I,J).GT.0..OR.SICE(I,J).GT.0.5)THEN
+   1464           QFC1(I,J)=QFC1(I,J)*RLIVWV
+   1465         ENDIF
+   1466         IF(SNO(I,J).GT.0.)THEN
+   1467           ACSNOM(I,J)=ACSNOM(I,J)+SMELTK
+   1468           SNOPCX(I,J)=SNOPCX(I,J)-SMELTK/FDTLIW
+   1469         ENDIF
+   1470         POTEVP(I,J)=POTEVP(I,J)+PLFLX*FDTW
+   1471         POTFLX(I,J)=POTFLX(I,J)-PLFLX
+   1472         SUBSHX(I,J)=SUBSHX(I,J)+GFLX
+   1473 C***
+   1474 C***  ETA MODEL LOWER BOUNDARY CONDITIONS
+   1475 C***
+   1476 C       THS(I,J)=THLM(I,J)+HFLX*APES(I,J)/FFS(I,J)
+   1477         THS(I,J)=T1K*APES(I,J)
+   1478         IF(QFC1(I,J).GT.0.)
+   1479      1    QS(I,J)=QLM(I,J)+ELFLX*APES(I,J)/QFC1(I,J)
+   1480 C***
+   1481 C***  HISTORICAL VARIABLES
+   1482 C***
+   1483 c dynamic albedo, ALBEDO, to be passed to RADTN.f
+   1484         ALBEDO(I,J)=ALB2D
+   1485         SNO(I,J)=SNODPK
+   1486 c snow depth, SI
+   1487         SI(I,J)=SNOWH
+   1488         CMC(I,J)=CMCK
+   1489         SMSTOT(I,J)=SOILQM
+   1490         DO 150 NS=1,NSOIL
+   1491         SMC(I,J,NS)=SMCK(NS)
+   1492 c SH2O array (liquid soil moisture)
+   1493         SH2O(I,J,NS)=SH2OK(NS)
+   1494         STC(I,J,NS)=STCK(NS)
+   1495   150   CONTINUE
+   1496       ENDIF
+   1497 C
+   1498   155 CONTINUE
+   1499   160 CONTINUE
+   1500 C ----------------------------------------------------------------------
+   1501 C Set LFIRST=false so that there are not variable/parameter range checks
+   1502 C for the next 155/160 loop
+   1503       LFIRSTa = .FALSE.
+   1504       LFIRST = .FALSE.
+   1505 C
+   1506 C***  VARIABLES TWBS AND QWBS COMPUTED HERE FOR GCIP.
+   1507 C***  ACCUMULATE SURFACE HEAT FLUXES HERE.
+   1508 C***  FOR GCIP ACCUMULATE ACTUAL AND POTENTIAL EVAPORATION.
+   1509 C***  FOR GCIP ACCUMULATE TOTAL SNOW MELT AND
+   1510 C***  THE ASSOCIATED NET HEAT FLUX.
+
+Page 23          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1511 C
+   1512 !$omp parallel do private(i,j)
+   1513       DO 200 J=MYJS2,MYJE2
+   1514       DO 200 I=MYIS,MYIE
+   1515       TWBS(I,J)=(THLM(I,J)-THS(I,J)*(1.-SM(I,J))-THZ0(I,J)*SM(I,J))
+   1516      1       *FFS (I,J)/APES(I,J)
+   1517       QWBS(I,J)=(QLM (I,J)-QS (I,J)*(1.-SM(I,J))-QZ0 (I,J)*SM(I,J))
+   1518      1       *QFC1(I,J)/APES(I,J)
+   1519       SFCSHX(I,J)=SFCSHX(I,J)+TWBS(I,J)
+   1520       SFCLHX(I,J)=SFCLHX(I,J)+QWBS(I,J)
+   1521       SFCEVP(I,J)=SFCEVP(I,J)-QWBS(I,J)*FDTW
+   1522       POTEVP(I,J)=POTEVP(I,J)-QWBS(I,J)*SM(I,J)*FDTW
+   1523       POTFLX(I,J)=POTFLX(I,J)+QWBS(I,J)*SM(I,J)
+   1524 C
+   1525 C***  IF COLD ENOUGH, IT SNOWS (IN NOAH LSM)...
+   1526 C***  FOR GCIP ACCUMULATE TOTAL SNOWFALL.
+   1527 C
+   1528       IF(THLM(I,J)/APELM(I,J).LE.T0.AND.SICE(I,J)+SM(I,J).LT.0.5)THEN
+   1529         ACSNOW(I,J)=ACSNOW(I,J)+PREC(I,J)
+   1530 C***
+   1531 C***  ... OTHERWISE IT RAINS.
+   1532 C***
+   1533       ELSE
+   1534         ACCLIQ(I,J)=ACCLIQ(I,J)+PREC(I,J)
+   1535       ENDIF
+   1536 C
+   1537       PREC(I,J)=0.
+   1538   200 CONTINUE
+   1539 C***
+   1540 C***  LONGWAVE OUTGOING RADIATION
+   1541 C***
+   1542 !$omp parallel do private(i,j,tsfc,tsfc2)
+   1543       DO 210 J=MYJS2,MYJE2
+   1544       DO 210 I=MYIS,MYIE
+   1545       TSFC=THS(I,J)/APES(I,J)
+   1546       TSFC2=TSFC*TSFC
+   1547       RADOT(I,J)=HBM2(I,J)*EPSR(I,J)*STBOL*TSFC2*TSFC2
+   1548   210 CONTINUE
+   1549 C
+   1550 C-----------------------------------------------------------------------
+   1551 C
+   1552 C   INCREMENT TIME STEP COUNTERS FOR USE IN COMPUTING TIME AVE VALUES
+   1553 C
+   1554       APHTIM = APHTIM + 1.
+   1555       ARDSW  = ARDSW  + 1.
+   1556       ARDLW  = ARDLW  + 1.
+   1557       ASRFC  = ASRFC  + 1.
+   1558 C-----------------------------------------------------------------------
+   1559                              RETURN
+   1560                              END
+
+Page 24          Source Listing                  SURFCE
+2022-02-15 16:37 Entry Points                    SURFCE.F
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ surfce_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 100                        Label  542                                                            534,535                           
+ 110                        Label  556                                                            545,546                           
+ 120                        Label  605                                                            559,560                           
+ 130                        Label  615                                                            611,612                           
+ 140                        Label  722                                                            708                               
+ 150                        Label  1495                                                           1490                              
+ 155                        Label  1498                                                           639,641                           
+ 160                        Label  1499                                                           638                               
+ 200                        Label  1538                                                           1513,1514                         
+ 210                        Label  1548                                                           1543,1544                         
+ 50                         Label  527                                                            478,479                           
+ A2                         Param  61       R(4)            4           scalar                    67,551,657                        
+ A23M4                      Param  67       R(4)            4           scalar                    552                               
+ A3                         Param  61       R(4)            4           scalar                    67,551,657                        
+ A4                         Param  61       R(4)            4           scalar                    67,551,552,657                    
+ ACMPRE                     Common 368                                  287284   SAVE                                               
+ ACMRDL                     Common 397                                  3662832  SAVE                                               
+ ACMRDS                     Common 387                                  3662832  SAVE                                               
+ ACMSFC                     Common 376                                  574576   SAVE                                               
+ ALB                        Local  201      R(4)            4           scalar                    744,776,777,780,783,784,788,967,97
+                                                                                                  2,993,1103,1128,1129,1132,1135,113
+                                                                                                  6,1140,1317,1322,1343             
+ ALB2D                      Local  202      R(4)            4           scalar                    1104,1484                         
+ APE                        Dummy  2        R(4)            4     3     807975   ARG,INOUT        538                               
+ APELM                      Local  175      R(4)            4     2     17955                     538,613,698,1528                  
+ APES                       Local  173      R(4)            4     2     17955                     481,548,554,655,657,699,700,1477,1
+                                                                                                  479,1516,1518,1545                
+ CAPA                       Param  62       R(4)            4           scalar                    481,548                           
+ CHK                        Local  207      R(4)            4           scalar                    688,1082,1084,1104,1432,1434,1449,
+                                                                                                  1461                              
+ CHKFF                      Local  689      R(4)            4           scalar                    689                               
+ CKLQ                       Dummy  2        R(4)            4     2     17955    ARG,INOUT        601,603,614                       
+ CMCK                       Local  208      R(4)            4           scalar                    701,879,881,1104,1229,1231,1488   
+ CMK                        Local  1104     R(4)            4           scalar                    1104                              
+ CP                         Param  63       R(4)            4           scalar                    555                               
+ CTLBLK                     Common 254                                  112      SAVE                                               
+ DQSDT                      Local  178      R(4)            4     2     17955                     552,686                           
+ DQSDTK                     Local  205      R(4)            4           scalar                    686,1101                          
+ DTK                        Local  206      R(4)            4           scalar                    671,1100                          
+ DUM1                       Local  1106     R(4)            4           scalar                    1106                              
+ DUM2                       Local  1106     R(4)            4           scalar                    1106                              
+ DUM3                       Local  1106     R(4)            4           scalar                    1106                              
+ DUM4                       Local  1106     R(4)            4           scalar                    1106                              
+ ELFLX                      Local  209      R(4)            4           scalar                    1105,1452,1479                    
+
+Page 25          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ELIV                       Param  64       R(4)            4           scalar                    68                                
+ ELIW                       Param  64       R(4)            4           scalar                    68                                
+ ELWV                       Param  64       R(4)            4           scalar                    68,554                            
+ EPSWET                     Param  59       R(4)            4           scalar                                                      
+ ETALM                      Local  174      R(4)            4     2     17955                     537,549                           
+ EXP                        Func   551                                  scalar                    551,657                           
+ FACTRL                     Local  573      R(4)            4           scalar                    573,575,586,594                   
+ FACTRS                     Local  566      R(4)            4           scalar                    566,568,587,591,592,593           
+ FDTLIV                     Local  469      R(4)            4           scalar                    469                               
+ FDTLIW                     Local  468      R(4)            4           scalar                    468,1468                          
+ FDTW                       Local  470      R(4)            4           scalar                    470,1470,1521,1522                
+ FFS                        Local  180      R(4)            4     2     17955                     555,689,1516                      
+ FFSK                       Local  553      R(4)            4           scalar                    553,554,555                       
+ GFLX                       Local  210      R(4)            4           scalar                    1105,1462,1472                    
+ GLB_TABLE                  Common 143                                  128      SAVE                                               
+ HFLX                       Local  211      R(4)            4           scalar                    1105                              
+ I                          Local  479      I(4)            4           scalar                    479,480,481,482,491,492,494,495,49
+                                                                                                  6,497,498,500,501,506,507,508,509,
+                                                                                                  510,511,512,513,514,515,516,517,51
+                                                                                                  9,521,522,523,535,536,537,538,539,
+                                                                                                  540,541,546,547,548,549,550,551,55
+                                                                                                  2,553,554,555,560,565,566,571,572,
+                                                                                                  573,586,587,591,592,593,594,595,59
+                                                                                                  6,600,601,603,612,613,614,639,641,
+                                                                                                  643,644,645,646,647,649,654,655,65
+                                                                                                  6,657,665,667,672,676,677,678,679,
+                                                                                                  680,681,686,687,688,689,690,691,69
+                                                                                                  6,697,698,699,700,701,702,706,709,
+                                                                                                  715,718,741,744,777,778,780,788,79
+                                                                                                  9,815,823,831,839,842,850,853,866,
+                                                                                                  874,881,890,899,904,919,929,938,94
+                                                                                                  7,956,961,968,969,972,981,987,988,
+                                                                                                  991,993,1007,1016,1021,1030,1040,1
+                                                                                                  050,1063,1070,1077,1084,1129,1130,
+                                                                                                  1132,1140,1151,1166,1174,1182,1190
+                                                                                                  ,1193,1201,1204,1216,1224,1231,124
+                                                                                                  0,1249,1254,1269,1279,1288,1297,13
+                                                                                                  06,1311,1318,1319,1322,1331,1337,1
+                                                                                                  338,1341,1343,1357,1366,1371,1380,
+                                                                                                  1390,1400,1413,1420,1427,1434,1457
+                                                                                                  ,1458,1459,1460,1461,1462,1463,146
+                                                                                                  4,1466,1467,1468,1470,1471,1472,14
+                                                                                                  77,1478,1479,1484,1485,1487,1488,1
+                                                                                                  489,1491,1493,1494,1514,1515,1516,
+                                                                                                  1517,1518,1519,1520,1521,1522,1523
+                                                                                                  ,1528,1529,1534,1537,1544,1545,154
+                                                                                                  7                                 
+ ICE                        Local  195      I(4)            4           scalar                    649,667,765,780,788,831,938,972,98
+                                                                                                  1,1100,1117,1132,1140,1288,1322,13
+                                                                                                  31                                
+ IDIM1                      Param  91       I(4)            4           scalar                    172,173,174,175,176,177,178,179,18
+                                                                                                  0,181,182,265,272,273,275,276,277,
+                                                                                                  294,295,296,297,298,299,300,301,30
+                                                                                                  2,303,304,313,315,316,317,324,325,
+                                                                                                  326,327,328,329,330,331,332,333,33
+
+Page 26          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  4,335,336,337,338,339,340,342,347,
+                                                                                                  355,356,357,358,359,360,361,362,37
+                                                                                                  0,371,378,379,380,381,389,390,391,
+                                                                                                  392,399,400,401,402               
+ IDIM2                      Param  91       I(4)            4           scalar                    172,173,174,175,176,177,178,179,18
+                                                                                                  0,181,182,265,272,273,275,276,277,
+                                                                                                  294,295,296,297,298,299,300,301,30
+                                                                                                  2,303,304,313,315,316,317,324,325,
+                                                                                                  326,327,328,329,330,331,332,333,33
+                                                                                                  4,335,336,337,338,339,340,342,347,
+                                                                                                  355,356,357,358,359,360,361,362,37
+                                                                                                  0,371,378,379,380,381,389,390,391,
+                                                                                                  392,399,400,401,402               
+ IERR1                      Local  457      I(4)            4           scalar                    457,650,781,789,800,816,824,832,84
+                                                                                                  4,855,891,900,905,948,957,962,973,
+                                                                                                  982,1090,1133,1141,1152,1167,1175,
+                                                                                                  1183,1195,1206,1232,1241,1250,1255
+                                                                                                  ,1280,1298,1307,1312,1323,1332,135
+                                                                                                  8,1367,1372,1440                  
+ IERR2                      Local  458      I(4)            4           scalar                    458,867,875,939,1087,1217,1225,128
+                                                                                                  9,1381,1437                       
+ IGSTL                      Param  86       I(4)            4           scalar                    91                                
+ IGSTR                      Param  86       I(4)            4           scalar                    91                                
+ IM                         Param  75       I(4)            4           scalar                    88,91,149,150,151,152,153,157,158,
+                                                                                                  163                               
+ INDEX                      Local  803      I(4)            4           scalar                    803,807,808,812,813,815,820,821,82
+                                                                                                  3,828,829,831,836,837,839,842,843,
+                                                                                                  846,848,850,853,854,866,874,881,91
+                                                                                                  9,923,925,927,929,938,977,978,979,
+                                                                                                  981,1030,1155,1158,1159,1163,1164,
+                                                                                                  1166,1171,1172,1174,1179,1180,1182
+                                                                                                  ,1187,1188,1190,1193,1194,1197,119
+                                                                                                  9,1201,1204,1205,1216,1224,1231,12
+                                                                                                  69,1273,1275,1277,1279,1288,1327,1
+                                                                                                  328,1329,1331,1380                
+ INDEXM                     Local  808      I(4)            4           scalar                    808,842,843,853,854,1159,1193,1194
+                                                                                                  ,1204,1205                        
+ INDEXP                     Local  807      I(4)            4           scalar                    807,842,843,853,854,1158,1193,1194
+                                                                                                  ,1204,1205                        
+ INPES                      Param  83       I(4)            4           scalar                    88,91,133,134,135,144,145         
+ ISLTPK                     Local  196      I(4)            4           scalar                    691,694,794,799,1102,1146,1151    
+ ISPTPK                     Local  199      I(4)            4           scalar                    634,795,799,1102,1147,1151        
+ ITAIL                      Param  88       I(4)            4           scalar                                                      
+ ITB                        Param  96       I(4)            4           scalar                    291,306                           
+ ITBQ                       Param  96       I(4)            4           scalar                    292,306                           
+ IVGTPK                     Local  197      I(4)            4           scalar                    690,693,793,799,1102,1145,1151    
+ J                          Local  478      I(4)            4           scalar                    478,480,481,482,491,492,494,495,49
+                                                                                                  6,497,498,500,501,506,507,508,509,
+                                                                                                  510,511,512,513,514,515,516,517,51
+                                                                                                  9,521,522,523,534,536,537,538,539,
+                                                                                                  540,541,545,547,548,549,550,551,55
+                                                                                                  2,553,554,555,559,565,566,571,572,
+                                                                                                  573,586,587,591,592,593,594,595,59
+                                                                                                  6,600,601,603,611,613,614,638,641,
+                                                                                                  643,644,645,646,647,649,654,655,65
+
+Page 27          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  6,657,665,667,672,676,677,678,679,
+                                                                                                  680,681,686,687,688,689,690,691,69
+                                                                                                  6,697,698,699,700,701,702,706,709,
+                                                                                                  715,718,741,744,777,778,780,788,79
+                                                                                                  9,815,823,831,839,842,850,853,866,
+                                                                                                  874,881,890,899,904,919,929,938,94
+                                                                                                  7,956,961,968,969,972,981,987,988,
+                                                                                                  991,993,1007,1016,1021,1030,1040,1
+                                                                                                  050,1063,1070,1077,1084,1129,1130,
+                                                                                                  1132,1140,1151,1166,1174,1182,1190
+                                                                                                  ,1193,1201,1204,1216,1224,1231,124
+                                                                                                  0,1249,1254,1269,1279,1288,1297,13
+                                                                                                  06,1311,1318,1319,1322,1331,1337,1
+                                                                                                  338,1341,1343,1357,1366,1371,1380,
+                                                                                                  1390,1400,1413,1420,1427,1434,1457
+                                                                                                  ,1458,1459,1460,1461,1462,1463,146
+                                                                                                  4,1466,1467,1468,1470,1471,1472,14
+                                                                                                  77,1478,1479,1484,1485,1487,1488,1
+                                                                                                  489,1491,1493,1494,1513,1515,1516,
+                                                                                                  1517,1518,1519,1520,1521,1522,1523
+                                                                                                  ,1528,1529,1534,1537,1543,1545,154
+                                                                                                  7                                 
+ JAM                        Param  166      I(4)            4           scalar                    264                               
+ JDIM1                      Param  92       I(4)            4           scalar                    172,173,174,175,176,177,178,179,18
+                                                                                                  0,181,182,265,272,273,275,276,277,
+                                                                                                  294,295,296,297,298,299,300,301,30
+                                                                                                  2,303,304,313,315,316,317,324,325,
+                                                                                                  326,327,328,329,330,331,332,333,33
+                                                                                                  4,335,336,337,338,339,340,342,347,
+                                                                                                  355,356,357,358,359,360,361,362,37
+                                                                                                  0,371,378,379,380,381,389,390,391,
+                                                                                                  392,399,400,401,402               
+ JDIM2                      Param  92       I(4)            4           scalar                    172,173,174,175,176,177,178,179,18
+                                                                                                  0,181,182,265,272,273,275,276,277,
+                                                                                                  294,295,296,297,298,299,300,301,30
+                                                                                                  2,303,304,313,315,316,317,324,325,
+                                                                                                  326,327,328,329,330,331,332,333,33
+                                                                                                  4,335,336,337,338,339,340,342,347,
+                                                                                                  355,356,357,358,359,360,361,362,37
+                                                                                                  0,371,378,379,380,381,389,390,391,
+                                                                                                  392,399,400,401,402               
+ JGSTL                      Param  87       I(4)            4           scalar                    92                                
+ JGSTR                      Param  87       I(4)            4           scalar                    92                                
+ JM                         Param  75       I(4)            4           scalar                    89,92,149,150,151,152,153,157,158,
+                                                                                                  163,166                           
+ JNPES                      Param  83       I(4)            4           scalar                    89,92,133,134,135,144,145         
+ JTAIL                      Param  89       I(4)            4           scalar                                                      
+ JTB                        Param  96       I(4)            4           scalar                    291,306                           
+ JTBQ                       Param  96       I(4)            4           scalar                    306                               
+ LFIRST                     Local  192      L(4)            4           scalar                    449,756,1504                      
+ LFIRSTA                    Local  193      L(4)            4           scalar                    451,1108,1503                     
+ LLMH                       Local  536      I(4)            4           scalar                    536,537,538,539,540,541           
+ LM                         Param  75       I(4)            4           scalar                    158,166,181,275,276,290,315,316,34
+                                                                                                  2,392,402                         
+ LOOPS                      Common 263                                  158840   SAVE                                               
+
+Page 28          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LP1                        Param  166      I(4)            4           scalar                    182,290                           
+ LSM                        Param  75       I(4)            4           scalar                                                      
+ LWDN                       Local  212      R(4)            4           scalar                    676,1047,1050,1101,1397,1400      
+ MAPPINGS                   Common 162                                  5024     SAVE                                               
+ MASKS                      Common 271                                  6894720  SAVE                                               
+ MAX                        Func   808                                  scalar                    808,1159                          
+ MIN                        Func   807                                  scalar                    807,1158                          
+ MPPCOM                     Common 107                                  1464     SAVE                                               
+ NINT                       Func   667                                  scalar                    667                               
+ NROOT                      Param  98       I(4)            4           scalar                                                      
+ NS                         Local  499      I(4)            4           scalar                    499,500,501,520,521,522,523,708,70
+                                                                                                  9,715,718,1490,1491,1493,1494     
+ NSOIL                      Param  98       I(4)            4           scalar                    186,360,361,362,499,520,708,797,80
+                                                                                                  3,807,1100,1149,1155,1158,1490    
+ OPTIONS                    Common 445                                  24       SAVE                                               
+ PHYS                       Common 285                                  1788916  SAVE                                               
+ PLFLX                      Local  214      R(4)            4           scalar                    1105,1451,1470,1471               
+ PLM                        Local  174      R(4)            4     2     17955                     549,551,553,678                   
+ PQ0                        Param  60       R(4)            4           scalar                    67,550                            
+ PQ0C                       Param  67       R(4)            4           scalar                                                      
+ PQ0SEA                     Param  67       R(4)            4           scalar                    550,656                           
+ PRCP                       Local  215      R(4)            4           scalar                    679,1075,1077,1101,1425,1427      
+ PS                         Local  173      R(4)            4     2     17955                     480,481,547,548,656               
+ PTU                        Local  216      R(4)            4           scalar                    1103                              
+ PVRBLS                     Common 323                                  5530140  SAVE                                               
+ Q1K                        Local  217      R(4)            4           scalar                    697,1105                          
+ Q2K                        Local  218      R(4)            4           scalar                    680,685,1059,1061,1063,1101,1409,1
+                                                                                                  411,1413                          
+ Q2SAT                      Local  219      R(4)            4           scalar                    681,685,1060,1061,1063,1101,1410,1
+                                                                                                  411,1413                          
+ QFC1                       Local  180      R(4)            4     2     17955                     554,614,1464,1478,1479,1518       
+ QLM                        Local  177      R(4)            4     2     17955                     462,463,540,553,600,680,1479,1517 
+ QLMS                       Local  177      R(4)            4     2     17955                     464,550,552,600,681               
+ R                          Param  63       R(4)            4           scalar                    553                               
+ RDSIN                      Local  175      R(4)            4     2     17955                     587,677                           
+ RLIVWV                     Param  68       R(4)            4           scalar                    1464                              
+ RNOF1K                     Local  220      R(4)            4           scalar                    1105,1457                         
+ RNOF2K                     Local  221      R(4)            4           scalar                    1105,1458                         
+ ROW                        Param  63       R(4)            4           scalar                    68,679                            
+ ROWLIV                     Param  68       R(4)            4           scalar                    469                               
+ ROWLIW                     Param  68       R(4)            4           scalar                    468                               
+ SCHECK                     Local  1449     R(4)            4           scalar                    1449,1450                         
+ SEAFC                      Param  60       R(4)            4           scalar                    67                                
+ SFCPRS                     Local  222      R(4)            4           scalar                    678,1068,1070,1101,1418,1420      
+ SFCSPD                     Local  223      R(4)            4           scalar                    1101                              
+ SFCTH2                     Local  224      R(4)            4           scalar                    699,1038,1040,1101,1388,1390      
+ SFCTMP                     Local  225      R(4)            4           scalar                    698,1037,1040,1101,1387,1390      
+ SFLX                       Subr   1099                                                           1099                              
+ SH2OK                      Local  186      R(4)            4     1     4                         715,823,828,829,831,837,839,848,85
+                                                                                                  0,979,981,1104,1174,1179,1180,1182
+                                                                                                  ,1188,1190,1199,1201,1329,1331,149
+                                                                                                  3                                 
+ SINGLRST                   Local  252      L(4)            4           scalar                                                      
+ SMCK                       Local  186      R(4)            4     1     4                         709,820,821,823,829,831,837,839,84
+                                                                                                  8,850,978,979,981,1104,1171,1172,1
+
+Page 29          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  174,1180,1182,1188,1190,1199,1201,
+                                                                                                  1328,1329,1331,1491               
+ SMELTK                     Local  230      R(4)            4           scalar                    1105,1467,1468                    
+ SNDENS                     Local  231      R(4)            4           scalar                    896,897,899,902,904,953,954,956,95
+                                                                                                  9,961,1013,1014,1016,1019,1021,124
+                                                                                                  6,1247,1249,1252,1254,1303,1304,13
+                                                                                                  06,1309,1311,1363,1364,1366,1369,1
+                                                                                                  371                               
+ SNOALB                     Local  233      R(4)            4           scalar                    741,776,778,780,785,786,788,970,97
+                                                                                                  2,993,1103,1128,1130,1132,1137,113
+                                                                                                  8,1140,1320,1322,1343             
+ SNODPK                     Local  234      R(4)            4           scalar                    702,780,788,886,887,888,890,895,89
+                                                                                                  6,899,904,943,944,945,947,952,953,
+                                                                                                  956,961,972,993,1003,1004,1005,100
+                                                                                                  7,1012,1013,1016,1021,1104,1132,11
+                                                                                                  40,1236,1237,1238,1240,1245,1246,1
+                                                                                                  249,1254,1293,1294,1295,1297,1302,
+                                                                                                  1303,1306,1311,1322,1343,1353,1354
+                                                                                                  ,1355,1357,1362,1363,1366,1371,148
+                                                                                                  5                                 
+ SNOWH                      Local  235      R(4)            4           scalar                    706,886,887,888,890,896,899,904,94
+                                                                                                  3,944,945,947,953,956,961,1003,100
+                                                                                                  4,1005,1007,1013,1016,1021,1104,12
+                                                                                                  36,1237,1238,1240,1246,1249,1254,1
+                                                                                                  293,1294,1295,1297,1303,1306,1311,
+                                                                                                  1353,1354,1355,1357,1363,1366,1371
+                                                                                                  ,1487                             
+ SOIL                       Common 354                                  1651892  SAVE                                               
+ SOILQM                     Local  236      R(4)            4           scalar                    1106,1489                         
+ SOILQW                     Local  237      R(4)            4           scalar                    1106,1459                         
+ SOLDN                      Local  238      R(4)            4           scalar                    677,1048,1050,1101,1398,1400      
+ STBOL                      Param  63       R(4)            4           scalar                    573,1547                          
+ STCK                       Local  186      R(4)            4     1     4                         718,812,813,815,823,831,836,839,84
+                                                                                                  3,846,850,854,925,927,929,981,1104
+                                                                                                  ,1163,1164,1166,1174,1182,1187,119
+                                                                                                  0,1194,1197,1201,1205,1275,1277,12
+                                                                                                  79,1331,1494                      
+ SURFCE                     Subr   2                                                                                                
+ T0                         Param  62       R(4)            4           scalar                    836,846,1187,1197,1528            
+ T1                         Param  62       R(4)            4           scalar                                                      
+ T1K                        Local  240      R(4)            4           scalar                    700,872,874,936,938,1028,1030,1104
+                                                                                                  ,1222,1224,1286,1288,1378,1380,147
+                                                                                                  7                                 
+ TBOT                       Local  241      R(4)            4           scalar                    687,864,866,916,917,919,1103,1214,
+                                                                                                  1216,1266,1267,1269,1460          
+ TEMPCOM                    Common 148                                  6603768  SAVE                                               
+ THLM                       Local  176      R(4)            4     2     17955                     613,698,699,1515,1528             
+ TLM                        Local  176      R(4)            4     2     17955                     539,551,552,553,572,613           
+ TLMH                       Local  572      R(4)            4           scalar                    572,573                           
+ TOPO                       Common 156                                  17478548 SAVE                                               
+ TRESH                      Param  60       R(4)            4           scalar                    67,600                            
+ TSFC                       Local  1545     R(4)            4           scalar                    1545,1546                         
+ TSFC2                      Local  1546     R(4)            4           scalar                    1546,1547                         
+ VGFRCK                     Local  242      R(4)            4           scalar                    696,796,799,989,991,1103,1148,1151
+                                                                                                  ,1339,1341                        
+
+Page 30          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ VRBLS                      Common 312                                  13143060 SAVE                                               
+ WORD                       Local  448      CHAR            80          scalar                                                      
+ Z                          Local  243      R(4)            4           scalar                    672,1100,1449                     
+ ZERO2                      Subr   462                                                            462,463,464                       
+ ZINT                       Dummy  2        R(4)            4     3     825930   ARG,INOUT        541                               
+ ZLM                        Local  172      R(4)            4     2     17955                     541,672                           
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     1292760  2     17955    COM              1534                               
+ ACPREC                     R(4)            4     1220940  2     17955    COM                                                 
+ ACSNOM                     R(4)            4     71824    2     17955    COM              514,1467                           
+ ACSNOW                     R(4)            4     4        2     17955    COM              513,1529                           
+ AETA                       R(4)            4     264      1     45       COM              537                                
+ AFSI                       R(4)            4     5458320  2     17955    COM                                                 
+ AKHS                       R(4)            4     646380   2     17955    COM              553,688                            
+ AKMS                       R(4)            4     574560   2     17955    COM                                                 
+ ALBASE                     R(4)            4     1009004  2     17955    COM              644,649,744                        
+ ALBEDO                     R(4)            4     1080824  2     17955    COM              645,646,649,777,778,780,788,968,96 
+                                                                                           9,972,993,1129,1130,1132,1140,1318 
+                                                                                           ,1319,1322,1343,1484               
+ ALWIN                      R(4)            4     215472   2     17955    COM              594                                
+ ALWOUT                     R(4)            4     287292   2     17955    COM              595                                
+ ALWTOA                     R(4)            4     359112   2     17955    COM              596                                
+ APHTIM                     R(4)            4     574572         scalar   COM              1554                               
+ ARDLW                      R(4)            4     8              scalar   COM              1556                               
+ ARDSW                      R(4)            4     8              scalar   COM              1555                               
+ ASRFC                      R(4)            4     8              scalar   COM              1557                               
+ ASWIN                      R(4)            4     215472   2     17955    COM              591                                
+ ASWOUT                     R(4)            4     287292   2     17955    COM              592                                
+ ASWTOA                     R(4)            4     359112   2     17955    COM              593                                
+ BGROFF                     R(4)            4     215464   2     17955    COM              497,509,1458                       
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CLDEFI                     R(4)            4     1077300  2     17955    COM                                                 
+ CMC                        R(4)            4     718200   2     17955    COM              498,516,701,1488                   
+ CNVBOT                     R(4)            4     721724   2     17955    COM                                                 
+ CNVTOP                     R(4)            4     649904   2     17955    COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CUPREC                     R(4)            4     1364580  2     17955    COM                                                 
+ CZEN                       R(4)            4     434444   2     17955    COM              566                                
+ CZMEAN                     R(4)            4     1296284  2     17955    COM              565,566                            
+ DETA                       R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM              468,469,470,671,679,1457,1458      
+ EPSR                       R(4)            4     75344    2     17955    COM              1547                               
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     12999420 2     17955    COM                                                 
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+
+Page 31          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ GFFC                       R(4)            4     865364   2     17955    COM                                                 
+ GLAT                       R(4)            4     290804   2     17955    COM                                                 
+ GLON                       R(4)            4     362624   2     17955    COM                                                 
+ GRNFLX                     R(4)            4     287280   2     17955    COM              511,1462                           
+ HBM2                       R(4)            4     6751080  2     17955    COM              553,586,587,591,592,593,594,595,59 
+                                                                                           6,603,641,656,1547                 
+ HBM3                       R(4)            4     6822900  2     17955    COM                                                 
+ HBOT                       R(4)            4     578084   2     17955    COM                                                 
+ HDAC                       R(4)            4     1152644  2     17955    COM                                                 
+ HDACV                      R(4)            4     1224464  2     17955    COM                                                 
+ HTM                        R(4)            4     287280   3     807975   COM                                                 
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ HTOP                       R(4)            4     506264   2     17955    COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     620      1     8        COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDTAD                      I(4)            4     72             scalar   COM                                                 
+ IE_GLB_TABLE               I(4)            4     32       1     8        COM                                                 
+ IE_LOC_TABLE               I(4)            4     556      1     8        COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1064     1     100      COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IQUILT_GROUP               I(4)            4     1060           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ ISLOPE                     I(4)            4     574560   2     17955    COM                                                 
+ ISLTYP                     I(4)            4     502740   2     17955    COM              691,988,991,1338,1341              
+ IS_GLB_TABLE               I(4)            4     0        1     8        COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     8        COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ IVGTYP                     I(4)            4     430920   2     17955    COM              690,987,991,1337,1341              
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+
+Page 32          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     96       1     8        COM                                                 
+ JE_LOC_TABLE               I(4)            4     588      1     8        COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JS_GLB_TABLE               I(4)            4     64       1     8        COM                                                 
+ JS_LOC_TABLE               I(4)            4     524      1     8        COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     17955    COM              536                                
+ LMV                        I(4)            4     87020    2     17955    COM                                                 
+ MPI_COMM_COMP              I(4)            4     652            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     656            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     660      1     100      COM                                                 
+ MXSNAL                     R(4)            4     3524     2     17955    COM              647,649,741                        
+ MYIE                       I(4)            4     52             scalar   COM              479,535,546,560,612,639,1514,1544  
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM              479,535,546,560,612,639,1514,1544  
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM              478                                
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM              534,545,559,611,638,1513,1543      
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+
+Page 33          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM              478                                
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM              534,545,559,611,638,1513,1543      
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM              649,780,788,799,815,823,831,839,84 
+                                                                                           2,850,853,866,874,881,890,899,904, 
+                                                                                           919,929,938,947,956,961,972,981,99 
+                                                                                           1,993,1007,1016,1021,1030,1040,105 
+                                                                                           0,1063,1070,1077,1084,1132,1140,11 
+                                                                                           51,1166,1174,1182,1190,1193,1201,1 
+                                                                                           204,1216,1224,1231,1240,1249,1254, 
+                                                                                           1269,1279,1288,1297,1306,1311,1322 
+                                                                                           ,1331,1341,1343,1357,1366,1371,138 
+                                                                                           0,1390,1400,1413,1420,1427,1434    
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+
+Page 34          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM                                                 
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ NPHS                       I(4)            4     88             scalar   COM              476                                
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM                                                 
+ NRADS                      I(4)            4     96             scalar   COM                                                 
+ NRDLW                      I(4)            4     4              scalar   COM                                                 
+ NRDSW                      I(4)            4     4              scalar   COM                                                 
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSRFC                      I(4)            4     4              scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM                                                 
+ NTDDMP                     I(4)            4     64             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM              476                                
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ PCTSNO                     R(4)            4     359100   2     17955    COM              482                                
+ PD                         R(4)            4     0        2     17955    COM              480,547,549                        
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ POTEVP                     R(4)            4     430932   2     17955    COM              1470,1522                          
+ POTFLX                     R(4)            4     502752   2     17955    COM              1471,1523                          
+ PREC                       R(4)            4     1149120  2     17955    COM              679,1529,1534,1537                 
+ PSHLTR                     R(4)            4     2154600  2     17955    COM                                                 
+ PT                         R(4)            4     4              scalar   COM              480,547,549                        
+ PTBL                       R(4)            4     1439924  2     10184    COM                                                 
+ Q                          R(4)            4     9767520  3     807975   COM              540                                
+ Q10                        R(4)            4     1795500  2     17955    COM                                                 
+ Q2                         R(4)            4     2226420  3     807975   COM                                                 
+ Q30                        R(4)            4     1508220  2     17955    COM                                                 
+ QS                         R(4)            4     502740   2     17955    COM              656,697,1479,1517                  
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ QSHLTR                     R(4)            4     2082780  2     17955    COM                                                 
+ QWBS                       R(4)            4     861840   2     17955    COM              1517,1520,1521,1522,1523           
+ QZ0                        R(4)            4     359100   2     17955    COM              600,1517                           
+ RADIN                      R(4)            4     147164   2     17955    COM              586,676                            
+ RADOT                      R(4)            4     218984   2     17955    COM              595,1547                           
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+
+Page 35          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RES                        R(4)            4     13071240 2     17955    COM              549                                
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RF                         R(4)            4     718200   2     17955    COM                                                 
+ RLWIN                      R(4)            4     12       2     17955    COM              586,594                            
+ RLWOUT                     R(4)            4     71832    2     17955    COM                                                 
+ RLWTOA                     R(4)            4     143652   2     17955    COM              596                                
+ RLWTT                      R(4)            4     430932   3     807975   COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RSWIN                      R(4)            4     12       2     17955    COM              587,591                            
+ RSWOUT                     R(4)            4     71832    2     17955    COM              592                                
+ RSWTOA                     R(4)            4     143652   2     17955    COM              593                                
+ RSWTT                      R(4)            4     430932   3     807975   COM                                                 
+ RTDPTH                     R(4)            4     1364596  1     4        COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SFCEVP                     R(4)            4     359112   2     17955    COM              1521                               
+ SFCEXC                     R(4)            4     71820    2     17955    COM              1461                               
+ SFCLHX                     R(4)            4     71832    2     17955    COM              1520                               
+ SFCSHX                     R(4)            4     12       2     17955    COM              1519                               
+ SFCUVX                     R(4)            4     287292   2     17955    COM                                                 
+ SH2O                       R(4)            4     1364612  3     71820    COM              501,522,715,1493                   
+ SI                         R(4)            4     1005480  2     17955    COM              519,706,1487                       
+ SICE                       R(4)            4     215460   2     17955    COM              492,667,1463,1528                  
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     1368104  2     17955    COM              571,573                            
+ SLDPTH                     R(4)            4     1364580  1     4        COM              1100                               
+ SM                         R(4)            4     143640   2     17955    COM              491,550,643,654,665,1515,1517,1522 
+                                                                                           ,1523,1528                         
+ SMC                        R(4)            4     790020   3     71820    COM              500,521,709,1491                   
+ SMSTAV                     R(4)            4     143640   2     17955    COM              494,506,1459                       
+ SMSTOT                     R(4)            4     215460   2     17955    COM              495,507,1489                       
+ SNO                        R(4)            4     933660   2     17955    COM              517,649,702,1463,1466,1485         
+ SNOPCX                     R(4)            4     215472   2     17955    COM              515,1468                           
+ SOILTB                     R(4)            4     0        2     17955    COM              510,1460                           
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SSROFF                     R(4)            4     143644   2     17955    COM              496,508,1457                       
+ SST                        R(4)            4     937184   2     17955    COM              655                                
+ STC                        R(4)            4     1077300  3     71820    COM              523,718,1494                       
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+ SUBSHX                     R(4)            4     143652   2     17955    COM              512,1472                           
+ T                          R(4)            4     71820    3     807975   COM              539                                
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+
+Page 36          Source Listing                  SURFCE
+2022-02-15 16:37 Symbol Table                    SURFCE.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TG                         R(4)            4     793544   2     17955    COM              687                                
+ TH10                       R(4)            4     1723680  2     17955    COM                                                 
+ TH30                       R(4)            4     1436400  2     17955    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ THS                        R(4)            4     430920   2     17955    COM              655,657,700,1477,1515,1545         
+ THZ0                       R(4)            4     287280   2     17955    COM              1515                               
+ TPREC                      R(4)            4     0              scalar   COM                                                 
+ TRDLW                      R(4)            4     0              scalar   COM                                                 
+ TRDSW                      R(4)            4     0              scalar   COM                                                 
+ TSHLTR                     R(4)            4     2010960  2     17955    COM                                                 
+ TSRFC                      R(4)            4     0              scalar   COM                                                 
+ TTBL                       R(4)            4     1480660  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     1521396  2     66880    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+ TWBS                       R(4)            4     790020   2     17955    COM              1515,1519                          
+ U                          R(4)            4     3303720  3     807975   COM                                                 
+ U10                        R(4)            4     1867320  2     17955    COM                                                 
+ U30                        R(4)            4     1580040  2     17955    COM                                                 
+ USTAR                      R(4)            4     71820    2     17955    COM                                                 
+ UZ0                        R(4)            4     143640   2     17955    COM                                                 
+ V                          R(4)            4     6535620  3     807975   COM                                                 
+ V10                        R(4)            4     1939140  2     17955    COM                                                 
+ V30                        R(4)            4     1651860  2     17955    COM                                                 
+ VBM2                       R(4)            4     0        2     17955    COM                                                 
+ VBM3                       R(4)            4     71820    2     17955    COM                                                 
+ VEGFRC                     R(4)            4     646380   2     17955    COM              696                                
+ VTM                        R(4)            4     3519180  3     807975   COM                                                 
+ VZ0                        R(4)            4     215460   2     17955    COM                                                 
+ Z0                         R(4)            4     0        2     17955    COM                                                 
+
+Page 37          Source Listing                  SURFCE
+2022-02-15 16:37                                 SURFCE.F
+
+   1561 C
+   1562       BLOCK DATA OPT
+   1563       COMMON /OPTIONS/ SPVAL,IBESSL,KSB,IOFFS,IFLAG,SATDEL
+   1564       DATA SPVAL  / 99999  /
+   1565       DATA IBESSL /   0    /
+   1566       DATA KSB    /   3    /
+   1567       DATA IOFFS  /   2    /
+   1568       DATA IFLAG  /   0    /
+   1569       DATA SATDEL / 0.05   /
+   1570       END BLOCK DATA OPT
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ OPT                        Block  1562                                 scalar                                                      
+ OPTIONS                    Common 1563                                 24                                                          
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IBESSL                     I(4)            4     4              scalar   COM,SAVE         1565                               
+ IFLAG                      I(4)            4     16             scalar   COM,SAVE         1568                               
+ IOFFS                      I(4)            4     12             scalar   COM,SAVE         1567                               
+ KSB                        I(4)            4     8              scalar   COM,SAVE         1566                               
+ SATDEL                     R(4)            4     20             scalar   COM,SAVE         1569                               
+ SPVAL                      R(4)            4     0              scalar   COM,SAVE         1564                               
+
+Page 38          Source Listing                  OPT
+2022-02-15 16:37 Subprograms/Common Blocks       SURFCE.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ACMPRE                     Common 368                                  287284   SAVE                                               
+ ACMRDL                     Common 397                                  3662832  SAVE                                               
+ ACMRDS                     Common 387                                  3662832  SAVE                                               
+ ACMSFC                     Common 376                                  574576   SAVE                                               
+ CTLBLK                     Common 254                                  112      SAVE                                               
+ GLB_TABLE                  Common 143                                  128      SAVE                                               
+ LOOPS                      Common 263                                  158840   SAVE                                               
+ MAPPINGS                   Common 162                                  5024     SAVE                                               
+ MASKS                      Common 271                                  6894720  SAVE                                               
+ MPPCOM                     Common 107                                  1464     SAVE                                               
+ OPT                        Block  1562                                 scalar                                                      
+ OPTIONS                    Common 445                                  24       SAVE                                               
+ OPTIONS                    Common 1563                                 24                                                          
+ PHYS                       Common 285                                  1788916  SAVE                                               
+ PVRBLS                     Common 323                                  5530140  SAVE                                               
+ SOIL                       Common 354                                  1651892  SAVE                                               
+ SURFCE                     Subr   2                                                                                                
+ TEMPCOM                    Common 148                                  6603768  SAVE                                               
+ TOPO                       Common 156                                  17478548 SAVE                                               
+ VRBLS                      Common 312                                  13143060 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+
+Page 39          Source Listing                  OPT
+2022-02-15 16:37                                 SURFCE.F
+
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+
+Page 40          Source Listing                  OPT
+2022-02-15 16:37                                 SURFCE.F
+
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : SURFCE.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

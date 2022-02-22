@@ -1,0 +1,155 @@
+#!/bin/sh
+#
+# run prep for RCDAS
+#   gets data files (except precip which is done in earlier stop jrcdas_obs_precip
+#
+
+set -x
+
+export RUN_ENVIR=${RUN_ENVIR:-prod}
+
+export PS4='$SECONDS + '
+echo "$0 "`date`
+
+fatal() {
+  msg="fatal error $*"
+  postmsg "$msg"
+  exit 8
+}
+
+####################################
+# obtain unique process id (pid) and make temp directory
+####################################
+export pid=$$
+export job=${job:-JOB}
+export outid=${outid:-OUTID}
+export DATA=${DATA:-$DATAROOT/${jobid}}
+mkdir -p $DATA
+cd $DATA || fatal "could not cd to $DATA"
+KEEPDATA=${KEEPDATA:-NO}
+
+export cycle=t${cyc}z
+####################################
+# Specify NET and RUN Name and model
+####################################
+export NET=${NET:-rcdas}
+export RUN=${RUN:-rcdas}
+export model=${model:-rcdas}
+export version=${version:-$rcdas_ver}
+
+####################################
+# SENDCOM  - Copy Files From TMPDIR to $COMOUT
+# SENDDBN  - Issue DBNet Client Calls
+####################################
+
+if [ "$envir" = "prod" ]
+then
+   export SENDDBN=${SENDDBN:-YES}
+else
+   export SENDDBN=${SENDDBN:-NO}
+fi
+export SENDCOM=${SENDCOM:-'YES'}
+
+####################################
+# Determine Job Output Name on System
+####################################
+export outid="LL$job"
+export jobid="${outid}.o${pid}"
+export pgmout="OUTPUT.${pid}"
+export pgmerr=errfile
+
+####################################
+# specify Execution Areas
+####################################
+export HOMErcdas=$PACKAGEROOT/${model}.${version}
+export EXECrcdas=${HOMErcdas}/exec
+export PARMrcdas=${HOMErcdas}/parm
+export USHrcdas=${HOMErcdas}/ush
+export FIXrcdas=${HOMErcdas}/fix
+
+
+##############################
+# Run setpdy and initialize PDY variables
+##############################
+setpdy.sh
+. ./PDY
+##############################
+# set DATE
+##############################
+DATE=${DATE:-"${PDYm2}00"}
+export DATE
+
+[ $DATE -le 2011010100 ] && fatal "bad date code $DATE"
+
+[ `echo $DATE | cut -c9-10` != '00' ] && fatal "initial date must have 00 hours"
+
+export CDATE=`echo $DATE | cut -c1-8`
+export YEAR4=`echo $DATE | cut -c1-4`
+export YEAR2=`echo $DATE | cut -c3-4`
+export MONTH=`echo $DATE | cut -c5-6`
+export DAY=`echo $DATE | cut -c7-8`
+
+export CDATP1=`$NDATE +24 $DATE | cut -c1-8`
+export CDATM1=`$NDATE -24 $DATE | cut -c1-8`
+export DATEP12hr=`$NDATE +12 $DATE`
+export DATEM12hr=`$NDATE -12 $DATE`
+
+##############################################
+# Define COM/DCOM directories
+##############################################
+# some sst files in /com/gfs/prod/sst.date some in /com2/gfs/prod/sst.date
+set -x
+export DCOM_SNOW_ICE=${DCOM_SNOW_ICE:-$DCOMROOT}
+
+#export COMINsst=${COMINsst:-$(compath.py ${envir}/com/gfs/$gfs_ver)/sst.$CDATE}
+export COMINsst=${COMINsst:-$(compath.py ${envir}/com/nsst/${nsst_ver})/nsst.$CDATE}
+export COMcdas=${COMcdas:-$(compath.py ${envir}/com/cdas/$cdas_ver)}
+export COMINcdas=$COMcdas/cdas.$CDATE
+export COMINcdasp1=$COMcdas/cdas.$CDATP1
+export COMINobsproc=${COMINobsproc:-$(compath.py ${envir}/com/obsproc/${obsproc_ver})/cdas.${CDATE}}
+
+export COMIN=${COMIN:-$(compath.py ${envir}/com/${NET}/${version})}
+export COMOUT_base=${COMOUT_base:-$(compath.py -o ${NET}/${version})}
+export COMOUT=${COMOUT_base}/${RUN}.$CDATE
+export COMOUT_P1=${COMOUT_base}/${RUN}.$CDATP1
+
+[ ! -d $COMOUT ] && mkdir -p $COMOUT
+[ ! -d $COMOUT_P1 ] && mkdir -p $COMOUT_P1
+
+export STREAM=$COMOUT
+
+##############################################
+# turn off(0)/on(1) satellite data
+export HAS_MSU=0
+export HAS_HRS2=0
+export HAS_HRS3=0
+
+# for 2013 rerun
+export HAS_HRS3=0
+
+
+msg="HAS BEGUN on `hostname`"
+postmsg "$msg"
+
+env
+
+#############################################################
+# Execute the script
+${HOMErcdas}/scripts/exrcdas_prep.sh
+#############################################################
+err=$?
+if [ $err -eq 0 ] ; then
+   msg="ENDED NORMALLY."
+else
+   msg="ERROR."
+   KEEPDATA=YES
+fi
+postmsg "$msg"
+
+##############################
+# Remove the Temporary working directory
+##############################
+if [ $KEEPDATA != YES ] ; then
+   rm -r $DATA
+fi
+exit $err

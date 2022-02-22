@@ -1,0 +1,396 @@
+Page 1           Source Listing                  SOLARD
+2022-02-15 16:37                                 /tmp/ifortsG1EzK.i
+
+      1 # 1 "SOLARD.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3                          SUBROUTINE SOLARD(R1)
+      4 C     ******************************************************************
+      5 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      6 C                .      .    .                               .
+      7 C SUBPROGRAM:    SOLARD      COMPUTE THE SOLAR-EARTH DISTANCE
+      8 C   PRGRMMR: Q.ZHAO           ORG: W/NMC2     DATE: 96-7-23
+      9 C
+     10 C ABSTRACT:
+     11 C     SOLARD CALCULATES THE SOLAR-EARTH DISTANCE ON EACH DAY
+     12 C     FOR USE IN SHORT-WAVE RADIATION.
+     13 C
+     14 C PROGRAM HISTORY LOG:
+     15 C   96-07-23  Q.ZHAO      - ORIGINATOR
+     16 C   98-10-09  Q.ZHAO      - CHANGED TO USE IW3JDN IN W3LIB TO
+     17 C                           CALCULATE JD.
+     18 C
+     19 C USAGE: CALL SOLARD FROM SUBROUTINE INIT
+     20 C
+     21 C   INPUT ARGUMENT LIST:
+     22 C       NONE
+     23 C
+     24 C   OUTPUT ARGUMENT LIST:
+     25 C       R1   - THE NON-DIMENSIONAL DISTANCE BETWEEN SUN AND THE EARTH
+     26 C              (LESS THAN 1.0 IN SUMMER AND LARGER THAN 1.0 IN WINTER).
+     27 C
+     28 C   INPUT FILES:
+     29 C     NONE
+     30 C
+     31 C   OUTPUT FILES:
+     32 C     NONE
+     33 C
+     34 C   SUBPROGRAMS CALLED:
+     35 C
+     36 C     UNIQUE: NONE
+     37 C
+     38 C     LIBRARY: IW3JDN
+     39 C
+     40 C   COMMON BLOCKS: CTLBLK
+     41 C
+     42 C ATTRIBUTES:
+     43 C   LANGUAGE: FORTRAN 90
+     44 C   MACHINE : IBM SP
+     45 C$$$
+     46 # 1 "./sp.h" 1 
+     47 # 4
+     48 
+     49 # 46 "SOLARD.F" 2 
+     50 C***********************************************************************
+     51                              P A R A M E T E R
+     52      & (PI=3.1415926,PI2=2.*PI)
+     53 C-----------------------------------------------------------------------
+     54                              L O G I C A L
+     55      & RUN,FIRST,RESTRT,SIGMA,LEAP
+     56 C-----------------------------------------------------------------------
+     57       INCLUDE "CTLBLK.comm"
+
+Page 2           Source Listing                  SOLARD
+2022-02-15 16:37                                 SOLARD.F
+
+     58 C-----------------------------------------------------------------------
+     68                              D I M E N S I O N
+     69      1 NDM (12)
+     70 C-----------------------------------------------------------------------
+     71                              D A T A
+     72      1   JYR19/1900/,     JMN/0/,  CCR/1.3E-6/
+     73 C
+     74                              D A T A
+     75      1   NDM/0,31,59,90,120,151,181,212,243,273,304,334/
+     76 C
+     77 C.....TPP = DAYS BETWEEN EPOCH AND PERIHELION PASSAGE OF 1900
+     78 C.....JDOR1 = JD OF DECEMBER 30, 1899 AT 12 HOURS UT
+     79 C.....JDOR2 = JD OF EPOCH WHICH IS JANUARY 0, 1990 AT 12 HOURS UT
+     80 C
+     81                                    D A T A
+     82      1   TPP/1.55/,    JDOR1/2415019/,     JDOR2/2415020/
+     83 C
+     84 C    *******************************************************************
+     85 C     COMPUTES JULIAN DAY AND FRACTION FROM YEAR, MONTH, DAY AND TIME UT
+     86 C     ACCURATE ONLY BETWEEN MARCH 1, 1900 AND FEBRUARY 28, 2100
+     87 C     BASED ON JULIAN CALENDAR CORRECTED TO CORRESPOND TO GREGORIAN
+     88 C        CALENDAR DURING THIS PERIOD
+     89 C    *******************************************************************
+     90       JYR=IDAT(3)
+     91       JMNTH=IDAT(1)
+     92       JDAY=IDAT(2)
+     93       JHR=IHRST
+     94 C
+     95       JD=IW3JDN(JYR,JMNTH,JDAY)
+     96       IF(JHR.GE.12) THEN
+     97       JD=JD-1
+     98       FJD=.5E0+.041666667E0*FLOAT(JHR)+.00069444444E0*FLOAT(JMN)
+     99       ELSE
+    100   7   FJD=.041666667E0*FLOAT(JHR-12)+.00069444444E0*FLOAT(JMN)
+    101       END IF
+    102       DAYINC=JHR/24.0
+    103       JD=JD+FJD+DAYINC
+    104       FJD=JD+FJD+DAYINC-JD
+    105 C***
+    106 C*** CALCULATE THE SOLAR-EARTH DISTANCE
+    107 C***
+    108       DAT=FLOAT(JD-JDOR2)-TPP+FJD
+    109 C***
+    110 C    COMPUTES TIME IN JULIAN CENTURIES AFTER EPOCH
+    111 C***
+    112       T=FLOAT(JD-JDOR2)/36525.E0
+    113 C***
+    114 C    COMPUTES LENGTH OF ANOMALISTIC AND TROPICAL YEARS (MINUS 365 DAYS)
+    115 C***
+    116       YEAR=.25964134E0+.304E-5*T
+    117 C***
+    118 C    COMPUTES ORBIT ECCENTRICITY  FROM T
+    119 C***
+    120       EC=.01675104E0-(.418E-4+.126E-6*T)*T
+    121       YEAR=YEAR+365.E0
+    122 C***
+    123 C    DATE=DAYS SINCE LAST PERIHELION PASSAGE
+
+Page 3           Source Listing                  SOLARD
+2022-02-15 16:37                                 SOLARD.F
+
+    124 C***
+    125       DATE = MOD(DAT,YEAR)
+    126 C***
+    127 C    SOLVE ORBIT EQUATIONS BY NEWTON'S METHOD
+    128 C***
+    129       EM=PI2*DATE/YEAR
+    130       E=1.E0
+    131       ITER = 0
+    132  31   EP=E-(E-EC*SIN(E)-EM)/(1.E0-EC*COS(E))
+    133       CR=ABS(E-EP)
+    134       E=EP
+    135       ITER = ITER + 1
+    136       IF(ITER.GT.10) GOTO 1031
+    137       IF(CR.GT.CCR) GO TO 31
+    138  1031 CONTINUE
+    139       R1=1.E0-EC*COS(E)
+    140 C
+    141       WRITE(6,1000)JYR,JMNTH,JDAY,JHR,R1
+    142  1000 FORMAT('SUN-EARTH DISTANCE CALCULATION FINISHED IN SOLARD'/
+    143      &       'YEAR=',I5,'  MONTH=',I3,'  DAY=',I3,' HOUR='
+    144      &,      I3,' R1=',F9.4)
+    145 C***
+    146 C    RETURN TO RADTN
+    147 C***
+    148       RETURN
+    149       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ solard_             
+
+Page 4           Source Listing                  SOLARD
+2022-02-15 16:37 Symbol Table                    SOLARD.F
+
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 1000                       Label  142                                                            141                               
+ 1031                       Label  138                                                            136                               
+ 31                         Label  132                                                            137                               
+ 7                          Label  100                                                                                              
+ ABS                        Func   133                                  scalar                    133                               
+ CCR                        Local  72       R(4)            4           scalar                    72,137                            
+ COS                        Func   132                                  scalar                    132,139                           
+ CR                         Local  133      R(4)            4           scalar                    133,137                           
+ CTLBLK                     Common 62                                   112      SAVE                                               
+ DAT                        Local  108      R(4)            4           scalar                    108,125                           
+ DATE                       Local  125      R(4)            4           scalar                    125,129                           
+ DAYINC                     Local  102      R(4)            4           scalar                    102,103,104                       
+ E                          Local  130      R(4)            4           scalar                    130,132,133,134,139               
+ EC                         Local  120      R(4)            4           scalar                    120,132,139                       
+ EM                         Local  129      R(4)            4           scalar                    129,132                           
+ EP                         Local  132      R(4)            4           scalar                    132,133,134                       
+ FJD                        Local  98       R(4)            4           scalar                    98,100,103,104,108                
+ FLOAT                      Func   98                                   scalar                    98,100,108,112                    
+ ITER                       Local  131      I(4)            4           scalar                    131,135,136                       
+ IW3JDN                     Func   95       I(4)            4           scalar                    95                                
+ JD                         Local  95       I(4)            4           scalar                    95,97,103,104,108,112             
+ JDAY                       Local  92       I(4)            4           scalar                    92,95,141                         
+ JDOR1                      Local  82       I(4)            4           scalar                    82                                
+ JDOR2                      Local  82       I(4)            4           scalar                    82,108,112                        
+ JHR                        Local  93       I(4)            4           scalar                    93,96,98,100,102,141              
+ JMN                        Local  72       I(4)            4           scalar                    72,98,100                         
+ JMNTH                      Local  91       I(4)            4           scalar                    91,95,141                         
+ JYR                        Local  90       I(4)            4           scalar                    90,95,141                         
+ JYR19                      Local  72       I(4)            4           scalar                    72                                
+ LEAP                       Local  55       L(4)            4           scalar                                                      
+ MOD                        Func   125                                  scalar                    125                               
+ NDM                        Local  69       I(4)            4     1     12                        75                                
+ PI                         Param  52       R(4)            4           scalar                    52                                
+ PI2                        Param  52       R(4)            4           scalar                    129                               
+ R1                         Dummy  3        R(4)            4           scalar   ARG,INOUT        139,141                           
+ SIN                        Func   132                                  scalar                    132                               
+ SINGLRST                   Local  60       L(4)            4           scalar                                                      
+ SOLARD                     Subr   3                                                                                                
+ T                          Local  112      R(4)            4           scalar                    112,116,120                       
+ TPP                        Local  82       R(4)            4           scalar                    82,108                            
+ YEAR                       Local  116      R(4)            4           scalar                    116,121,125,129                   
+
+
+
+Page 5           Source Listing                  SOLARD
+2022-02-15 16:37 Symbol Table                    SOLARD.F
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM              90,91,92                           
+ IDTAD                      I(4)            4     72             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM              93                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM                                                 
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     88             scalar   COM                                                 
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM                                                 
+ NRADS                      I(4)            4     96             scalar   COM                                                 
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM                                                 
+ NTDDMP                     I(4)            4     64             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+
+Page 6           Source Listing                  SOLARD
+2022-02-15 16:37 Subprograms/Common Blocks       SOLARD.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 62                                   112      SAVE                                               
+ SOLARD                     Subr   3                                                                                                
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+
+Page 7           Source Listing                  SOLARD
+2022-02-15 16:37                                 SOLARD.F
+
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+
+Page 8           Source Listing                  SOLARD
+2022-02-15 16:37                                 SOLARD.F
+
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : SOLARD.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

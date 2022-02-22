@@ -1,0 +1,1920 @@
+Page 1           Source Listing                  MPPINIT
+2022-02-15 16:38                                 /tmp/ifortd7jpln.i
+
+      1 # 1 "MPPINIT.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3                           SUBROUTINE MPPINIT      
+      4 C     ******************************************************************
+      5 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      6 C                .      .    .
+      7 C SUBPROGRAM:    RADTN       THE OUTER RADIATION DRIVER
+      8 C   PRGRMMR: BLACK           ORG: W/NP22     DATE: 98-10-28
+      9 C
+     10 C ABSTRACT:
+     11 C     MPPINIT DETERMINES ALL RELEVANT VALUES FOR DIMENSIONS OF THE
+     12 C     DISTRIBUTED SUBDOMAINS AND THEIR HALOES.
+     13 C
+     14 C PROGRAM HISTORY LOG:
+     15 C   97-??-??  MEYS       - ORIGINATOR
+     16 C   97-??-??  BLACK      - CHANGES MADE FOR CLARITY
+     17 C   98-10-29  BLACK      - REWRITTEN FOR CLARITY
+     18 C
+     19 C USAGE: CALL RADTN FROM MAIN PROGRAM EBU
+     20 C   INPUT ARGUMENT LIST:
+     21 C     NONE
+     22 C
+     23 C   OUTPUT ARGUMENT LIST:
+     24 C     NONE
+     25 C
+     26 C   OUTPUT FILES:
+     27 C     NONE
+     28 C
+     29 C   SUBPROGRAMS CALLED:
+     30 C
+     31 C     UNIQUE:
+     32 C        NONE
+     33 C
+     34 C     LIBRARY:
+     35 C        NONE
+     36 C
+     37 C   COMMON BLOCKS: MPPCOM
+     38 C                  GLB_TABLE
+     39 C                  TEMPCOM
+     40 C                  TOPO
+     41 C                  MAPPINGS
+     42 C ATTRIBUTES:
+     43 C   LANGUAGE: FORTRAN 90
+     44 C   MACHINE : IBM SP
+     45 C$$$
+     46 C-----------------------------------------------------------------------
+     47        INCLUDE "parmeta"
+     71        INCLUDE "mpp.h"
+    130        INCLUDE "mpif.h"
+    131 # 1 "./sp.h" 1 
+    132 # 4
+    133 
+    134 # 50 "MPPINIT.F" 2 
+    135 C-----------------------------------------------------------------------
+    697        INTEGER ISTAT(MPI_STATUS_SIZE)
+    698 C-----------------------------------------------------------------------
+    699 C***********************************************************************
+
+Page 2           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    700 C-----------------------------------------------------------------------
+    701 C***
+    702 C***  INPES AND JNPES ARE THE NUMBER OF PEs REQUESTED IN X AND Y.
+    703 C***  ICHUNK AND JCHUNK ARE THE FIRST GUESS OF THE NUMBER
+    704 C***  OF I's AND J's IN EACH SUBDOMAIN OBTAINED BY SIMPLY
+    705 C***  DIVIDING THE GLOBAL DIMENSIONS BY THE NUMBER OF PE's
+    706 C***  REQUESTED IN EACH DIRECTION.
+    707 C***
+    708       ICHUNK=IM/INPES
+    709       JCHUNK=JM/JNPES
+    710       IICHUNK=ICHUNK+1
+    711 C***
+    712 C***  COMPUTE THE GLOBAL START AND END INDEX VALUES
+    713 C***  FOR I (MY_IS_GLB,MY_IE_GLB) AND J (MY_JS_GLB,MY_JE_GLB)
+    714 C***  ON EACH PE.
+    715 C***  IN GENERAL, THE NUMBER OF POINTS IN EACH DIRECTION
+    716 C***  WILL NOT DIVIDE EVENLY WITH INPES AND JNPES.  THE
+    717 C***  LOGIC BELOW GIVES ONE EXTRA POINT TO AS MANY OF THE
+    718 C***  EARLIEST PEs IN EACH DIRECTION AS IT TAKES TO USE
+    719 C***  UP THE REMAINDER POINTS (ITAIL AND JTAIL, WHICH ARE
+    720 C***  COMPUTED IN parmeta).
+    721 C***
+    722       IPE=0
+    723       MY_JS_CALC=1
+    724       JNCHUNKS=0
+    725 C
+    726       DO J=1,JNPES
+    727         JCHUNK_CALC=JCHUNK
+    728         IF(J.LE.JTAIL)JCHUNK_CALC=JCHUNK+1
+    729         JNCHUNKS=JNCHUNKS+JCHUNK_CALC
+    730         MY_JE_CALC=JNCHUNKS
+    731         MY_IS_CALC=1
+    732         NCHUNKS=0
+    733 C
+    734         DO I=1,INPES
+    735           ICHUNK_CALC=ICHUNK
+    736           IF(I.LE.ITAIL)ICHUNK_CALC=ICHUNK+1
+    737           NCHUNKS=NCHUNKS+ICHUNK_CALC
+    738           MY_IE_CALC=NCHUNKS 
+    739           IF(MYPE.EQ.IPE)THEN
+    740             MY_IS_GLB=MY_IS_CALC
+    741             MY_IE_GLB=MY_IE_CALC
+    742             MY_JS_GLB=MY_JS_CALC
+    743             MY_JE_GLB=MY_JE_CALC
+    744           ENDIF
+    745           MY_IS_CALC=MY_IE_CALC+1 
+    746           IPE=IPE+1
+    747         ENDDO
+    748 C
+    749         MY_JS_CALC=MY_JE_CALC+1
+    750       ENDDO
+    751 C----------------------------------------------------------------------
+    752 C***
+    753 C***  ILPADx IS THE INCREMENT INTO THE LEFT HALO OF A SUBDOMAIN.
+    754 C***  IRPADx IS THE INCREMENT INTO THE RIGHT HALO OF A SUBDOMAIN.
+    755 C***  ILPADx IS ALWAYS 0 FOR SUBDOMAINS ALONG THE WEST GLOBAL BOUNDARY.
+    756 C***  IRPADx IS ALWAYS 0 FOR SUBDOMAINS ALONG THE EAST GLOBAL BOUNDARY.
+
+Page 3           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    757 C***
+    758 C***  ILCOL IS A FLAG TELLING WHETHER OR NOT A SUBDOMAIN IS ON THE
+    759 C***  WEST (LEFT) GLOBAL BOUNDARY.
+    760 C***
+    761 C***  IS_INCx_BND AND IE_INCx_BND ARE INCREMENTS FROM THE LOCAL
+    762 C***  STARTING OR ENDING I VALUE AWAY FROM THE LOCAL BOUNDARY INTO THE
+    763 C***  SURBDOMAIN.  THEY ARE NONZERO ONLY FOR SUBDOMAINS ON THE WESTERN
+    764 C***  AND EASTERN GLOBAL BOUNDARIES.
+    765 C***
+    766       ILPAD1=1
+    767       ILPAD2=2
+    768       ILPAD3=3
+    769       ILPAD4=4
+    770       ILPAD5=5
+    771       IRPAD1=1
+    772       IRPAD2=2
+    773       IRPAD3=3
+    774       IRPAD4=4
+    775       IRPAD5=5
+    776 C
+    777       ILCOL=0
+    778       IRCOL=0
+    779 C
+    780       IS_INC1_BND=0
+    781       IS_INC2_BND=0
+    782       IE_INC1_BND=0
+    783       IE_INC2_BND=0
+    784 C
+    785       IF(MOD(MYPE,INPES).EQ.0)THEN             !WESTERNMOST SUBDOMAINS
+    786         ILPAD1=0
+    787         ILPAD2=0
+    788         ILPAD3=0
+    789         ILPAD4=0
+    790         ILPAD5=0
+    791         ILCOL=1
+    792         IS_INC1_BND=1
+    793         IS_INC2_BND=2
+    794       ENDIF
+    795 C
+    796       IF(MOD(MYPE,INPES).EQ.INPES-1)THEN       !EASTERNMOST SUBDOMAINS
+    797         IRPAD1=0
+    798         IRPAD2=0
+    799         IRPAD3=0
+    800         IRPAD4=0
+    801         IRPAD5=0
+    802         IRCOL=1
+    803         IE_INC1_BND=1
+    804         IE_INC2_BND=2
+    805         MY_IE_GLB=IM
+    806       ENDIF
+    807 C----------------------------------------------------------------------
+    808 C***
+    809 C***  NOW DO THE SAME FOR THE J DIRECTION
+    810 C***
+    811       JBPAD1=1
+    812       JBPAD2=2
+    813       JBPAD3=3
+
+Page 4           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    814       JBPAD4=4
+    815       JBPAD5=5
+    816       JTPAD1=1
+    817       JTPAD2=2
+    818       JTPAD3=3
+    819       JTPAD4=4
+    820       JTPAD5=5
+    821 C
+    822       IBROW=0
+    823       ITROW=0
+    824 C
+    825       JS_INC1_BND=0
+    826       JS_INC2_BND=0
+    827       JS_INC3_BND=0
+    828       JS_INC4_BND=0
+    829       JS_INC5_BND=0
+    830       JE_INC1_BND=0
+    831       JE_INC2_BND=0
+    832       JE_INC3_BND=0
+    833       JE_INC4_BND=0
+    834       JE_INC5_BND=0
+    835 C
+    836       IF(MYPE/INPES.EQ.0)THEN              !SOUTHERNMOST SUBDOMAINS
+    837         JBPAD1=0
+    838         JBPAD2=0
+    839         JBPAD3=0
+    840         JBPAD4=0
+    841         JBPAD5=0
+    842         IBROW=1
+    843         JS_INC1_BND=1
+    844         JS_INC2_BND=2
+    845         JS_INC3_BND=3
+    846         JS_INC4_BND=4
+    847         JS_INC5_BND=5
+    848       ENDIF
+    849 C
+    850       IF(MYPE/INPES.EQ.JNPES-1)THEN        !NORTHERNMOST SUBDOMAINS
+    851         JTPAD1=0
+    852         JTPAD2=0
+    853         JTPAD3=0
+    854         JTPAD4=0
+    855         JTPAD5=0
+    856         ITROW=1
+    857         JE_INC1_BND=1
+    858         JE_INC2_BND=2
+    859         JE_INC3_BND=3
+    860         JE_INC4_BND=4
+    861         JE_INC5_BND=5
+    862         MY_JE_GLB=JM
+    863       ENDIF
+    864 C----------------------------------------------------------------------
+    865 C***
+    866 C***  THE FOLLOWING ARE THE LOCAL LIMITS OF I AND J IN EACH SUBDOMAIN
+    867 C***
+    868       MY_IS_LOC=1
+    869       MY_IE_LOC=MY_IE_GLB-MY_IS_GLB+1
+    870       MY_JS_LOC=1
+
+Page 5           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    871       MY_JE_LOC=MY_JE_GLB-MY_JS_GLB+1
+    872 C----------------------------------------------------------------------
+    873 C***
+    874 C***  EACH PE WILL NOW FILL ITS OWN SECTIONS OF THE GLOBAL-TO-LOCAL
+    875 C***  TRANSLATION ARRAYS (DIMENSIONED GLOBALLY) AND LOCAL-TO-GLOBAL
+    876 C***  TRANSLATION ARRAYS (DIMENSIONED LOCALLY)
+    877 C***
+    878       ILOC=0
+    879       DO I=MY_IS_GLB-1,MY_IE_GLB+1
+    880         G2LI(I)=ILOC
+    881         L2GI(ILOC)=I
+    882         ILOC=ILOC+1
+    883       ENDDO
+    884 C
+    885       JLOC=0
+    886       DO J=MY_JS_GLB-1,MY_JE_GLB+1
+    887         G2LJ(J)=JLOC
+    888         L2GJ(JLOC)=J
+    889         JLOC=JLOC+1
+    890       ENDDO
+    891 C----------------------------------------------------------------------
+    892 C***
+    893 C***  EACH PE WILL NOW FILL THE ARRAY CALLED MY_NEB WHICH HOLDS THE
+    894 C***  NUMBER OF THE 8 PEs THAT ARE ITS NEIGHBORS: NORTH(1), EAST(2),
+    895 C***  SOUTH(3), WEST(4), NORTHEAST(5), SOUTHEAST(6), SOUTHWEST(7),
+    896 C***  AND NORTHWEST(8).  THE VALUE IN THE ARRAY WILL BE -1 FOR THOSE
+    897 C***  NEIGHBORS THAT DO NOT EXIST BECAUSE THEY ARE BEYOND THE
+    898 C***  GLOBAL DOMAIN BOUNDARY.
+    899 C***
+    900       IPE=0
+    901       DO J=1,JNPES
+    902       DO I=1,INPES
+    903         ITEMP(I,J)=IPE
+    904         IF(IPE.EQ.MYPE) THEN
+    905           MYI=I
+    906           MYJ=J
+    907         ENDIF
+    908         IPE=IPE+1
+    909         ENDDO
+    910       ENDDO
+    911 C
+    912       MY_N=-1
+    913       IF(MYJ+1.LE.JNPES)MY_N=ITEMP(MYI,MYJ+1)
+    914 C
+    915       MY_E=-1
+    916       IF(MYI+1.LE.INPES)MY_E=ITEMP(MYI+1,MYJ)
+    917 C
+    918       MY_S=-1
+    919       IF(MYJ-1.GE.1)MY_S=ITEMP(MYI,MYJ-1)
+    920 C
+    921       MY_W=-1
+    922       IF(MYI-1.GE.1)MY_W=ITEMP(MYI-1,MYJ)
+    923 C
+    924       MY_NE=-1
+    925       IF((MYI+1.LE.INPES).AND.(MYJ+1.LE.JNPES))
+    926      1    MY_NE=ITEMP(MYI+1,MYJ+1)
+    927 C
+
+Page 6           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    928       MY_SE=-1
+    929       IF((MYI+1.LE.INPES).AND.(MYJ-1.GE.1))
+    930      1    MY_SE=ITEMP(MYI+1,MYJ-1)
+    931 C
+    932       MY_SW=-1
+    933       IF((MYI-1.GE.1).AND.(MYJ-1.GE.1))
+    934      1    MY_SW=ITEMP(MYI-1,MYJ-1)
+    935 C
+    936       MY_NW=-1
+    937       IF((MYI-1.GE.1).AND.(MYJ+1.LE.JNPES))
+    938      1    MY_NW=ITEMP(MYI-1,MYJ+1)
+    939 C
+    940       MY_NEB(1)=MY_N
+    941       MY_NEB(2)=MY_E
+    942       MY_NEB(3)=MY_S
+    943       MY_NEB(4)=MY_W
+    944       MY_NEB(5)=MY_NE
+    945       MY_NEB(6)=MY_SE
+    946       MY_NEB(7)=MY_SW
+    947       MY_NEB(8)=MY_NW
+    948 C----------------------------------------------------------------------
+    949 C***
+    950 C***  GENERATE THE TABLES (DIMENSIONED INPES*JNPES) THAT HOLD THE
+    951 C***  STARTING AND ENDING VALUES OF I AND J FOR EACH PE IN TERMS
+    952 C***  OF BOTH THE GLOBAL AND THE LOCAL DOMAINS.
+    953 C***
+    954       CALL INDTABLE
+    955 C----------------------------------------------------------------------
+    956 C***
+    957 C***  CREATE ABBREVIATED NAMES FOR LOOP LIMITS.
+    958 C***
+    959       MYIS    =MY_IS_LOC
+    960       MYIS_P1 =MY_IS_LOC-ILPAD1
+    961       MYIS_P2 =MY_IS_LOC-ILPAD2
+    962       MYIS_P3 =MY_IS_LOC-ILPAD3
+    963       MYIS_P4 =MY_IS_LOC-ILPAD4
+    964       MYIS_P5 =MY_IS_LOC-ILPAD5
+    965 C
+    966       MYIS1   =MY_IS_LOC+IS_INC1_BND
+    967       MYIS1_P1=MY_IS_LOC+IS_INC1_BND-ILPAD1
+    968       MYIS1_P2=MY_IS_LOC+IS_INC1_BND-ILPAD2
+    969       MYIS1_P3=MY_IS_LOC+IS_INC1_BND-ILPAD3
+    970       MYIS1_P4=MY_IS_LOC+IS_INC1_BND-ILPAD4
+    971 C
+    972       MYIS2   =MY_IS_LOC+IS_INC2_BND
+    973 C***
+    974       MYIE    =MY_IE_LOC 
+    975       MYIE_P1 =MY_IE_LOC+IRPAD1
+    976       MYIE_P2 =MY_IE_LOC+IRPAD2
+    977       MYIE_P3 =MY_IE_LOC+IRPAD3
+    978       MYIE_P4 =MY_IE_LOC+IRPAD4
+    979       MYIE_P5 =MY_IE_LOC+IRPAD5
+    980 C
+    981       MYIE1   =MY_IE_LOC-IE_INC1_BND          !The size of these increments
+    982       MYIE1_P1=MY_IE_LOC-IE_INC1_BND+IRPAD1   !is zero unless the subdomain
+    983       MYIE1_P2=MY_IE_LOC-IE_INC1_BND+IRPAD2   !lies along a global boundary
+    984       MYIE1_P3=MY_IE_LOC-IE_INC1_BND+IRPAD3   !in which case the increment
+
+Page 7           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+    985       MYIE1_P4=MY_IE_LOC-IE_INC1_BND+IRPAD4   !is indicated by the number
+    986 C                                             !following 'INC'.
+    987       MYIE2   =MY_IE_LOC-IE_INC2_BND          
+    988       MYIE2_P1=MY_IE_LOC-IE_INC2_BND+IRPAD1
+    989 C***
+    990 C***
+    991       MYJS    =MY_JS_LOC
+    992       MYJS_P1 =MY_JS_LOC-JBPAD1
+    993       MYJS_P2 =MY_JS_LOC-JBPAD2
+    994       MYJS_P3 =MY_JS_LOC-JBPAD3
+    995       MYJS_P4 =MY_JS_LOC-JBPAD4
+    996       MYJS_P5 =MY_JS_LOC-JBPAD5
+    997 C
+    998       MYJS1   =MY_JS_LOC+JS_INC1_BND
+    999       MYJS1_P1=MY_JS_LOC+JS_INC1_BND-JBPAD1
+   1000       MYJS1_P2=MY_JS_LOC+JS_INC1_BND-JBPAD2
+   1001       MYJS1_P3=MY_JS_LOC+JS_INC1_BND-JBPAD3
+   1002       MYJS1_P4=MY_JS_LOC+JS_INC1_BND-JBPAD4
+   1003       MYJS1_P5=MY_JS_LOC+JS_INC1_BND-JBPAD5
+   1004 C
+   1005       MYJS2   =MY_JS_LOC+JS_INC2_BND
+   1006       MYJS2_P1=MY_JS_LOC+JS_INC2_BND-JBPAD1
+   1007       MYJS2_P2=MY_JS_LOC+JS_INC2_BND-JBPAD2
+   1008       MYJS2_P3=MY_JS_LOC+JS_INC2_BND-JBPAD3
+   1009       MYJS2_P4=MY_JS_LOC+JS_INC2_BND-JBPAD4
+   1010       MYJS2_P5=MY_JS_LOC+JS_INC2_BND-JBPAD5
+   1011 C
+   1012       MYJS3   =MY_JS_LOC+JS_INC3_BND
+   1013       MYJS3_P1=MY_JS_LOC+JS_INC3_BND-JBPAD1
+   1014       MYJS3_P4=MY_JS_LOC+JS_INC3_BND-JBPAD4
+   1015 C
+   1016       MYJS4   =MY_JS_LOC+JS_INC4_BND
+   1017       MYJS4_P1=MY_JS_LOC+JS_INC4_BND-JBPAD1
+   1018       MYJS4_P4=MY_JS_LOC+JS_INC4_BND-JBPAD4
+   1019 C
+   1020       MYJS5   =MY_JS_LOC+JS_INC5_BND
+   1021       MYJS5_P1=MY_JS_LOC+JS_INC5_BND-JBPAD1
+   1022       MYJS5_P2=MY_JS_LOC+JS_INC5_BND-JBPAD2
+   1023 C***
+   1024       MYJE    =MY_JE_LOC
+   1025       MYJE_P1 =MY_JE_LOC+JTPAD1
+   1026       MYJE_P2 =MY_JE_LOC+JTPAD2
+   1027       MYJE_P3 =MY_JE_LOC+JTPAD3
+   1028       MYJE_P4 =MY_JE_LOC+JTPAD4
+   1029       MYJE_P5 =MY_JE_LOC+JTPAD5
+   1030 C
+   1031       MYJE1   =MY_JE_LOC-JE_INC1_BND
+   1032       MYJE1_P1=MY_JE_LOC-JE_INC1_BND+JTPAD1
+   1033       MYJE1_P2=MY_JE_LOC-JE_INC1_BND+JTPAD2
+   1034       MYJE1_P3=MY_JE_LOC-JE_INC1_BND+JTPAD3
+   1035       MYJE1_P4=MY_JE_LOC-JE_INC1_BND+JTPAD4
+   1036       MYJE1_P5=MY_JE_LOC-JE_INC1_BND+JTPAD5
+   1037 C
+   1038       MYJE2   =MY_JE_LOC-JE_INC2_BND
+   1039       MYJE2_P1=MY_JE_LOC-JE_INC2_BND+JTPAD1
+   1040       MYJE2_P2=MY_JE_LOC-JE_INC2_BND+JTPAD2
+   1041       MYJE2_P3=MY_JE_LOC-JE_INC2_BND+JTPAD3
+
+Page 8           Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+   1042       MYJE2_P4=MY_JE_LOC-JE_INC2_BND+JTPAD4
+   1043       MYJE2_P5=MY_JE_LOC-JE_INC2_BND+JTPAD5
+   1044 C
+   1045       MYJE3   =MY_JE_LOC-JE_INC3_BND 
+   1046       MYJE3_P1=MY_JE_LOC-JE_INC3_BND+JTPAD1
+   1047       MYJE3_P4=MY_JE_LOC-JE_INC3_BND+JTPAD4
+   1048       MYJE3_P5=MY_JE_LOC-JE_INC3_BND+JTPAD5
+   1049 C
+   1050       MYJE4   =MY_JE_LOC-JE_INC4_BND
+   1051       MYJE4_P1=MY_JE_LOC-JE_INC4_BND+JTPAD1
+   1052       MYJE4_P4=MY_JE_LOC-JE_INC4_BND+JTPAD4
+   1053       MYJE4_P5=MY_JE_LOC-JE_INC4_BND+JTPAD5
+   1054 C
+   1055       MYJE5   =MY_JE_LOC-JE_INC5_BND
+   1056       MYJE5_P1=MY_JE_LOC-JE_INC5_BND+JTPAD1
+   1057       MYJE5_P2=MY_JE_LOC-JE_INC5_BND+JTPAD2
+   1058 C
+   1059 C-----------------------------------------------------------------
+   1060 C*****************************************************************
+   1061       RETURN
+   1062       END
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ mppinit_             
+
+Page 9           Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ GLB_TABLE                  Common 108                                  336      SAVE                                               
+ I                          Local  734      I(4)            4           scalar                    734,736,879,880,881,902,903,905   
+ ICHUNK                     Local  708      I(4)            4           scalar                    708,710,735,736                   
+ ICHUNK_CALC                Local  735      I(4)            4           scalar                    735,736,737                       
+ IDIM1                      Param  67       I(4)            4           scalar                                                      
+ IDIM2                      Param  67       I(4)            4           scalar                                                      
+ IE_INC1_BND                Local  782      I(4)            4           scalar                    782,803,981,982,983,984,985       
+ IE_INC2_BND                Local  783      I(4)            4           scalar                    783,804,987,988                   
+ IGSTL                      Param  62       I(4)            4           scalar                    67                                
+ IGSTR                      Param  62       I(4)            4           scalar                    67                                
+ IICHUNK                    Local  710      I(4)            4           scalar                    710                               
+ ILOC                       Local  878      I(4)            4           scalar                    878,880,881,882                   
+ IM                         Param  50       I(4)            4           scalar                    64,67,114,115,116,117,118,122,123,
+                                                                                                  128,708,805                       
+ INDTABLE                   Subr   954                                                            954                               
+ INPES                      Param  59       I(4)            4           scalar                    64,67,98,99,100,109,110,708,734,78
+                                                                                                  5,796,836,850,902,916,925,929     
+ IPE                        Local  722      I(4)            4           scalar                    722,739,746,900,903,904,908       
+ ISTAT                      Local  697      I(4)            4     1     5                                                           
+ IS_INC1_BND                Local  780      I(4)            4           scalar                    780,792,966,967,968,969,970       
+ IS_INC2_BND                Local  781      I(4)            4           scalar                    781,793,972                       
+ ITAIL                      Param  64       I(4)            4           scalar                    736                               
+ J                          Local  726      I(4)            4           scalar                    726,728,886,887,888,901,903,906   
+ JCHUNK                     Local  709      I(4)            4           scalar                    709,727,728                       
+ JCHUNK_CALC                Local  727      I(4)            4           scalar                    727,728,729                       
+ JDIM1                      Param  68       I(4)            4           scalar                                                      
+ JDIM2                      Param  68       I(4)            4           scalar                                                      
+ JE_INC1_BND                Local  830      I(4)            4           scalar                    830,857,1031,1032,1033,1034,1035,1
+                                                                                                  036                               
+ JE_INC2_BND                Local  831      I(4)            4           scalar                    831,858,1038,1039,1040,1041,1042,1
+                                                                                                  043                               
+ JE_INC3_BND                Local  832      I(4)            4           scalar                    832,859,1045,1046,1047,1048       
+ JE_INC4_BND                Local  833      I(4)            4           scalar                    833,860,1050,1051,1052,1053       
+ JE_INC5_BND                Local  834      I(4)            4           scalar                    834,861,1055,1056,1057            
+ JGSTL                      Param  63       I(4)            4           scalar                    68                                
+ JGSTR                      Param  63       I(4)            4           scalar                    68                                
+ JLOC                       Local  885      I(4)            4           scalar                    885,887,888,889                   
+ JM                         Param  50       I(4)            4           scalar                    65,68,114,115,116,117,118,122,123,
+                                                                                                  128,709,862                       
+ JNCHUNKS                   Local  724      I(4)            4           scalar                    724,729,730                       
+ JNPES                      Param  59       I(4)            4           scalar                    65,68,98,99,100,109,110,709,726,85
+                                                                                                  0,901,913,925,937                 
+ JS_INC1_BND                Local  825      I(4)            4           scalar                    825,843,998,999,1000,1001,1002,100
+                                                                                                  3                                 
+ JS_INC2_BND                Local  826      I(4)            4           scalar                    826,844,1005,1006,1007,1008,1009,1
+                                                                                                  010                               
+ JS_INC3_BND                Local  827      I(4)            4           scalar                    827,845,1012,1013,1014            
+ JS_INC4_BND                Local  828      I(4)            4           scalar                    828,846,1016,1017,1018            
+ JS_INC5_BND                Local  829      I(4)            4           scalar                    829,847,1020,1021,1022            
+ JTAIL                      Param  65       I(4)            4           scalar                    728                               
+ LM                         Param  50       I(4)            4           scalar                    123                               
+
+Page 10          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LSM                        Param  50       I(4)            4           scalar                                                      
+ MAPPINGS                   Common 127                                  5024     SAVE                                               
+ MOD                        Func   785                                  scalar                    785,796                           
+ MPIFCMB5                   Common 685                                  4        SAVE                                               
+ MPIFCMB9                   Common 686                                  4        SAVE                                               
+ MPIPRIV1                   Common 690                                  28       SAVE                                               
+ MPIPRIV2                   Common 692                                  24       SAVE                                               
+ MPIPRIVC                   Common 695                                  2        SAVE                                               
+ MPI_2DOUBLE_PRECISION      Param  431      I(4)            4           scalar                                                      
+ MPI_2INT                   Param  515      I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  429      I(4)            4           scalar                                                      
+ MPI_2REAL                  Param  433      I(4)            4           scalar                                                      
+ MPI_ADDRESS_KIND           Param  467      I(4)            4           scalar                                                      
+ MPI_AINT                   Param  545      I(4)            4           scalar                                                      
+ MPI_ANY_SOURCE             Param  397      I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  399      I(4)            4           scalar                                                      
+ MPI_APPNUM                 Param  361      I(4)            4           scalar                                                      
+ MPI_ASYNC_PROTECTS_NONBLOC                                                                                                         
+ KING                       Param  667      L(4)            4           scalar                                                      
+ MPI_BAND                   Param  305      I(4)            4           scalar                                                      
+ MPI_BOR                    Param  309      I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  393      I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  313      I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  437      I(4)            4           scalar                                                      
+ MPI_CART                   Param  405      I(4)            4           scalar                                                      
+ MPI_CHAR                   Param  475      I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  435      I(4)            4           scalar                                                      
+ MPI_COMBINER_CONTIGUOUS    Param  563      I(4)            4           scalar                                                      
+ MPI_COMBINER_DARRAY        Param  585      I(4)            4           scalar                                                      
+ MPI_COMBINER_DUP           Param  561      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_COMPLEX   Param  589      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_INTEGER   Param  591      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_REAL      Param  587      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED      Param  575      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_BLOC                                                                                                         
+ K                          Param  595      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_INTE                                                                                                         
+ GER                        Param  573      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR       Param  569      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR_INTEG                                                                                                         
+ ER                         Param  567      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED       Param  571      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED_BLOCK Param  577      I(4)            4           scalar                                                      
+ MPI_COMBINER_NAMED         Param  559      I(4)            4           scalar                                                      
+ MPI_COMBINER_RESIZED       Param  593      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT        Param  581      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT_INTEGE                                                                                                         
+ R                          Param  579      I(4)            4           scalar                                                      
+ MPI_COMBINER_SUBARRAY      Param  583      I(4)            4           scalar                                                      
+ MPI_COMBINER_VECTOR        Param  565      I(4)            4           scalar                                                      
+ MPI_COMM_DUP_FN            Subr   674                                  scalar                                                      
+ MPI_COMM_NULL              Param  329      I(4)            4           scalar                                                      
+ MPI_COMM_NULL_COPY_FN      Subr   675                                  scalar                                                      
+ MPI_COMM_NULL_DELETE_FN    Subr   674                                  scalar                                                      
+ MPI_COMM_SELF              Param  325      I(4)            4           scalar                                                      
+
+Page 11          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_COMM_TYPE_SHARED       Param  613      I(4)            4           scalar                                                      
+ MPI_COMM_WORLD             Param  323      I(4)            4           scalar                                                      
+ MPI_COMPLEX                Param  417      I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  463      I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  465      I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  461      I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  277      I(4)            4           scalar                                                      
+ MPI_CONVERSION_FN_NULL     Subr   680                                  scalar                                                      
+ MPI_COUNT                  Param  549      I(4)            4           scalar                                                      
+ MPI_COUNT_KIND             Param  471      I(4)            4           scalar                                                      
+ MPI_CXX_BOOL               Param  551      I(4)            4           scalar                                                      
+ MPI_CXX_DOUBLE_COMPLEX     Param  555      I(4)            4           scalar                                                      
+ MPI_CXX_FLOAT_COMPLEX      Param  553      I(4)            4           scalar                                                      
+ MPI_CXX_LONG_DOUBLE_COMPLE                                                                                                         
+ X                          Param  557      I(4)            4           scalar                                                      
+ MPI_C_BOOL                 Param  535      I(4)            4           scalar                                                      
+ MPI_C_COMPLEX              Param  539      I(4)            4           scalar                                                      
+ MPI_C_DOUBLE_COMPLEX       Param  541      I(4)            4           scalar                                                      
+ MPI_C_FLOAT_COMPLEX        Param  537      I(4)            4           scalar                                                      
+ MPI_C_LONG_DOUBLE_COMPLEX  Param  543      I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  339      I(4)            4           scalar                    454,552,554,556,558               
+ MPI_DISPLACEMENT_CURRENT   Param  663      I(8)            8           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  655      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  657      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  661      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  659      I(4)            4           scalar                                                      
+ MPI_DIST_GRAPH             Param  407      I(4)            4           scalar                                                      
+ MPI_DOUBLE                 Param  497      I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  419      I(4)            4           scalar                                                      
+ MPI_DOUBLE_INT             Param  509      I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  425      I(4)            4           scalar                                                      
+ MPI_DUP_FN                 Subr   671                                  scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  343      I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  144      I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  271      I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  273      I(4)            4           scalar                                                      
+ MPI_ERR_ACCESS             Param  257      I(4)            4           scalar                                                      
+ MPI_ERR_AMODE              Param  223      I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  233      I(4)            4           scalar                                                      
+ MPI_ERR_ASSERT             Param  167      I(4)            4           scalar                                                      
+ MPI_ERR_BAD_FILE           Param  229      I(4)            4           scalar                                                      
+ MPI_ERR_BASE               Param  267      I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  185      I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  265      I(4)            4           scalar                                                      
+ MPI_ERR_CONVERSION         Param  247      I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  177      I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  155      I(4)            4           scalar                                                      
+ MPI_ERR_DISP               Param  213      I(4)            4           scalar                                                      
+ MPI_ERR_DUP_DATAREP        Param  243      I(4)            4           scalar                                                      
+ MPI_ERR_FILE               Param  203      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_EXISTS        Param  255      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_IN_USE        Param  249      I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  165      I(4)            4           scalar                                                      
+ MPI_ERR_INFO               Param  171      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_KEY           Param  201      I(4)            4           scalar                                                      
+
+Page 12          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_INFO_NOKEY         Param  245      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_VALUE         Param  193      I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  221      I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  195      I(4)            4           scalar                                                      
+ MPI_ERR_IO                 Param  181      I(4)            4           scalar                                                      
+ MPI_ERR_KEYVAL             Param  225      I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  261      I(4)            4           scalar                                                      
+ MPI_ERR_LOCKTYPE           Param  241      I(4)            4           scalar                                                      
+ MPI_ERR_NAME               Param  161      I(4)            4           scalar                                                      
+ MPI_ERR_NOT_SAME           Param  179      I(4)            4           scalar                                                      
+ MPI_ERR_NO_MEM             Param  191      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SPACE           Param  183      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SUCH_FILE       Param  253      I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  157      I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  209      I(4)            4           scalar                                                      
+ MPI_ERR_PENDING            Param  197      I(4)            4           scalar                                                      
+ MPI_ERR_PORT               Param  187      I(4)            4           scalar                                                      
+ MPI_ERR_QUOTA              Param  159      I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  263      I(4)            4           scalar                                                      
+ MPI_ERR_READ_ONLY          Param  205      I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  207      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_ATTACH         Param  189      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_CONFLICT       Param  175      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_FLAVOR         Param  163      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_RANGE          Param  199      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SHARED         Param  259      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SYNC           Param  239      I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  227      I(4)            4           scalar                                                      
+ MPI_ERR_SERVICE            Param  251      I(4)            4           scalar                                                      
+ MPI_ERR_SIZE               Param  173      I(4)            4           scalar                                                      
+ MPI_ERR_SPAWN              Param  215      I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  235      I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  237      I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  211      I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  231      I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  219      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_DATARE                                                                                                         
+ P                          Param  169      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_OPERAT                                                                                                         
+ ION                        Param  217      I(4)            4           scalar                                                      
+ MPI_ERR_WIN                Param  269      I(4)            4           scalar                                                      
+ MPI_FILE_NULL              Param  333      I(4)            4           scalar                                                      
+ MPI_FLOAT                  Param  495      I(4)            4           scalar                                                      
+ MPI_FLOAT_INT              Param  507      I(4)            4           scalar                                                      
+ MPI_GRAPH                  Param  403      I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  327      I(4)            4           scalar                                                      
+ MPI_GROUP_NULL             Param  335      I(4)            4           scalar                                                      
+ MPI_HOST                   Param  351      I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  275      I(4)            4           scalar                                                      
+ MPI_INFO_ENV               Param  347      I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  345      I(4)            4           scalar                                                      
+ MPI_INT                    Param  487      I(4)            4           scalar                                                      
+ MPI_INT16_T                Param  521      I(4)            4           scalar                                                      
+ MPI_INT32_T                Param  523      I(4)            4           scalar                                                      
+ MPI_INT64_T                Param  525      I(4)            4           scalar                                                      
+
+Page 13          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_INT8_T                 Param  519      I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  427      I(4)            4           scalar                                                      
+ MPI_INTEGER1               Param  445      I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  453      I(4)            4           scalar                                                      
+ MPI_INTEGER2               Param  447      I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  449      I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  451      I(4)            4           scalar                                                      
+ MPI_INTEGER_KIND           Param  473      I(4)            4           scalar                                                      
+ MPI_IO                     Param  353      I(4)            4           scalar                                                      
+ MPI_KEYVAL_INVALID         Param  391      I(4)            4           scalar                                                      
+ MPI_LAND                   Param  303      I(4)            4           scalar                                                      
+ MPI_LASTUSEDCODE           Param  359      I(4)            4           scalar                                                      
+ MPI_LB                     Param  441      I(4)            4           scalar                                                      
+ MPI_LOCK_EXCLUSIVE         Param  413      I(4)            4           scalar                                                      
+ MPI_LOCK_SHARED            Param  415      I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  421      I(4)            4           scalar                                                      
+ MPI_LONG                   Param  491      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE            Param  499      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE_INT        Param  517      I(4)            4           scalar                                                      
+ MPI_LONG_INT               Param  511      I(4)            4           scalar                                                      
+ MPI_LONG_LONG              Param  505      I(4)            4           scalar                                                      
+ MPI_LONG_LONG_INT          Param  501      I(4)            4           scalar                                                      
+ MPI_LOR                    Param  307      I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  311      I(4)            4           scalar                                                      
+ MPI_MAX                    Param  295      I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  317      I(4)            4           scalar                                                      
+ MPI_MAX_DATAREP_STRING     Param  385      I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  373      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  379      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  381      I(4)            4           scalar                                                      
+ MPI_MAX_LIBRARY_VERSION_ST                                                                                                         
+ RING                       Param  387      I(4)            4           scalar                                                      
+ MPI_MAX_OBJECT_NAME        Param  377      I(4)            4           scalar                                                      
+ MPI_MAX_PORT_NAME          Param  375      I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  383      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NO_PROC        Param  617      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NULL           Param  615      I(4)            4           scalar                                                      
+ MPI_MIN                    Param  297      I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  315      I(4)            4           scalar                                                      
+ MPI_MODE_APPEND            Param  641      I(4)            4           scalar                                                      
+ MPI_MODE_CREATE            Param  637      I(4)            4           scalar                                                      
+ MPI_MODE_DELETE_ON_CLOSE   Param  633      I(4)            4           scalar                                                      
+ MPI_MODE_EXCL              Param  639      I(4)            4           scalar                                                      
+ MPI_MODE_NOCHECK           Param  603      I(4)            4           scalar                                                      
+ MPI_MODE_NOPRECEDE         Param  609      I(4)            4           scalar                                                      
+ MPI_MODE_NOPUT             Param  607      I(4)            4           scalar                                                      
+ MPI_MODE_NOSTORE           Param  605      I(4)            4           scalar                                                      
+ MPI_MODE_NOSUCCEED         Param  611      I(4)            4           scalar                                                      
+ MPI_MODE_RDONLY            Param  627      I(4)            4           scalar                                                      
+ MPI_MODE_RDWR              Param  629      I(4)            4           scalar                                                      
+ MPI_MODE_SEQUENTIAL        Param  643      I(4)            4           scalar                                                      
+ MPI_MODE_UNIQUE_OPEN       Param  635      I(4)            4           scalar                                                      
+ MPI_MODE_WRONLY            Param  631      I(4)            4           scalar                                                      
+ MPI_NO_OP                  Param  321      I(4)            4           scalar                                                      
+ MPI_NULL_COPY_FN           Subr   671                                  scalar                                                      
+
+Page 14          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_NULL_DELETE_FN         Subr   671                                  scalar                                                      
+ MPI_OFFSET                 Param  547      I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  469      I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  337      I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  651      I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  653      I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  443      I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  395      I(4)            4           scalar                                                      
+ MPI_PROD                   Param  301      I(4)            4           scalar                                                      
+ MPI_REAL                   Param  423      I(4)            4           scalar                                                      
+ MPI_REAL16                 Param  459      I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  455      I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  457      I(4)            4           scalar                                                      
+ MPI_REPLACE                Param  319      I(4)            4           scalar                                                      
+ MPI_REQUEST_NULL           Param  341      I(4)            4           scalar                                                      
+ MPI_ROOT                   Param  401      I(4)            4           scalar                                                      
+ MPI_SEEK_CUR               Param  647      I(4)            4           scalar                                                      
+ MPI_SEEK_END               Param  649      I(4)            4           scalar                                                      
+ MPI_SEEK_SET               Param  645      I(4)            4           scalar                                                      
+ MPI_SHORT                  Param  483      I(4)            4           scalar                                                      
+ MPI_SHORT_INT              Param  513      I(4)            4           scalar                                                      
+ MPI_SIGNED_CHAR            Param  477      I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  279      I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  144      I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  146      I(4)            4           scalar                    148,149,697                       
+ MPI_SUBARRAYS_SUPPORTED    Param  665      L(4)            4           scalar                                                      
+ MPI_SUBVERSION             Param  411      I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  153      I(4)            4           scalar                                                      
+ MPI_SUM                    Param  299      I(4)            4           scalar                                                      
+ MPI_TAG                    Param  144      I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  349      I(4)            4           scalar                                                      
+ MPI_THREAD_FUNNELED        Param  621      I(4)            4           scalar                                                      
+ MPI_THREAD_MULTIPLE        Param  625      I(4)            4           scalar                                                      
+ MPI_THREAD_SERIALIZED      Param  623      I(4)            4           scalar                                                      
+ MPI_THREAD_SINGLE          Param  619      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_COMPLEX      Param  601      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_INTEGER      Param  599      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_REAL         Param  597      I(4)            4           scalar                                                      
+ MPI_TYPE_DUP_FN            Subr   678                                  scalar                                                      
+ MPI_TYPE_NULL_COPY_FN      Subr   679                                  scalar                                                      
+ MPI_TYPE_NULL_DELETE_FN    Subr   678                                  scalar                                                      
+ MPI_UB                     Param  439      I(4)            4           scalar                                                      
+ MPI_UINT16_T               Param  529      I(4)            4           scalar                                                      
+ MPI_UINT32_T               Param  531      I(4)            4           scalar                                                      
+ MPI_UINT64_T               Param  533      I(4)            4           scalar                                                      
+ MPI_UINT8_T                Param  527      I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  389      I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  281      I(4)            4           scalar                                                      
+ MPI_UNIVERSE_SIZE          Param  357      I(4)            4           scalar                                                      
+ MPI_UNSIGNED               Param  489      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_CHAR          Param  479      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG          Param  493      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG_LONG     Param  503      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_SHORT         Param  485      I(4)            4           scalar                                                      
+ MPI_VERSION                Param  409      I(4)            4           scalar                                                      
+
+Page 15          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_WCHAR                  Param  481      I(4)            4           scalar                                                      
+ MPI_WIN_BASE               Param  363      I(4)            4           scalar                                                      
+ MPI_WIN_CREATE_FLAVOR      Param  369      I(4)            4           scalar                                                      
+ MPI_WIN_DISP_UNIT          Param  367      I(4)            4           scalar                                                      
+ MPI_WIN_DUP_FN             Subr   676                                  scalar                                                      
+ MPI_WIN_FLAVOR_ALLOCATE    Param  285      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_CREATE      Param  283      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_DYNAMIC     Param  287      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_SHARED      Param  289      I(4)            4           scalar                                                      
+ MPI_WIN_MODEL              Param  371      I(4)            4           scalar                                                      
+ MPI_WIN_NULL               Param  331      I(4)            4           scalar                                                      
+ MPI_WIN_NULL_COPY_FN       Subr   677                                  scalar                                                      
+ MPI_WIN_NULL_DELETE_FN     Subr   676                                  scalar                                                      
+ MPI_WIN_SEPARATE           Param  291      I(4)            4           scalar                                                      
+ MPI_WIN_SIZE               Param  365      I(4)            4           scalar                                                      
+ MPI_WIN_UNIFIED            Param  293      I(4)            4           scalar                                                      
+ MPI_WTICK                  Func   672      R(8)            8           scalar                                                      
+ MPI_WTIME                  Func   672      R(8)            8           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  355      I(4)            4           scalar                                                      
+ MPPCOM                     Common 72                                   1724     SAVE                                               
+ MPPINIT                    Subr   3                                                                                                
+ MYI                        Local  905      I(4)            4           scalar                    905,913,916,919,922,925,926,929,93
+                                                                                                  0,933,934,937,938                 
+ MYJ                        Local  906      I(4)            4           scalar                    906,913,916,919,922,925,926,929,93
+                                                                                                  0,933,934,937,938                 
+ MYJE1_P5                   Local  1036     I(4)            4           scalar                    1036                              
+ MYJE2_P5                   Local  1043     I(4)            4           scalar                    1043                              
+ MYJE3_P1                   Local  1046     I(4)            4           scalar                    1046                              
+ MYJE3_P5                   Local  1048     I(4)            4           scalar                    1048                              
+ MYJE4_P5                   Local  1053     I(4)            4           scalar                    1053                              
+ MYJS1_P5                   Local  1003     I(4)            4           scalar                    1003                              
+ MYJS2_P5                   Local  1010     I(4)            4           scalar                    1010                              
+ MYJS3_P1                   Local  1013     I(4)            4           scalar                    1013                              
+ MY_IE_CALC                 Local  738      I(4)            4           scalar                    738,741,745                       
+ MY_IS_CALC                 Local  731      I(4)            4           scalar                    731,740,745                       
+ MY_JE_CALC                 Local  730      I(4)            4           scalar                    730,743,749                       
+ MY_JS_CALC                 Local  723      I(4)            4           scalar                    723,742,749                       
+ NCHUNKS                    Local  732      I(4)            4           scalar                    732,737,738                       
+ PMPI_WTICK                 Func   673      R(8)            8           scalar                                                      
+ PMPI_WTIME                 Func   673      R(8)            8           scalar                                                      
+ TEMPCOM                    Common 113                                  6603768  SAVE                                               
+ TOPO                       Common 121                                  17478548 SAVE                                               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ G2LI                       I(4)            4     0        1     239      COM              880                                
+ G2LJ                       I(4)            4     1912     1     389      COM              887                                
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM              822,842                            
+ ICHUNKTAB                  I(4)            4     828      1     21       COM                                                 
+ IE_GLB_TABLE               I(4)            4     84       1     21       COM                                                 
+ IE_LOC_TABLE               I(4)            4     660      1     21       COM                                                 
+
+Page 16          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ILCOL                      I(4)            4     396            scalar   COM              777,791                            
+ ILPAD1                     I(4)            4     412            scalar   COM              766,786,960,967                    
+ ILPAD2                     I(4)            4     416            scalar   COM              767,787,961,968                    
+ ILPAD3                     I(4)            4     420            scalar   COM              768,788,962,969                    
+ ILPAD4                     I(4)            4     424            scalar   COM              769,789,963,970                    
+ ILPAD5                     I(4)            4     428            scalar   COM              770,790,964                        
+ INUMQ                      I(4)            4     1324     1     100      COM                                                 
+ IQUILT_GROUP               I(4)            4     1320           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM              778,802                            
+ IRPAD1                     I(4)            4     432            scalar   COM              771,797,975,982,988                
+ IRPAD2                     I(4)            4     436            scalar   COM              772,798,976,983                    
+ IRPAD3                     I(4)            4     440            scalar   COM              773,799,977,984                    
+ IRPAD4                     I(4)            4     444            scalar   COM              774,800,978,985                    
+ IRPAD5                     I(4)            4     448            scalar   COM              775,801,979                        
+ IS_GLB_TABLE               I(4)            4     0        1     21       COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     21       COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM              903,913,916,919,922,926,930,934,93 
+                                                                                           8                                  
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM              823,856                            
+ JBPAD1                     I(4)            4     452            scalar   COM              811,837,992,999,1006,1013,1017,102 
+                                                                                           1                                  
+ JBPAD2                     I(4)            4     456            scalar   COM              812,838,993,1000,1007,1022         
+ JBPAD3                     I(4)            4     460            scalar   COM              813,839,994,1001,1008              
+ JBPAD4                     I(4)            4     464            scalar   COM              814,840,995,1002,1009,1014,1018    
+ JBPAD5                     I(4)            4     468            scalar   COM              815,841,996,1003,1010              
+ JE_GLB_TABLE               I(4)            4     252      1     21       COM                                                 
+ JE_LOC_TABLE               I(4)            4     744      1     21       COM                                                 
+ JS_GLB_TABLE               I(4)            4     168      1     21       COM                                                 
+ JS_LOC_TABLE               I(4)            4     576      1     21       COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM              816,851,1025,1032,1039,1046,1051,1 
+                                                                                           056                                
+ JTPAD2                     I(4)            4     476            scalar   COM              817,852,1026,1033,1040,1057        
+ JTPAD3                     I(4)            4     480            scalar   COM              818,853,1027,1034,1041             
+ JTPAD4                     I(4)            4     484            scalar   COM              819,854,1028,1035,1042,1047,1052   
+ JTPAD5                     I(4)            4     488            scalar   COM              820,855,1029,1036,1043,1048,1053   
+ L2GI                       I(4)            4     956      1     239      COM              881                                
+ L2GJ                       I(4)            4     3468     1     389      COM              888                                
+ MPI_ARGVS_NULL             CHAR            1     0        2     1        COM                                                 
+ MPI_ARGV_NULL              CHAR            1     1        1     1        COM                                                 
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_COMM_COMP              I(4)            4     912            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     916            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     920      1     100      COM                                                 
+ MPI_ERRCODES_IGNORE        I(4)            4     20       1     1        COM                                                 
+ MPI_IN_PLACE               I(4)            4     4              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     0        2     5        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     8        1     5        COM                                                 
+ MPI_UNWEIGHTED             I(4)            4     0              scalar   COM                                                 
+ MPI_WEIGHTS_EMPTY          I(4)            4     0              scalar   COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM              974                                
+ MYIE1                      I(4)            4     56             scalar   COM              981                                
+ MYIE1_P1                   I(4)            4     120            scalar   COM              982                                
+ MYIE1_P2                   I(4)            4     124            scalar   COM              983                                
+ MYIE1_P3                   I(4)            4     128            scalar   COM              984                                
+
+Page 17          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYIE1_P4                   I(4)            4     132            scalar   COM              985                                
+ MYIE2                      I(4)            4     60             scalar   COM              987                                
+ MYIE2_P1                   I(4)            4     136            scalar   COM              988                                
+ MYIE_P1                    I(4)            4     100            scalar   COM              975                                
+ MYIE_P2                    I(4)            4     104            scalar   COM              976                                
+ MYIE_P3                    I(4)            4     108            scalar   COM              977                                
+ MYIE_P4                    I(4)            4     112            scalar   COM              978                                
+ MYIE_P5                    I(4)            4     116            scalar   COM              979                                
+ MYIS                       I(4)            4     40             scalar   COM              959                                
+ MYIS1                      I(4)            4     44             scalar   COM              966                                
+ MYIS1_P1                   I(4)            4     84             scalar   COM              967                                
+ MYIS1_P2                   I(4)            4     88             scalar   COM              968                                
+ MYIS1_P3                   I(4)            4     92             scalar   COM              969                                
+ MYIS1_P4                   I(4)            4     96             scalar   COM              970                                
+ MYIS2                      I(4)            4     48             scalar   COM              972                                
+ MYIS_P1                    I(4)            4     64             scalar   COM              960                                
+ MYIS_P2                    I(4)            4     68             scalar   COM              961                                
+ MYIS_P3                    I(4)            4     72             scalar   COM              962                                
+ MYIS_P4                    I(4)            4     76             scalar   COM              963                                
+ MYIS_P5                    I(4)            4     80             scalar   COM              964                                
+ MYJE                       I(4)            4     236            scalar   COM              1024                               
+ MYJE1                      I(4)            4     240            scalar   COM              1031                               
+ MYJE1_P1                   I(4)            4     280            scalar   COM              1032                               
+ MYJE1_P2                   I(4)            4     284            scalar   COM              1033                               
+ MYJE1_P3                   I(4)            4     288            scalar   COM              1034                               
+ MYJE1_P4                   I(4)            4     292            scalar   COM              1035                               
+ MYJE2                      I(4)            4     244            scalar   COM              1038                               
+ MYJE2_P1                   I(4)            4     296            scalar   COM              1039                               
+ MYJE2_P2                   I(4)            4     300            scalar   COM              1040                               
+ MYJE2_P3                   I(4)            4     304            scalar   COM              1041                               
+ MYJE2_P4                   I(4)            4     308            scalar   COM              1042                               
+ MYJE3                      I(4)            4     248            scalar   COM              1045                               
+ MYJE3_P4                   I(4)            4     312            scalar   COM              1047                               
+ MYJE4                      I(4)            4     252            scalar   COM              1050                               
+ MYJE4_P1                   I(4)            4     316            scalar   COM              1051                               
+ MYJE4_P4                   I(4)            4     320            scalar   COM              1052                               
+ MYJE5                      I(4)            4     256            scalar   COM              1055                               
+ MYJE5_P1                   I(4)            4     324            scalar   COM              1056                               
+ MYJE5_P2                   I(4)            4     328            scalar   COM              1057                               
+ MYJE_P1                    I(4)            4     260            scalar   COM              1025                               
+ MYJE_P2                    I(4)            4     264            scalar   COM              1026                               
+ MYJE_P3                    I(4)            4     268            scalar   COM              1027                               
+ MYJE_P4                    I(4)            4     272            scalar   COM              1028                               
+ MYJE_P5                    I(4)            4     276            scalar   COM              1029                               
+ MYJS                       I(4)            4     140            scalar   COM              991                                
+ MYJS1                      I(4)            4     144            scalar   COM              998                                
+ MYJS1_P1                   I(4)            4     184            scalar   COM              999                                
+ MYJS1_P2                   I(4)            4     188            scalar   COM              1000                               
+ MYJS1_P3                   I(4)            4     192            scalar   COM              1001                               
+ MYJS1_P4                   I(4)            4     196            scalar   COM              1002                               
+ MYJS2                      I(4)            4     148            scalar   COM              1005                               
+ MYJS2_P1                   I(4)            4     200            scalar   COM              1006                               
+ MYJS2_P2                   I(4)            4     204            scalar   COM              1007                               
+ MYJS2_P3                   I(4)            4     208            scalar   COM              1008                               
+ MYJS2_P4                   I(4)            4     212            scalar   COM              1009                               
+
+Page 18          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJS3                      I(4)            4     152            scalar   COM              1012                               
+ MYJS3_P4                   I(4)            4     216            scalar   COM              1014                               
+ MYJS4                      I(4)            4     156            scalar   COM              1016                               
+ MYJS4_P1                   I(4)            4     220            scalar   COM              1017                               
+ MYJS4_P4                   I(4)            4     224            scalar   COM              1018                               
+ MYJS5                      I(4)            4     160            scalar   COM              1020                               
+ MYJS5_P1                   I(4)            4     228            scalar   COM              1021                               
+ MYJS5_P2                   I(4)            4     232            scalar   COM              1022                               
+ MYJS_P1                    I(4)            4     164            scalar   COM              992                                
+ MYJS_P2                    I(4)            4     168            scalar   COM              993                                
+ MYJS_P3                    I(4)            4     172            scalar   COM              994                                
+ MYJS_P4                    I(4)            4     176            scalar   COM              995                                
+ MYJS_P5                    I(4)            4     180            scalar   COM              996                                
+ MYPE                       I(4)            4     0              scalar   COM              739,785,796,836,850,904            
+ MY_E                       I(4)            4     336            scalar   COM              915,916,941                        
+ MY_IE_GLB                  I(4)            4     12             scalar   COM              741,805,869,879                    
+ MY_IE_LOC                  I(4)            4     28             scalar   COM              869,974,975,976,977,978,979,981,98 
+                                                                                           2,983,984,985,987,988              
+ MY_IS_GLB                  I(4)            4     8              scalar   COM              740,869,879                        
+ MY_IS_LOC                  I(4)            4     24             scalar   COM              868,959,960,961,962,963,964,966,96 
+                                                                                           7,968,969,970,972                  
+ MY_JE_GLB                  I(4)            4     20             scalar   COM              743,862,871,886                    
+ MY_JE_LOC                  I(4)            4     36             scalar   COM              871,1024,1025,1026,1027,1028,1029, 
+                                                                                           1031,1032,1033,1034,1035,1036,1038 
+                                                                                           ,1039,1040,1041,1042,1043,1045,104 
+                                                                                           6,1047,1048,1050,1051,1052,1053,10 
+                                                                                           55,1056,1057                       
+ MY_JS_GLB                  I(4)            4     16             scalar   COM              742,871,886                        
+ MY_JS_LOC                  I(4)            4     32             scalar   COM              870,991,992,993,994,995,996,998,99 
+                                                                                           9,1000,1001,1002,1003,1005,1006,10 
+                                                                                           07,1008,1009,1010,1012,1013,1014,1 
+                                                                                           016,1017,1018,1020,1021,1022       
+ MY_N                       I(4)            4     332            scalar   COM              912,913,940                        
+ MY_NE                      I(4)            4     348            scalar   COM              924,926,944                        
+ MY_NEB                     I(4)            4     364      1     8        COM              940,941,942,943,944,945,946,947    
+ MY_NW                      I(4)            4     360            scalar   COM              936,938,947                        
+ MY_S                       I(4)            4     340            scalar   COM              918,919,942                        
+ MY_SE                      I(4)            4     352            scalar   COM              928,930,945                        
+ MY_SW                      I(4)            4     356            scalar   COM              932,934,946                        
+ MY_W                       I(4)            4     344            scalar   COM              921,922,943                        
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+
+Page 19          Source Listing                  MPPINIT
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+
+Page 20          Source Listing                  MPPINIT
+2022-02-15 16:38                                 MPPINIT.F
+
+   1063 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+   1064 C-----------------------------------------------------------------
+   1065                       SUBROUTINE INDTABLE 
+   1066 C-----------------------------------------------------------------
+   1067 C***
+   1068 C***  THIS ROUTINE GENERATES THE TABLES THAT WILL GIVE THE
+   1069 C***  STARTING AND ENDING VALUES OF I AND J FOR EACH PE ON
+   1070 C***  THE GLOBAL AND LOCAL DOMAINS.  EACH PE WILL HAVE A COPY
+   1071 C***  OF THE FULL TABLES.  THE ARGUMENT USED IS SIMPLY THE
+   1072 C***  NUMBER OF THE PE FOR WHICH THESE VALUES ARE DESIRED.
+   1073 C***
+   1074 C-----------------------------------------------------------------
+   1075       INCLUDE "parmeta"
+   1099       INCLUDE "mpif.h"
+   1661       INCLUDE "mpp.h"
+   1662 C-----------------------------------------------------------------
+   1663 C
+   1722       IS_LOC_TABLE(MYPE)=MY_IS_LOC
+   1723       JS_LOC_TABLE(MYPE)=MY_JS_LOC
+   1724       IE_LOC_TABLE(MYPE)=MY_IE_LOC
+   1725       JE_LOC_TABLE(MYPE)=MY_JE_LOC
+   1726 C
+   1727       IS_GLB_TABLE(MYPE)=MY_IS_GLB
+   1728       IE_GLB_TABLE(MYPE)=MY_IE_GLB
+   1729       JS_GLB_TABLE(MYPE)=MY_JS_GLB
+   1730       JE_GLB_TABLE(MYPE)=MY_JE_GLB
+   1731 C
+   1732       DO IPE=0,NPES-1
+   1733         CALL MPI_BCAST(IS_LOC_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1734      1                 MPI_COMM_COMP,IRTN)
+   1735         CALL MPI_BCAST(JS_LOC_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1736      1                 MPI_COMM_COMP,IRTN)
+   1737         CALL MPI_BCAST(IE_LOC_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1738      1                 MPI_COMM_COMP,IRTN)
+   1739         CALL MPI_BCAST(JE_LOC_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1740      1                 MPI_COMM_COMP,IRTN)
+   1741 C
+   1742         CALL MPI_BCAST(IS_GLB_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1743      1                 MPI_COMM_COMP,IRTN)
+   1744         CALL MPI_BCAST(JS_GLB_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1745      1                 MPI_COMM_COMP,IRTN)
+   1746         CALL MPI_BCAST(IE_GLB_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1747      1                 MPI_COMM_COMP,IRTN)
+   1748         CALL MPI_BCAST(JE_GLB_TABLE(IPE),1,MPI_INTEGER,IPE,
+   1749      1                 MPI_COMM_COMP,IRTN)
+   1750       ENDDO
+   1751 C
+   1752       CALL MPI_BARRIER(MPI_COMM_COMP,IRTN)
+   1753 C------------------------------------------------------------------
+   1754 C***
+   1755 C***  ALL OF THE PEs CAN NOW GENERATE A COMPLETE TABLE OF THE
+   1756 C***  NUMBER OF GRID POINTS IN THE I DIRECTION THAT ARE ON
+   1757 C***  ALL OTHER PEs.  THIS WILL BE USED IN THE MESINGER MSLP
+   1758 C***  REDUCTION AS WELL AS IN THE BROADCAST BELOW.
+   1759 C***
+   1760       DO IPE=0,NPES-1
+   1761         ICHUNKTAB(IPE)=IE_LOC_TABLE(IPE)-IS_LOC_TABLE(IPE)+1
+
+Page 21          Source Listing                  INDTABLE
+2022-02-15 16:38                                 MPPINIT.F
+
+   1762       ENDDO
+   1763 C***
+   1764 C***  SET UP A MAP OF THE GLOBAL DOMAIN THAT GIVES THE PE THAT
+   1765 C***  OWNS EACH POINT.
+   1766 C***  (THIS APPEARS TO BE VESTIGIAL)
+   1767 C***
+   1768 C
+   1769 C***  FIRST EACH PE FILLS IN ITS SECTION OF THE ARRAY
+   1770 C
+   1771       DO JGLB=JS_GLB_TABLE(MYPE),JE_GLB_TABLE(MYPE)
+   1772       DO IGLB=IS_GLB_TABLE(MYPE),IE_GLB_TABLE(MYPE)
+   1773         ITEMP(IGLB,JGLB)=MYPE
+   1774       ENDDO
+   1775       ENDDO
+   1776 C
+   1777 C***  NEXT, ALL PEs EXCHANGE THEIR SECTIONS SO EVERYONE HAS
+   1778 C***  A FULL MAP
+   1779 C
+   1780       DO IPE=0,NPES-1
+   1781       DO JGLB=JS_GLB_TABLE(IPE),JE_GLB_TABLE(IPE)
+   1782         CALL MPI_BCAST(ITEMP(IS_GLB_TABLE(IPE),JGLB),ICHUNKTAB(IPE)
+   1783      1,                MPI_INTEGER,IPE,MPI_COMM_COMP,IRECV)
+   1784       ENDDO
+   1785       ENDDO
+   1786 C
+   1787       CALL MPI_BARRIER(MPI_COMM_COMP,IRTN)
+   1788 C********************************************************************
+   1789        RETURN
+   1790        END
+
+Page 22          Source Listing                  INDTABLE
+2022-02-15 16:38 Entry Points                    MPPINIT.F
+
+
+
+ENTRY POINTS
+
+  Name                 
+                       
+ indtable_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ GLB_TABLE                  Common 1700                                 336      SAVE                                               
+ IDIM1                      Param  1095     I(4)            4           scalar                                                      
+ IDIM2                      Param  1095     I(4)            4           scalar                                                      
+ IGLB                       Local  1772     I(4)            4           scalar                    1772,1773                         
+ IGSTL                      Param  1090     I(4)            4           scalar                    1095                              
+ IGSTR                      Param  1090     I(4)            4           scalar                    1095                              
+ IM                         Param  1078     I(4)            4           scalar                    1092,1095,1706,1707,1708,1709,1710
+                                                                                                  ,1714,1715,1720                   
+ INDTABLE                   Subr   1065                                                                                             
+ INPES                      Param  1087     I(4)            4           scalar                    1092,1095,1690,1691,1692,1701,1702
+ IPE                        Local  1732     I(4)            4           scalar                    1732,1733,1735,1737,1739,1742,1744
+                                                                                                  ,1746,1748,1760,1761,1780,1781,178
+                                                                                                  2,1783                            
+ IRECV                      Local  1783     I(4)            4           scalar                    1783                              
+ IRTN                       Local  1734     I(4)            4           scalar                    1734,1736,1738,1740,1743,1745,1747
+                                                                                                  ,1749,1752,1787                   
+ ITAIL                      Param  1092     I(4)            4           scalar                                                      
+ JDIM1                      Param  1096     I(4)            4           scalar                                                      
+ JDIM2                      Param  1096     I(4)            4           scalar                                                      
+ JGLB                       Local  1771     I(4)            4           scalar                    1771,1773,1781,1782               
+ JGSTL                      Param  1091     I(4)            4           scalar                    1096                              
+ JGSTR                      Param  1091     I(4)            4           scalar                    1096                              
+ JM                         Param  1078     I(4)            4           scalar                    1093,1096,1706,1707,1708,1709,1710
+                                                                                                  ,1714,1715,1720                   
+ JNPES                      Param  1087     I(4)            4           scalar                    1093,1096,1690,1691,1692,1701,1702
+ JTAIL                      Param  1093     I(4)            4           scalar                                                      
+ LM                         Param  1078     I(4)            4           scalar                    1715                              
+ LSM                        Param  1078     I(4)            4           scalar                                                      
+ MAPPINGS                   Common 1719                                 5024     SAVE                                               
+ MPIFCMB5                   Common 1649                                 4        SAVE                                               
+ MPIFCMB9                   Common 1650                                 4        SAVE                                               
+ MPIPRIV1                   Common 1654                                 28       SAVE                                               
+ MPIPRIV2                   Common 1656                                 24       SAVE                                               
+ MPIPRIVC                   Common 1659                                 2        SAVE                                               
+ MPI_2DOUBLE_PRECISION      Param  1395     I(4)            4           scalar                                                      
+ MPI_2INT                   Param  1479     I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  1393     I(4)            4           scalar                                                      
+ MPI_2REAL                  Param  1397     I(4)            4           scalar                                                      
+ MPI_ADDRESS_KIND           Param  1431     I(4)            4           scalar                                                      
+ MPI_AINT                   Param  1509     I(4)            4           scalar                                                      
+ MPI_ANY_SOURCE             Param  1361     I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  1363     I(4)            4           scalar                                                      
+ MPI_APPNUM                 Param  1325     I(4)            4           scalar                                                      
+ MPI_ASYNC_PROTECTS_NONBLOC                                                                                                         
+
+Page 23          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ KING                       Param  1631     L(4)            4           scalar                                                      
+ MPI_BAND                   Param  1269     I(4)            4           scalar                                                      
+ MPI_BARRIER                Subr   1752                                                           1752,1787                         
+ MPI_BCAST                  Subr   1733                                                           1733,1735,1737,1739,1742,1744,1746
+                                                                                                  ,1748,1782                        
+ MPI_BOR                    Param  1273     I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  1357     I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  1277     I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  1401     I(4)            4           scalar                                                      
+ MPI_CART                   Param  1369     I(4)            4           scalar                                                      
+ MPI_CHAR                   Param  1439     I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  1399     I(4)            4           scalar                                                      
+ MPI_COMBINER_CONTIGUOUS    Param  1527     I(4)            4           scalar                                                      
+ MPI_COMBINER_DARRAY        Param  1549     I(4)            4           scalar                                                      
+ MPI_COMBINER_DUP           Param  1525     I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_COMPLEX   Param  1553     I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_INTEGER   Param  1555     I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_REAL      Param  1551     I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED      Param  1539     I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_BLOC                                                                                                         
+ K                          Param  1559     I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_INTE                                                                                                         
+ GER                        Param  1537     I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR       Param  1533     I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR_INTEG                                                                                                         
+ ER                         Param  1531     I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED       Param  1535     I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED_BLOCK Param  1541     I(4)            4           scalar                                                      
+ MPI_COMBINER_NAMED         Param  1523     I(4)            4           scalar                                                      
+ MPI_COMBINER_RESIZED       Param  1557     I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT        Param  1545     I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT_INTEGE                                                                                                         
+ R                          Param  1543     I(4)            4           scalar                                                      
+ MPI_COMBINER_SUBARRAY      Param  1547     I(4)            4           scalar                                                      
+ MPI_COMBINER_VECTOR        Param  1529     I(4)            4           scalar                                                      
+ MPI_COMM_DUP_FN            Subr   1638                                 scalar                                                      
+ MPI_COMM_NULL              Param  1293     I(4)            4           scalar                                                      
+ MPI_COMM_NULL_COPY_FN      Subr   1639                                 scalar                                                      
+ MPI_COMM_NULL_DELETE_FN    Subr   1638                                 scalar                                                      
+ MPI_COMM_SELF              Param  1289     I(4)            4           scalar                                                      
+ MPI_COMM_TYPE_SHARED       Param  1577     I(4)            4           scalar                                                      
+ MPI_COMM_WORLD             Param  1287     I(4)            4           scalar                                                      
+ MPI_COMPLEX                Param  1381     I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  1427     I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  1429     I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  1425     I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  1241     I(4)            4           scalar                                                      
+ MPI_CONVERSION_FN_NULL     Subr   1644                                 scalar                                                      
+ MPI_COUNT                  Param  1513     I(4)            4           scalar                                                      
+ MPI_COUNT_KIND             Param  1435     I(4)            4           scalar                                                      
+ MPI_CXX_BOOL               Param  1515     I(4)            4           scalar                                                      
+ MPI_CXX_DOUBLE_COMPLEX     Param  1519     I(4)            4           scalar                                                      
+ MPI_CXX_FLOAT_COMPLEX      Param  1517     I(4)            4           scalar                                                      
+ MPI_CXX_LONG_DOUBLE_COMPLE                                                                                                         
+ X                          Param  1521     I(4)            4           scalar                                                      
+
+Page 24          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_C_BOOL                 Param  1499     I(4)            4           scalar                                                      
+ MPI_C_COMPLEX              Param  1503     I(4)            4           scalar                                                      
+ MPI_C_DOUBLE_COMPLEX       Param  1505     I(4)            4           scalar                                                      
+ MPI_C_FLOAT_COMPLEX        Param  1501     I(4)            4           scalar                                                      
+ MPI_C_LONG_DOUBLE_COMPLEX  Param  1507     I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  1303     I(4)            4           scalar                    1418,1516,1518,1520,1522          
+ MPI_DISPLACEMENT_CURRENT   Param  1627     I(8)            8           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  1619     I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  1621     I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  1625     I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  1623     I(4)            4           scalar                                                      
+ MPI_DIST_GRAPH             Param  1371     I(4)            4           scalar                                                      
+ MPI_DOUBLE                 Param  1461     I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  1383     I(4)            4           scalar                                                      
+ MPI_DOUBLE_INT             Param  1473     I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  1389     I(4)            4           scalar                                                      
+ MPI_DUP_FN                 Subr   1635                                 scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  1307     I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  1108     I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  1235     I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  1237     I(4)            4           scalar                                                      
+ MPI_ERR_ACCESS             Param  1221     I(4)            4           scalar                                                      
+ MPI_ERR_AMODE              Param  1187     I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  1197     I(4)            4           scalar                                                      
+ MPI_ERR_ASSERT             Param  1131     I(4)            4           scalar                                                      
+ MPI_ERR_BAD_FILE           Param  1193     I(4)            4           scalar                                                      
+ MPI_ERR_BASE               Param  1231     I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  1149     I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  1229     I(4)            4           scalar                                                      
+ MPI_ERR_CONVERSION         Param  1211     I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  1141     I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  1119     I(4)            4           scalar                                                      
+ MPI_ERR_DISP               Param  1177     I(4)            4           scalar                                                      
+ MPI_ERR_DUP_DATAREP        Param  1207     I(4)            4           scalar                                                      
+ MPI_ERR_FILE               Param  1167     I(4)            4           scalar                                                      
+ MPI_ERR_FILE_EXISTS        Param  1219     I(4)            4           scalar                                                      
+ MPI_ERR_FILE_IN_USE        Param  1213     I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  1129     I(4)            4           scalar                                                      
+ MPI_ERR_INFO               Param  1135     I(4)            4           scalar                                                      
+ MPI_ERR_INFO_KEY           Param  1165     I(4)            4           scalar                                                      
+ MPI_ERR_INFO_NOKEY         Param  1209     I(4)            4           scalar                                                      
+ MPI_ERR_INFO_VALUE         Param  1157     I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  1185     I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  1159     I(4)            4           scalar                                                      
+ MPI_ERR_IO                 Param  1145     I(4)            4           scalar                                                      
+ MPI_ERR_KEYVAL             Param  1189     I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  1225     I(4)            4           scalar                                                      
+ MPI_ERR_LOCKTYPE           Param  1205     I(4)            4           scalar                                                      
+ MPI_ERR_NAME               Param  1125     I(4)            4           scalar                                                      
+ MPI_ERR_NOT_SAME           Param  1143     I(4)            4           scalar                                                      
+ MPI_ERR_NO_MEM             Param  1155     I(4)            4           scalar                                                      
+ MPI_ERR_NO_SPACE           Param  1147     I(4)            4           scalar                                                      
+ MPI_ERR_NO_SUCH_FILE       Param  1217     I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  1121     I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  1173     I(4)            4           scalar                                                      
+
+Page 25          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_PENDING            Param  1161     I(4)            4           scalar                                                      
+ MPI_ERR_PORT               Param  1151     I(4)            4           scalar                                                      
+ MPI_ERR_QUOTA              Param  1123     I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  1227     I(4)            4           scalar                                                      
+ MPI_ERR_READ_ONLY          Param  1169     I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  1171     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_ATTACH         Param  1153     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_CONFLICT       Param  1139     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_FLAVOR         Param  1127     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_RANGE          Param  1163     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SHARED         Param  1223     I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SYNC           Param  1203     I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  1191     I(4)            4           scalar                                                      
+ MPI_ERR_SERVICE            Param  1215     I(4)            4           scalar                                                      
+ MPI_ERR_SIZE               Param  1137     I(4)            4           scalar                                                      
+ MPI_ERR_SPAWN              Param  1179     I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  1199     I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  1201     I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  1175     I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  1195     I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  1183     I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_DATARE                                                                                                         
+ P                          Param  1133     I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_OPERAT                                                                                                         
+ ION                        Param  1181     I(4)            4           scalar                                                      
+ MPI_ERR_WIN                Param  1233     I(4)            4           scalar                                                      
+ MPI_FILE_NULL              Param  1297     I(4)            4           scalar                                                      
+ MPI_FLOAT                  Param  1459     I(4)            4           scalar                                                      
+ MPI_FLOAT_INT              Param  1471     I(4)            4           scalar                                                      
+ MPI_GRAPH                  Param  1367     I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  1291     I(4)            4           scalar                                                      
+ MPI_GROUP_NULL             Param  1299     I(4)            4           scalar                                                      
+ MPI_HOST                   Param  1315     I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  1239     I(4)            4           scalar                                                      
+ MPI_INFO_ENV               Param  1311     I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  1309     I(4)            4           scalar                                                      
+ MPI_INT                    Param  1451     I(4)            4           scalar                                                      
+ MPI_INT16_T                Param  1485     I(4)            4           scalar                                                      
+ MPI_INT32_T                Param  1487     I(4)            4           scalar                                                      
+ MPI_INT64_T                Param  1489     I(4)            4           scalar                                                      
+ MPI_INT8_T                 Param  1483     I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  1391     I(4)            4           scalar                    1733,1735,1737,1739,1742,1744,1746
+                                                                                                  ,1748,1783                        
+ MPI_INTEGER1               Param  1409     I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  1417     I(4)            4           scalar                                                      
+ MPI_INTEGER2               Param  1411     I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  1413     I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  1415     I(4)            4           scalar                                                      
+ MPI_INTEGER_KIND           Param  1437     I(4)            4           scalar                                                      
+ MPI_IO                     Param  1317     I(4)            4           scalar                                                      
+ MPI_KEYVAL_INVALID         Param  1355     I(4)            4           scalar                                                      
+ MPI_LAND                   Param  1267     I(4)            4           scalar                                                      
+ MPI_LASTUSEDCODE           Param  1323     I(4)            4           scalar                                                      
+ MPI_LB                     Param  1405     I(4)            4           scalar                                                      
+ MPI_LOCK_EXCLUSIVE         Param  1377     I(4)            4           scalar                                                      
+
+Page 26          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_LOCK_SHARED            Param  1379     I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  1385     I(4)            4           scalar                                                      
+ MPI_LONG                   Param  1455     I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE            Param  1463     I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE_INT        Param  1481     I(4)            4           scalar                                                      
+ MPI_LONG_INT               Param  1475     I(4)            4           scalar                                                      
+ MPI_LONG_LONG              Param  1469     I(4)            4           scalar                                                      
+ MPI_LONG_LONG_INT          Param  1465     I(4)            4           scalar                                                      
+ MPI_LOR                    Param  1271     I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  1275     I(4)            4           scalar                                                      
+ MPI_MAX                    Param  1259     I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  1281     I(4)            4           scalar                                                      
+ MPI_MAX_DATAREP_STRING     Param  1349     I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  1337     I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  1343     I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  1345     I(4)            4           scalar                                                      
+ MPI_MAX_LIBRARY_VERSION_ST                                                                                                         
+ RING                       Param  1351     I(4)            4           scalar                                                      
+ MPI_MAX_OBJECT_NAME        Param  1341     I(4)            4           scalar                                                      
+ MPI_MAX_PORT_NAME          Param  1339     I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  1347     I(4)            4           scalar                                                      
+ MPI_MESSAGE_NO_PROC        Param  1581     I(4)            4           scalar                                                      
+ MPI_MESSAGE_NULL           Param  1579     I(4)            4           scalar                                                      
+ MPI_MIN                    Param  1261     I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  1279     I(4)            4           scalar                                                      
+ MPI_MODE_APPEND            Param  1605     I(4)            4           scalar                                                      
+ MPI_MODE_CREATE            Param  1601     I(4)            4           scalar                                                      
+ MPI_MODE_DELETE_ON_CLOSE   Param  1597     I(4)            4           scalar                                                      
+ MPI_MODE_EXCL              Param  1603     I(4)            4           scalar                                                      
+ MPI_MODE_NOCHECK           Param  1567     I(4)            4           scalar                                                      
+ MPI_MODE_NOPRECEDE         Param  1573     I(4)            4           scalar                                                      
+ MPI_MODE_NOPUT             Param  1571     I(4)            4           scalar                                                      
+ MPI_MODE_NOSTORE           Param  1569     I(4)            4           scalar                                                      
+ MPI_MODE_NOSUCCEED         Param  1575     I(4)            4           scalar                                                      
+ MPI_MODE_RDONLY            Param  1591     I(4)            4           scalar                                                      
+ MPI_MODE_RDWR              Param  1593     I(4)            4           scalar                                                      
+ MPI_MODE_SEQUENTIAL        Param  1607     I(4)            4           scalar                                                      
+ MPI_MODE_UNIQUE_OPEN       Param  1599     I(4)            4           scalar                                                      
+ MPI_MODE_WRONLY            Param  1595     I(4)            4           scalar                                                      
+ MPI_NO_OP                  Param  1285     I(4)            4           scalar                                                      
+ MPI_NULL_COPY_FN           Subr   1635                                 scalar                                                      
+ MPI_NULL_DELETE_FN         Subr   1635                                 scalar                                                      
+ MPI_OFFSET                 Param  1511     I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  1433     I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  1301     I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  1615     I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  1617     I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  1407     I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  1359     I(4)            4           scalar                                                      
+ MPI_PROD                   Param  1265     I(4)            4           scalar                                                      
+ MPI_REAL                   Param  1387     I(4)            4           scalar                                                      
+ MPI_REAL16                 Param  1423     I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  1419     I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  1421     I(4)            4           scalar                                                      
+ MPI_REPLACE                Param  1283     I(4)            4           scalar                                                      
+
+Page 27          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_REQUEST_NULL           Param  1305     I(4)            4           scalar                                                      
+ MPI_ROOT                   Param  1365     I(4)            4           scalar                                                      
+ MPI_SEEK_CUR               Param  1611     I(4)            4           scalar                                                      
+ MPI_SEEK_END               Param  1613     I(4)            4           scalar                                                      
+ MPI_SEEK_SET               Param  1609     I(4)            4           scalar                                                      
+ MPI_SHORT                  Param  1447     I(4)            4           scalar                                                      
+ MPI_SHORT_INT              Param  1477     I(4)            4           scalar                                                      
+ MPI_SIGNED_CHAR            Param  1441     I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  1243     I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  1108     I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  1110     I(4)            4           scalar                    1112,1113                         
+ MPI_SUBARRAYS_SUPPORTED    Param  1629     L(4)            4           scalar                                                      
+ MPI_SUBVERSION             Param  1375     I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  1117     I(4)            4           scalar                                                      
+ MPI_SUM                    Param  1263     I(4)            4           scalar                                                      
+ MPI_TAG                    Param  1108     I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  1313     I(4)            4           scalar                                                      
+ MPI_THREAD_FUNNELED        Param  1585     I(4)            4           scalar                                                      
+ MPI_THREAD_MULTIPLE        Param  1589     I(4)            4           scalar                                                      
+ MPI_THREAD_SERIALIZED      Param  1587     I(4)            4           scalar                                                      
+ MPI_THREAD_SINGLE          Param  1583     I(4)            4           scalar                                                      
+ MPI_TYPECLASS_COMPLEX      Param  1565     I(4)            4           scalar                                                      
+ MPI_TYPECLASS_INTEGER      Param  1563     I(4)            4           scalar                                                      
+ MPI_TYPECLASS_REAL         Param  1561     I(4)            4           scalar                                                      
+ MPI_TYPE_DUP_FN            Subr   1642                                 scalar                                                      
+ MPI_TYPE_NULL_COPY_FN      Subr   1643                                 scalar                                                      
+ MPI_TYPE_NULL_DELETE_FN    Subr   1642                                 scalar                                                      
+ MPI_UB                     Param  1403     I(4)            4           scalar                                                      
+ MPI_UINT16_T               Param  1493     I(4)            4           scalar                                                      
+ MPI_UINT32_T               Param  1495     I(4)            4           scalar                                                      
+ MPI_UINT64_T               Param  1497     I(4)            4           scalar                                                      
+ MPI_UINT8_T                Param  1491     I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  1353     I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  1245     I(4)            4           scalar                                                      
+ MPI_UNIVERSE_SIZE          Param  1321     I(4)            4           scalar                                                      
+ MPI_UNSIGNED               Param  1453     I(4)            4           scalar                                                      
+ MPI_UNSIGNED_CHAR          Param  1443     I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG          Param  1457     I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG_LONG     Param  1467     I(4)            4           scalar                                                      
+ MPI_UNSIGNED_SHORT         Param  1449     I(4)            4           scalar                                                      
+ MPI_VERSION                Param  1373     I(4)            4           scalar                                                      
+ MPI_WCHAR                  Param  1445     I(4)            4           scalar                                                      
+ MPI_WIN_BASE               Param  1327     I(4)            4           scalar                                                      
+ MPI_WIN_CREATE_FLAVOR      Param  1333     I(4)            4           scalar                                                      
+ MPI_WIN_DISP_UNIT          Param  1331     I(4)            4           scalar                                                      
+ MPI_WIN_DUP_FN             Subr   1640                                 scalar                                                      
+ MPI_WIN_FLAVOR_ALLOCATE    Param  1249     I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_CREATE      Param  1247     I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_DYNAMIC     Param  1251     I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_SHARED      Param  1253     I(4)            4           scalar                                                      
+ MPI_WIN_MODEL              Param  1335     I(4)            4           scalar                                                      
+ MPI_WIN_NULL               Param  1295     I(4)            4           scalar                                                      
+ MPI_WIN_NULL_COPY_FN       Subr   1641                                 scalar                                                      
+ MPI_WIN_NULL_DELETE_FN     Subr   1640                                 scalar                                                      
+ MPI_WIN_SEPARATE           Param  1255     I(4)            4           scalar                                                      
+
+Page 28          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_WIN_SIZE               Param  1329     I(4)            4           scalar                                                      
+ MPI_WIN_UNIFIED            Param  1257     I(4)            4           scalar                                                      
+ MPI_WTICK                  Func   1636     R(8)            8           scalar                                                      
+ MPI_WTIME                  Func   1636     R(8)            8           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  1319     I(4)            4           scalar                                                      
+ MPPCOM                     Common 1664                                 1724     SAVE                                               
+ PMPI_WTICK                 Func   1637     R(8)            8           scalar                                                      
+ PMPI_WTIME                 Func   1637     R(8)            8           scalar                                                      
+ TEMPCOM                    Common 1705                                 6603768  SAVE                                               
+ TOPO                       Common 1713                                 17478548 SAVE                                               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     828      1     21       COM              1761,1782                          
+ IE_GLB_TABLE               I(4)            4     84       1     21       COM              1728,1746,1772                     
+ IE_LOC_TABLE               I(4)            4     660      1     21       COM              1724,1737,1761                     
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1324     1     100      COM                                                 
+ IQUILT_GROUP               I(4)            4     1320           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     21       COM              1727,1742,1772,1782                
+ IS_LOC_TABLE               I(4)            4     492      1     21       COM              1722,1733,1761                     
+ ITEMP                      I(4)            4     5870016  2     91719    COM              1773,1782                          
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     252      1     21       COM              1730,1748,1771,1781                
+ JE_LOC_TABLE               I(4)            4     744      1     21       COM              1725,1739                          
+ JS_GLB_TABLE               I(4)            4     168      1     21       COM              1729,1744,1771,1781                
+ JS_LOC_TABLE               I(4)            4     576      1     21       COM              1723,1735                          
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+
+Page 29          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ MPI_ARGVS_NULL             CHAR            1     0        2     1        COM                                                 
+ MPI_ARGV_NULL              CHAR            1     1        1     1        COM                                                 
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_COMM_COMP              I(4)            4     912            scalar   COM              1734,1736,1738,1740,1743,1745,1747 
+                                                                                           ,1749,1752,1783,1787               
+ MPI_COMM_INTER             I(4)            4     916            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     920      1     100      COM                                                 
+ MPI_ERRCODES_IGNORE        I(4)            4     20       1     1        COM                                                 
+ MPI_IN_PLACE               I(4)            4     4              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     0        2     5        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     8        1     5        COM                                                 
+ MPI_UNWEIGHTED             I(4)            4     0              scalar   COM                                                 
+ MPI_WEIGHTS_EMPTY          I(4)            4     0              scalar   COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM                                                 
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM                                                 
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM                                                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM                                                 
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+
+Page 30          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM                                                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM                                                 
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM              1722,1723,1724,1725,1727,1728,1729 
+                                                                                           ,1730,1771,1772,1773               
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM              1728                               
+ MY_IE_LOC                  I(4)            4     28             scalar   COM              1724                               
+ MY_IS_GLB                  I(4)            4     8              scalar   COM              1727                               
+ MY_IS_LOC                  I(4)            4     24             scalar   COM              1722                               
+ MY_JE_GLB                  I(4)            4     20             scalar   COM              1730                               
+ MY_JE_LOC                  I(4)            4     36             scalar   COM              1725                               
+ MY_JS_GLB                  I(4)            4     16             scalar   COM              1729                               
+ MY_JS_LOC                  I(4)            4     32             scalar   COM              1723                               
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM              1732,1760,1780                     
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+
+Page 31          Source Listing                  INDTABLE
+2022-02-15 16:38 Symbol Table                    MPPINIT.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+
+Page 32          Source Listing                  INDTABLE
+2022-02-15 16:38                                 MPPINIT.F
+
+   1791 
+
+Page 33          Source Listing                  INDTABLE
+2022-02-15 16:38 Subprograms/Common Blocks       MPPINIT.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ GLB_TABLE                  Common 108                                  336      SAVE                                               
+ GLB_TABLE                  Common 1700                                 336      SAVE                                               
+ INDTABLE                   Subr   1065                                                                                             
+ MAPPINGS                   Common 127                                  5024     SAVE                                               
+ MAPPINGS                   Common 1719                                 5024     SAVE                                               
+ MPIFCMB5                   Common 685                                  4        SAVE                                               
+ MPIFCMB5                   Common 1649                                 4        SAVE                                               
+ MPIFCMB9                   Common 686                                  4        SAVE                                               
+ MPIFCMB9                   Common 1650                                 4        SAVE                                               
+ MPIPRIV1                   Common 690                                  28       SAVE                                               
+ MPIPRIV1                   Common 1654                                 28       SAVE                                               
+ MPIPRIV2                   Common 692                                  24       SAVE                                               
+ MPIPRIV2                   Common 1656                                 24       SAVE                                               
+ MPIPRIVC                   Common 695                                  2        SAVE                                               
+ MPIPRIVC                   Common 1659                                 2        SAVE                                               
+ MPPCOM                     Common 72                                   1724     SAVE                                               
+ MPPCOM                     Common 1664                                 1724     SAVE                                               
+ MPPINIT                    Subr   3                                                                                                
+ TEMPCOM                    Common 113                                  6603768  SAVE                                               
+ TEMPCOM                    Common 1705                                 6603768  SAVE                                               
+ TOPO                       Common 121                                  17478548 SAVE                                               
+ TOPO                       Common 1713                                 17478548 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+
+Page 34          Source Listing                  INDTABLE
+2022-02-15 16:38                                 MPPINIT.F
+
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+
+Page 35          Source Listing                  INDTABLE
+2022-02-15 16:38                                 MPPINIT.F
+
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : MPPINIT.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

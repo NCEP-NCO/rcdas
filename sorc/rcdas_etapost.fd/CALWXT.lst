@@ -1,0 +1,596 @@
+Page 1           Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+      1        SUBROUTINE CALWXT(T,Q,RES,PD,HTM,LMH,PREC,PT,AETA,ETA,IWX)
+      2 C 
+      3 C     FILE: CALWXT.f
+      4 C     WRITTEN: 11 NOVEMBER 1993, MICHAEL BALDWIN
+      5 C     REVISIONS:
+      6 C               30 SEPT 1994-SETUP NEW DECISION TREE (M BALDWIN)
+      7 C               12 JUNE 1998-CONVERSION TO 2-D (T BLACK)
+      8 C                              
+      9 C
+     10 C     ROUTINE TO COMPUTE PRECIPITATION TYPE USING A DECISION TREE
+     11 C     APPROACH THAT USES VARIABLES SUCH AS INTEGRATED WET BULB TEMP
+     12 C     BELOW FREEZING AND LOWEST LAYER TEMPERATURE
+     13 C
+     14 C     SEE BALDWIN AND CONTORNO PREPRINT FROM 13TH WEATHER ANALYSIS
+     15 C     AND FORECASTING CONFERENCE FOR MORE DETAILS
+     16 C     (OR BALDWIN ET AL, 10TH NWP CONFERENCE PREPRINT)
+     17 C 
+     18       INCLUDE "parmeta"
+     19 C
+     37       PARAMETER (LP1=LM+1)
+     38       PARAMETER (H1M12=1.E-12)
+     39       PARAMETER (PTHRESH=0.000004)
+     40 C
+     41 C  LIST OF VARIABLES NEEDED
+     42 C    PARAMETERS:
+     43 C      D608,ROG,H1,D00
+     44        PARAMETER(D608=0.608,ROG=287.04/9.8,H1=1.0,D00=0.0)
+     45 C
+     46 C    INPUT:
+     47 C      T,Q,RES,PD,HTM,LMH,PREC,PT,AETA,ETA
+     48       DIMENSION T(IM,JM,LM),Q(IM,JM,LM),RES(IM,JM),PD(IM,JM)
+     49      &,         HTM(IM,JM,LM)
+     50       DIMENSION LMH(IM,JM),PREC(IM,JM),ETA(LP1),AETA(LM)
+     51 C    OUTPUT:
+     52 C      IWX - INSTANTANEOUS WEATHER TYPE.
+     53 C        ACTS LIKE A 4 BIT BINARY
+     54 C          1111 = RAIN/FREEZING RAIN/ICE PELLETS/SNOW
+     55 C          WHERE THE ONE'S DIGIT IS FOR SNOW
+     56 C                THE TWO'S DIGIT IS FOR ICE PELLETS
+     57 C                THE FOUR'S DIGIT IS FOR FREEZING RAIN
+     58 C            AND THE EIGHT'S DIGIT IS FOR RAIN
+     59       DIMENSION IWX(IM,JM)
+     60 C    INTERNAL:
+     61 C      PDSL
+     62 C
+     63       DIMENSION TWET(IM,JM,LM),PDSL(IM,JM)
+     64       DIMENSION KARR(IM,JM)
+     65       DIMENSION LICEE(IM,JM),TCOLD(IM,JM),TWARM(IM,JM)
+     66 C    SUBROUTINES CALLED:
+     67 C     WETBULB
+     68 C     
+     69 C
+     70 C     INITIALIZE WEATHER TYPE ARRAY TO ZERO (IE, OFF).
+     71 C     WE DO THIS SINCE WE WANT IWX TO REPRESENT THE
+     72 C     INSTANTANEOUS WEATHER TYPE ON RETURN.
+     73 C     
+     74       INCLUDE "CTLBLK.comm"
+
+Page 2           Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+     75 C
+     90 !$omp  parallel do
+     91       DO J=JSTA,JEND
+     92       DO I=1,IM
+     93         IWX(I,J) = 0
+     94         PDSL(I,J)=RES(I,J)*PD(I,J)
+     95       ENDDO
+     96       ENDDO
+     97 C
+     98 !$omp  parallel do
+     99 !$omp& private(a,lmhk,pkl,psfck,qkl,tdchk,tdkl,tdpre,tkl)
+    100       DO 800 J=JSTA,JEND
+    101       DO 800 I=1,IM
+    102       LMHK=LMH(I,J)
+    103 C
+    104 C   SKIP THIS POINT IF NO PRECIP THIS TIME STEP 
+    105 C
+    106       IF (PREC(I,J).LE.PTHRESH) GOTO 800
+    107 C
+    108 C   FIND COLDEST AND WARMEST TEMPS IN SATURATED LAYER BETWEEN
+    109 C   70 MB ABOVE GROUND AND 500 MB
+    110 C   ALSO FIND HIGHEST SATURATED LAYER IN THAT RANGE
+    111 C
+    112       PSFCK=PD(I,J)+PT
+    113       TDCHK=2.0
+    114   760 TCOLD(I,J)=T(I,J,LMHK)
+    115       TWARM(I,J)=T(I,J,LMHK)
+    116       LICEE(I,J)=LMHK
+    117 C
+    118       DO 775 L=1,LMHK
+    119       QKL=Q(I,J,L)
+    120       QKL=AMAX1(H1M12,QKL)
+    121       TKL=T(I,J,L)
+    122       PKL=PDSL(I,J)*AETA(L)+PT
+    123 C
+    124 C   SKIP PAST THIS IF THE LAYER IS NOT BETWEEN 70 MB ABOVE GROUND
+    125 C       AND 500 MB
+    126 C
+    127       IF (PKL.LT.50000.0.OR.PKL.GT.PSFCK-7000.0) GOTO 775
+    128       A=ALOG(QKL*PKL/(6.1078*(0.378*QKL+0.622)))
+    129       TDKL=(237.3*A)/(17.269-A)+273.15
+    130       TDPRE=TKL-TDKL
+    131       IF (TDPRE.LT.TDCHK.AND.TKL.LT.TCOLD(I,J)) TCOLD(I,J)=TKL
+    132       IF (TDPRE.LT.TDCHK.AND.TKL.GT.TWARM(I,J)) TWARM(I,J)=TKL
+    133       IF (TDPRE.LT.TDCHK.AND.L.LT.LICEE(I,J)) LICEE(I,J)=L
+    134   775 CONTINUE
+    135 C
+    136 C    IF NO SAT LAYER AT DEW POINT DEP=TDCHK, INCREASE TDCHK
+    137 C     AND START AGAIN (BUT DON'T MAKE TDCHK > 6)
+    138 C
+    139       IF (TCOLD(I,J).EQ.T(I,J,LMHK).AND.TDCHK.LT.6.0) THEN
+    140         TDCHK=TDCHK+2.0
+    141         GOTO 760
+    142       ENDIF
+    143   800 CONTINUE
+    144 C
+    145 C    LOWEST LAYER T
+
+Page 3           Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+    146 C
+    147       DO 850 J=JSTA,JEND
+    148       DO 850 I=1,IM
+    149       KARR(I,J)=0
+    150       IF (PREC(I,J).LE.PTHRESH) GOTO 850
+    151       LMHK=LMH(I,J)
+    152       TLMHK=T(I,J,LMHK)
+    153 C
+    154 C    DECISION TREE TIME
+    155 C
+    156       IF (TCOLD(I,J).GT.269.15) THEN
+    157           IF (TLMHK.LE.273.15) THEN
+    158 C             TURN ON THE FLAG FOR
+    159 C             FREEZING RAIN = 4
+    160 C             IF ITS NOT ON ALREADY
+    161 C             IZR=MOD(IWX(I,J),8)/4
+    162 C             IF (IZR.LT.1) IWX(I,J)=IWX(I,J)+4
+    163               IWX(I,J)=IWX(I,J)+4
+    164             GOTO 850
+    165           ELSE
+    166 C             TURN ON THE FLAG FOR
+    167 C             RAIN = 8
+    168 C             IF ITS NOT ON ALREADY
+    169 C             IRAIN=IWX(I,J)/8
+    170 C             IF (IRAIN.LT.1) IWX(I,J)=IWX(I,J)+8
+    171               IWX(I,J)=IWX(I,J)+8
+    172             GOTO 850
+    173           ENDIF
+    174       ENDIF
+    175       KARR(I,J)=1
+    176   850 CONTINUE
+    177 C
+    178 C   COMPUTE WET BULB ONLY AT POINTS THAT NEED IT
+    179 C
+    180       CALL WETBULB(T,Q,PDSL,HTM,KARR,TWET)
+    181 C
+    182 !$omp  parallel do
+    183 !$omp& private(area1,areap4,areas8,dzkl,ifrzl,iwrml,lice,
+    184 !$omp&         lmhk,pintk1,pintk2,pm150,psfck,surfc,surfw,
+    185 !$omp&         tlmhk,twrmk)
+    186       DO 1900 J=JSTA_M,JEND_M
+    187       DO 1900 I=2,IM-1
+    188       IF(KARR(I,J).GT.0)THEN
+    189         LMHK=LMH(I,J)
+    190         LICE=LICEE(I,J)
+    191         PSFCK=PD(I,J)+PT
+    192         TLMHK=T(I,J,LMHK)
+    193         TWRMK=TWARM(I,J)
+    194 C
+    195 C    TWET AREA VARIABLES
+    196 C     CALCULATE ONLY WHAT IS NEEDED
+    197 C      FROM GROUND TO 150 MB ABOVE SURFACE
+    198 C      FROM GROUND TO TCOLD LAYER
+    199 C      AND FROM GROUND TO 1ST LAYER WHERE WET BULB T < 0.0
+    200 C
+    201 C     PINTK1 IS THE PRESSURE AT THE BOTTOM OF THE LAYER
+    202 C     PINTK2 IS THE PRESSURE AT THE TOP OF THE LAYER
+
+Page 4           Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+    203 C
+    204 C     AREAP4 IS THE AREA OF TWET ABOVE -4 C BELOW HIGHEST SAT LYR 
+    205 C
+    206         AREAS8=D00
+    207         AREAP4=D00
+    208         SURFW =D00
+    209         SURFC =D00
+    210         PINTK1=PSFCK
+    211 C
+    212         DO 1945 L=LMHK,LICE,-1
+    213         PINTK2=PDSL(I,J)*ETA(L)+PT
+    214         DZKL=T(I,J,L)*(Q(I,J,L)*D608+H1)*ROG*
+    215      1        ALOG(PINTK1/PINTK2)
+    216         AREA1=(TWET(I,J,L)-269.15)*DZKL
+    217         IF (TWET(I,J,L).GE.269.15) AREAP4=AREAP4+AREA1
+    218         PINTK1=PINTK2
+    219  1945   CONTINUE
+    220 C
+    221         IF (AREAP4.LT.3000.0) THEN
+    222 C             TURN ON THE FLAG FOR
+    223 C             SNOW = 1
+    224 C             IF ITS NOT ON ALREADY
+    225 C             ISNO=MOD(IWX(I,J),2)
+    226 C             IF (ISNO.LT.1) IWX(I,J)=IWX(I,J)+1
+    227           IWX(I,J)=IWX(I,J)+1
+    228           GO TO 1900
+    229         ENDIF
+    230 C
+    231 C     AREAS8 IS THE NET AREA OF TWET W.R.T. FREEZING IN LOWEST 150MB
+    232 C
+    233         PINTK1=PSFCK
+    234         PM150=PSFCK-15000.
+    235 C
+    236         DO 1955 L=LMHK,1,-1
+    237         PINTK2=PDSL(I,J)*ETA(L)+PT
+    238         IF(PINTK1.LT.PM150)GO TO 1950
+    239         DZKL=T(I,J,L)*(Q(I,J,L)*D608+H1)*ROG*
+    240      1        ALOG(PINTK1/PINTK2)
+    241 C
+    242 C    SUM PARTIAL LAYER IF IN 150 MB AGL LAYER
+    243 C
+    244         IF(PINTK2.LT.PM150) 
+    245      &    DZKL=T(I,J,L)*(Q(I,J,L)*D608+H1)*ROG*
+    246      1         ALOG(PINTK1/PM150)
+    247         AREA1=(TWET(I,J,L)-273.15)*DZKL
+    248         AREAS8=AREAS8+AREA1
+    249  1950   PINTK1=PINTK2
+    250  1955   CONTINUE
+    251 C
+    252 C     SURFW IS THE AREA OF TWET ABOVE FREEZING BETWEEN THE GROUND
+    253 C       AND THE FIRST LAYER ABOVE GROUND BELOW FREEZING
+    254 C     SURFC IS THE AREA OF TWET BELOW FREEZING BETWEEN THE GROUND
+    255 C       AND THE WARMEST SAT LAYER
+    256 C
+    257         PINTK1=PSFCK
+    258         IFRZL=0
+    259         IWRML=0
+
+Page 5           Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+    260 C
+    261         DO 2050 L=LMHK,1,-1
+    262         IF (IFRZL.EQ.0.AND.T(I,J,L).LT.273.15) IFRZL=1
+    263         IF (IWRML.EQ.0.AND.T(I,J,L).GE.TWRMK) IWRML=1
+    264 C
+    265         IF (IWRML.EQ.0.OR.IFRZL.EQ.0) THEN
+    266           PINTK2=PDSL(I,J)*ETA(L)+PT
+    267           DZKL=T(I,J,L)*(Q(I,J,L)*D608+H1)*ROG*
+    268      1         ALOG(PINTK1/PINTK2)
+    269           AREA1=(TWET(I,J,L)-273.15)*DZKL
+    270           PINTK1=PINTK2
+    271           IF(IFRZL.EQ.0.AND.TWET(I,J,L).GE.273.15)SURFW=SURFW+AREA1
+    272           IF(IWRML.EQ.0.AND.TWET(I,J,L).LE.273.15)SURFC=SURFC+AREA1
+    273         ENDIF
+    274  2050   CONTINUE
+    275         IF(SURFC.LT.-3000.0.OR.
+    276      &    (AREAS8.LT.-3000.0.AND.SURFW.LT.50.0)) THEN
+    277 C             TURN ON THE FLAG FOR
+    278 C             ICE PELLETS = 2
+    279 C             IF ITS NOT ON ALREADY
+    280 C             IIP=MOD(IWX(I,J),4)/2
+    281 C             IF (IIP.LT.1) IWX(I,J)=IWX(I,J)+2
+    282           IWX(I,J)=IWX(I,J)+2
+    283           GOTO 1900
+    284         ENDIF
+    285 C
+    286         IF(TLMHK.LT.273.15) THEN
+    287 C             TURN ON THE FLAG FOR
+    288 C             FREEZING RAIN = 4
+    289 C             IF ITS NOT ON ALREADY
+    290 C             IZR=MOD(IWX(K),8)/4
+    291 C             IF (IZR.LT.1) IWX(K)=IWX(K)+4
+    292           IWX(I,J)=IWX(I,J)+4
+    293         ELSE
+    294 C             TURN ON THE FLAG FOR
+    295 C             RAIN = 8
+    296 C             IF ITS NOT ON ALREADY
+    297 C             IRAIN=IWX(K)/8
+    298 C             IF (IRAIN.LT.1) IWX(K)=IWX(K)+8
+    299           IWX(I,J)=IWX(I,J)+8
+    300         ENDIF
+    301       ENDIF
+    302  1900 CONTINUE
+    303 C---------------------------------------------------------
+    304       RETURN
+    305       END
+
+Page 6           Source Listing                  CALWXT
+2022-02-15 16:38 Entry Points                    CALWXT.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ calwxt_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 1900                       Label  302                                                            186,187,228,283                   
+ 1945                       Label  219                                                            212                               
+ 1950                       Label  249                                                            238                               
+ 1955                       Label  250                                                            236                               
+ 2050                       Label  274                                                            261                               
+ 760                        Label  114                                                            141                               
+ 775                        Label  134                                                            118,127                           
+ 800                        Label  143                                                            100,101,106                       
+ 850                        Label  176                                                            147,148,150,164,172               
+ A                          Local  128      R(4)            4           scalar                    128,129                           
+ AETA                       Dummy  1        R(4)            4     1     45       ARG,INOUT        122                               
+ ALOG                       Func   128                                  scalar                    128,215,240,246,268               
+ AMAX1                      Func   120                                  scalar                    120                               
+ AREA1                      Local  216      R(4)            4           scalar                    216,217,247,248,269,271,272       
+ AREAP4                     Local  207      R(4)            4           scalar                    207,217,221                       
+ AREAS8                     Local  206      R(4)            4           scalar                    206,248,276                       
+ CALWXT                     Subr   1                                                                                                
+ CTLBLK                     Common 77                                   96       SAVE                                               
+ D00                        Param  44       R(4)            4           scalar                    206,207,208,209                   
+ D608                       Param  44       R(4)            4           scalar                    214,239,245,267                   
+ DZKL                       Local  214      R(4)            4           scalar                    214,216,239,245,247,267,269       
+ ETA                        Dummy  1        R(4)            4     1     46       ARG,INOUT        213,237,266                       
+ H1                         Param  44       R(4)            4           scalar                    214,239,245,267                   
+ H1M12                      Param  38       R(4)            4           scalar                    120                               
+ HTM                        Dummy  1        R(4)            4     3     4127355  ARG,INOUT        180                               
+ I                          Local  92       I(4)            4           scalar                    92,93,94,101,102,106,112,114,115,1
+                                                                                                  16,119,121,122,131,132,133,139,148
+                                                                                                  ,149,150,151,152,156,163,171,175,1
+                                                                                                  87,188,189,190,191,192,193,213,214
+                                                                                                  ,216,217,227,237,239,245,247,262,2
+                                                                                                  63,266,267,269,271,272,282,292,299
+ IDIM1                      Param  33       I(4)            4           scalar                                                      
+ IDIM2                      Param  33       I(4)            4           scalar                                                      
+ IFRZL                      Local  258      I(4)            4           scalar                    258,262,265,271                   
+ IGSTL                      Param  28       I(4)            4           scalar                    33                                
+ IGSTR                      Param  28       I(4)            4           scalar                    33                                
+ IM                         Param  22       I(4)            4           scalar                    30,33,48,49,50,59,63,64,65,92,101,
+                                                                                                  148,187                           
+ INPES                      Param  25       I(4)            4           scalar                    30,33                             
+ ITAIL                      Param  30       I(4)            4           scalar                                                      
+ IWRML                      Local  259      I(4)            4           scalar                    259,263,265,272                   
+ IWX                        Dummy  1        I(4)            4     2     91719    ARG,INOUT        93,163,171,227,282,292,299        
+ J                          Local  91       I(4)            4           scalar                    91,93,94,100,102,106,112,114,115,1
+                                                                                                  16,119,121,122,131,132,133,139,147
+
+Page 7           Source Listing                  CALWXT
+2022-02-15 16:38 Symbol Table                    CALWXT.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  ,149,150,151,152,156,163,171,175,1
+                                                                                                  86,188,189,190,191,192,193,213,214
+                                                                                                  ,216,217,227,237,239,245,247,262,2
+                                                                                                  63,266,267,269,271,272,282,292,299
+ JDIM1                      Param  34       I(4)            4           scalar                                                      
+ JDIM2                      Param  34       I(4)            4           scalar                                                      
+ JGSTL                      Param  29       I(4)            4           scalar                    34                                
+ JGSTR                      Param  29       I(4)            4           scalar                    34                                
+ JM                         Param  22       I(4)            4           scalar                    31,34,48,49,50,59,63,64,65        
+ JNPES                      Param  25       I(4)            4           scalar                    31,34                             
+ JTAIL                      Param  31       I(4)            4           scalar                                                      
+ KARR                       Local  64       I(4)            4     2     91719                     149,175,180,188                   
+ L                          Local  118      I(4)            4           scalar                    118,119,121,122,133,212,213,214,21
+                                                                                                  6,217,236,237,239,245,247,261,262,
+                                                                                                  263,266,267,269,271,272           
+ LICE                       Local  190      I(4)            4           scalar                    190,212                           
+ LICEE                      Local  65       I(4)            4     2     91719                     116,133,190                       
+ LM                         Param  22       I(4)            4           scalar                    37,48,49,50,63                    
+ LMH                        Dummy  1        I(4)            4     2     91719    ARG,INOUT        102,151,189                       
+ LMHK                       Local  102      I(4)            4           scalar                    102,114,115,116,118,139,151,152,18
+                                                                                                  9,192,212,236,261                 
+ LP1                        Param  37       I(4)            4           scalar                    50                                
+ LSM                        Param  22       I(4)            4           scalar                                                      
+ PARALLEL                   Common 84                                   8240                                                        
+ PD                         Dummy  1        R(4)            4     2     91719    ARG,INOUT        94,112,191                        
+ PDSL                       Local  63       R(4)            4     2     91719                     94,122,180,213,237,266            
+ PINTK1                     Local  210      R(4)            4           scalar                    210,215,218,233,238,240,246,249,25
+                                                                                                  7,268,270                         
+ PINTK2                     Local  213      R(4)            4           scalar                    213,215,218,237,240,244,249,266,26
+                                                                                                  8,270                             
+ PKL                        Local  122      R(4)            4           scalar                    122,127,128                       
+ PM150                      Local  234      R(4)            4           scalar                    234,238,244,246                   
+ PREC                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        106,150                           
+ PSFCK                      Local  112      R(4)            4           scalar                    112,127,191,210,233,234,257       
+ PT                         Dummy  1        R(4)            4           scalar   ARG,INOUT        112,122,191,213,237,266           
+ PTHRESH                    Param  39       R(4)            4           scalar                    106,150                           
+ Q                          Dummy  1        R(4)            4     3     4127355  ARG,INOUT        119,180,214,239,245,267           
+ QKL                        Local  119      R(4)            4           scalar                    119,120,128                       
+ RES                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        94                                
+ ROG                        Param  44       R(4)            4           scalar                    214,239,245,267                   
+ SURFC                      Local  209      R(4)            4           scalar                    209,272,275                       
+ SURFW                      Local  208      R(4)            4           scalar                    208,271,276                       
+ T                          Dummy  1        R(4)            4     3     4127355  ARG,INOUT        114,115,121,139,152,180,192,214,23
+                                                                                                  9,245,262,263,267                 
+ TCOLD                      Local  65       R(4)            4     2     91719                     114,131,139,156                   
+ TDCHK                      Local  113      R(4)            4           scalar                    113,131,132,133,139,140           
+ TDKL                       Local  129      R(4)            4           scalar                    129,130                           
+ TDPRE                      Local  130      R(4)            4           scalar                    130,131,132,133                   
+ TKL                        Local  121      R(4)            4           scalar                    121,130,131,132                   
+ TLMHK                      Local  152      R(4)            4           scalar                    152,157,192,286                   
+ TWARM                      Local  65       R(4)            4     2     91719                     115,132,193                       
+ TWET                       Local  63       R(4)            4     3     4127355                   180,216,217,247,269,271,272       
+ TWRMK                      Local  193      R(4)            4           scalar                    193,263                           
+ WETBULB                    Subr   180                                                            180                               
+
+
+Page 8           Source Listing                  CALWXT
+2022-02-15 16:38 Symbol Table                    CALWXT.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              91,100,147                         
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              186                                
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              91,100,147                         
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              186                                
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+
+Page 9           Source Listing                  CALWXT
+2022-02-15 16:38 Subprograms/Common Blocks       CALWXT.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CALWXT                     Subr   1                                                                                                
+ CTLBLK                     Common 77                                   96       SAVE                                               
+ PARALLEL                   Common 84                                   8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 10          Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 11          Source Listing                  CALWXT
+2022-02-15 16:38                                 CALWXT.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CALWXT.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

@@ -1,0 +1,724 @@
+Page 1           Source Listing                  ZENITH
+2022-02-15 16:37                                 /tmp/ifortFnW3Wc.i
+
+      1 # 1 "ZENITH.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3                          SUBROUTINE ZENITH(TIMES,DAYI,HOUR)
+      4 C     ******************************************************************
+      5 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      6 C                .      .    .                               .
+      7 C SUBPROGRAM:    ZENITH      COMPUTE THE SOLAR ZENITH ANGLE
+      8 C   PRGRMMR: BLACK           ORG: W/NMC22    DATE: 93-10-28
+      9 C
+     10 C ABSTRACT:
+     11 C     ZENITH CALCULATES THE COSINE OF THE SOLAR ZENITH ANGLES
+     12 C     AT EACH POINT FOR USE IN SWRAD
+     13 C
+     14 C PROGRAM HISTORY LOG:
+     15 C   87-08-??  BLACK      - ORIGINATOR
+     16 C   98-07-??  BLACK      - MODIFIED TO NEED ONLY DATE AS INPUT
+     17 C   98-11-10  BLACK      - MODIFIED FOR DISTRIBUTED MEMORY
+     18 C
+     19 C USAGE: CALL ZENITH FROM SUBROUTINE RADTN
+     20 C
+     21 C   INPUT ARGUMENT LIST:
+     22 C       TIMES  - THE FORECAST TIME IN SECONDS
+     23 C
+     24 C   OUTPUT ARGUMENT LIST:
+     25 C       DAYI   - THE DAY OF THE YEAR
+     26 C       HOUR   - THE HOUR OF THE DAY
+     27 C
+     28 C   INPUT FILES:
+     29 C     NONE
+     30 C
+     31 C   OUTPUT FILES:
+     32 C     NONE
+     33 C
+     34 C   SUBPROGRAMS CALLED:
+     35 C
+     36 C     UNIQUE: NONE
+     37 C
+     38 C     LIBRARY: NONE
+     39 C
+     40 C   COMMON BLOCKS: CTLBLK
+     41 C                  PHYS
+     42 C
+     43 C ATTRIBUTES:
+     44 C   LANGUAGE: FORTRAN 90
+     45 C   MACHINE : IBM SP
+     46 C$$$
+     47 C***********************************************************************
+     48                              P A R A M E T E R
+     49      & (GSTC1=24110.54841,GSTC2=8640184.812866
+     50      &, GSTC3=9.3104E-2,GSTC4=-6.2E-6
+     51      &, PI=3.1415926,PI2=2.*PI,PIH=0.5*PI
+     52      &, DEG2RD=1.745329E-2,OBLIQ=23.440*DEG2RD,ZEROJD=2451545.0)
+     53 C-----------------------------------------------------------------------
+     54       INCLUDE "parmeta"
+     77       INCLUDE "parm.tbl"
+     79       INCLUDE "mpp.h"
+     80 # 1 "./sp.h" 1 
+
+Page 2           Source Listing                  ZENITH
+2022-02-15 16:37                                 ./sp.h
+
+     81 # 4
+     82 
+     83 # 57 "ZENITH.F" 2 
+     84 C-----------------------------------------------------------------------
+    143                              P A R A M E T E R
+    144      & (LP1=LM+1)
+    145 C-----------------------------------------------------------------------
+    146                              L O G I C A L
+    147      & RUN,FIRST,RESTRT,SIGMA,LEAP
+    148 C-----------------------------------------------------------------------
+    149       INCLUDE "CTLBLK.comm"
+    150 C-----------------------------------------------------------------------
+    160       INCLUDE "PHYS.comm"
+    161 C-----------------------------------------------------------------------
+    189                              D I M E N S I O N
+    190      1 MONTH (12)
+    191 C-----------------------------------------------------------------------
+    192                              D A T A
+    193      1 MONTH/31,28,31,30,31,30,31,31,30,31,30,31/
+    194 C***********************************************************************
+    195       SAVE MONTH
+    196       DAY=0.
+    197       LEAP=.FALSE.
+    198       IF(MOD(IDAT(3),4).EQ.0)THEN
+    199         MONTH(2)=29
+    200         LEAP=.TRUE.
+    201       ENDIF
+    202       IF(IDAT(1).GT.1)THEN
+    203         KMNTH=IDAT(1)-1
+    204         DO 10 KNT=1,KMNTH
+    205         DAY=DAY+REAL(MONTH(KNT))
+    206    10   CONTINUE
+    207       ENDIF
+    208 C***
+    209 C***  CALCULATE EXACT NUMBER OF DAYS FROM BEGINNING OF YEAR TO
+    210 C***  FORECAST TIME OF INTEREST
+    211 C***
+    212       DAY=DAY+REAL(IDAT(2)-1)+(REAL(IHRST)+TIMES/3600.)/24.
+    213       DAYI=REAL(INT(DAY)+1)
+    214       HOUR=(DAY-DAYI+1.)*24.
+    215       YFCTR=2000.-IDAT(3)
+    216 C-----------------------------------------------------------------------
+    217 C***
+    218 C***  FIND CELESTIAL LONGITUDE OF THE SUN THEN THE SOLAR DECLINATION AND
+    219 C***  RIGHT ASCENSION.
+    220 C***
+    221 C-----------------------------------------------------------------------
+    222       IDIFYR=IDAT(3)-2000
+    223 C***
+    224 C***  FIND JULIAN DATE OF START OF THE RELEVANT YEAR
+    225 C***  ADDING IN LEAP DAYS AS NEEDED
+    226 C***
+    227       IF(IDIFYR.LT.0)THEN
+    228         ADDDAY=REAL(IDIFYR/4)
+    229       ELSE
+    230         ADDDAY=REAL((IDIFYR+3)/4)
+    231       ENDIF
+
+Page 3           Source Listing                  ZENITH
+2022-02-15 16:37                                 ZENITH.F
+
+    232       STARTYR=ZEROJD+IDIFYR*365.+ADDDAY-0.5
+    233 C***
+    234 C***  THE JULIAN DATE OF THE TIME IN QUESTION
+    235 C***
+    236       DATJUL=STARTYR+DAY
+    237 C
+    238 C***  DIFFERENCE OF ACTUAL JULIAN DATE FROM JULIAN DATE
+    239 C***  AT 00H 1 January 2000
+    240 C
+    241       DIFJD=DATJUL-ZEROJD
+    242 C
+    243 C***  MEAN GEOMETRIC LONGITUDE OF THE SUN
+    244 C
+    245       SLONM=(280.460+0.9856474*DIFJD)*DEG2RD+YFCTR*PI2
+    246 C
+    247 C***  THE MEAN ANOMOLY
+    248 C
+    249       ANOM=(357.528+0.9856003*DIFJD)*DEG2RD
+    250 C
+    251 C***  APPARENT GEOMETRIC LONGITUDE OF THE SUN
+    252 C
+    253       SLON=SLONM+(1.915*SIN(ANOM)+0.020*SIN(2.*ANOM))*DEG2RD
+    254       IF(SLON.GT.PI2)SLON=SLON-PI2
+    255 C
+    256 C***  DECLINATION AND RIGHT ASCENSION
+    257 C
+    258       DEC=ASIN(SIN(SLON)*SIN(OBLIQ))
+    259       RA=ACOS(COS(SLON)/COS(DEC))
+    260       IF(SLON.GT.PI)RA=PI2-RA
+    261 C***
+    262 C***  FIND THE GREENWICH SIDEREAL TIME THEN THE LOCAL SOLAR
+    263 C***  HOUR ANGLE.
+    264 C***
+    265       DATJ0=STARTYR+DAYI-1.
+    266       TU=(DATJ0-2451545.)/36525.
+    267       STIM0=GSTC1+GSTC2*TU+GSTC3*TU**2+GSTC4*TU**3
+    268       SIDTIM=STIM0/3600.+YFCTR*24.+1.00273791*HOUR
+    269       SIDTIM=SIDTIM*15.*DEG2RD
+    270       IF(SIDTIM.LT.0.)SIDTIM=SIDTIM+PI2
+    271       IF(SIDTIM.GT.PI2)SIDTIM=SIDTIM-PI2
+    272       HRANG=SIDTIM-RA
+    273 C
+    274       DO 100 J=MYJS,MYJE
+    275       DO 100 I=MYIS,MYIE
+    276       HRLCL=HRANG-GLON(I,J)
+    277 C***
+    278 C***  THE ZENITH ANGLE IS THE COMPLEMENT OF THE ALTITUDE THUS THE
+    279 C***  COSINE OF THE ZENITH ANGLE EQUALS THE SINE OF THE ALTITUDE.
+    280 C***
+    281       SINALT=SIN(DEC)*SIN(GLAT(I,J))+COS(DEC)*COS(HRLCL)*
+    282      1 COS(GLAT(I,J))
+    283       IF(SINALT.LT.0.)SINALT=0.
+    284       CZEN(I,J)=SINALT
+    285   100 CONTINUE
+    286 C***
+    287 C***  IF THE FORECAST IS IN A DIFFERENT YEAR THAN THE START TIME,
+    288 C***  RESET DAYI TO THE PROPER DAY OF THE NEW YEAR (IT MUST NOT BE
+
+Page 4           Source Listing                  ZENITH
+2022-02-15 16:37                                 ZENITH.F
+
+    289 C***  RESET BEFORE THE SOLAR ZENITH ANGLE IS COMPUTED).
+    290 C***
+    291       IF(DAYI.GT.365.)THEN
+    292         IF(.NOT.LEAP)THEN
+    293           DAYI=DAYI-365.
+    294         ELSEIF(LEAP.AND.DAYI.GT.366.)THEN
+    295           DAYI=DAYI-366.
+    296         ENDIF
+    297       ENDIF
+    298       RETURN
+    299       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ zenith_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  206                                                            204                               
+ 100                        Label  285                                                            274,275                           
+ ACOS                       Func   259                                  scalar                    259                               
+ ADDDAY                     Local  228      R(4)            4           scalar                    228,230,232                       
+ ANOM                       Local  249      R(4)            4           scalar                    249,253                           
+ ASIN                       Func   258                                  scalar                    258                               
+ COS                        Func   259                                  scalar                    259,281,282                       
+ CTLBLK                     Common 154                                  112      SAVE                                               
+ DATJ0                      Local  265      R(4)            4           scalar                    265,266                           
+ DATJUL                     Local  236      R(4)            4           scalar                    236,241                           
+ DAY                        Local  196      R(4)            4           scalar                    196,205,212,213,214,236           
+ DAYI                       Dummy  3        R(4)            4           scalar   ARG,INOUT        213,214,265,291,293,294,295       
+ DEC                        Local  258      R(4)            4           scalar                    258,259,281                       
+ DEG2RD                     Param  52       R(4)            4           scalar                    52,245,249,253,269                
+ DIFJD                      Local  241      R(4)            4           scalar                    241,245,249                       
+ GLB_TABLE                  Common 121                                  128      SAVE                                               
+ GSTC1                      Param  49       R(4)            4           scalar                    267                               
+ GSTC2                      Param  49       R(4)            4           scalar                    267                               
+ GSTC3                      Param  50       R(4)            4           scalar                    267                               
+ GSTC4                      Param  50       R(4)            4           scalar                    267                               
+ HOUR                       Dummy  3        R(4)            4           scalar   ARG,INOUT        214,268                           
+ HRANG                      Local  272      R(4)            4           scalar                    272,276                           
+ HRLCL                      Local  276      R(4)            4           scalar                    276,281                           
+ I                          Local  275      I(4)            4           scalar                    275,276,281,282,284               
+ IDIFYR                     Local  222      I(4)            4           scalar                    222,227,228,230,232               
+ IDIM1                      Param  73       I(4)            4           scalar                    174,175,176,177,178,179,180,181,18
+                                                                                                  2,183,184                         
+ IDIM2                      Param  73       I(4)            4           scalar                    174,175,176,177,178,179,180,181,18
+                                                                                                  2,183,184                         
+ IGSTL                      Param  68       I(4)            4           scalar                    73                                
+ IGSTR                      Param  68       I(4)            4           scalar                    73                                
+ IM                         Param  57       I(4)            4           scalar                    70,73,127,128,129,130,131,135,136,
+                                                                                                  141                               
+
+Page 5           Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ INPES                      Param  65       I(4)            4           scalar                    70,73,111,112,113,122,123         
+ INT                        Func   213                                  scalar                    213                               
+ ITAIL                      Param  70       I(4)            4           scalar                                                      
+ ITB                        Param  78       I(4)            4           scalar                    171,186                           
+ ITBQ                       Param  78       I(4)            4           scalar                    172,186                           
+ J                          Local  274      I(4)            4           scalar                    274,276,281,282,284               
+ JDIM1                      Param  74       I(4)            4           scalar                    174,175,176,177,178,179,180,181,18
+                                                                                                  2,183,184                         
+ JDIM2                      Param  74       I(4)            4           scalar                    174,175,176,177,178,179,180,181,18
+                                                                                                  2,183,184                         
+ JGSTL                      Param  69       I(4)            4           scalar                    74                                
+ JGSTR                      Param  69       I(4)            4           scalar                    74                                
+ JM                         Param  57       I(4)            4           scalar                    71,74,127,128,129,130,131,135,136,
+                                                                                                  141                               
+ JNPES                      Param  65       I(4)            4           scalar                    71,74,111,112,113,122,123         
+ JTAIL                      Param  71       I(4)            4           scalar                                                      
+ JTB                        Param  78       I(4)            4           scalar                    171,186                           
+ JTBQ                       Param  78       I(4)            4           scalar                    186                               
+ KMNTH                      Local  203      I(4)            4           scalar                    203,204                           
+ KNT                        Local  204      I(4)            4           scalar                    204,205                           
+ LEAP                       Local  147      L(4)            4           scalar                    197,200,292,294                   
+ LM                         Param  57       I(4)            4           scalar                    136,144,170                       
+ LP1                        Param  144      I(4)            4           scalar                    170                               
+ LSM                        Param  57       I(4)            4           scalar                                                      
+ MAPPINGS                   Common 140                                  5024     SAVE                                               
+ MOD                        Func   198                                  scalar                    198                               
+ MONTH                      Local  190      I(4)            4     1     12       SAVE             193,199,205                       
+ MPPCOM                     Common 85                                   1464     SAVE                                               
+ OBLIQ                      Param  52       R(4)            4           scalar                    258                               
+ PHYS                       Common 165                                  1788916  SAVE                                               
+ PI                         Param  51       R(4)            4           scalar                    51,260                            
+ PI2                        Param  51       R(4)            4           scalar                    245,254,260,270,271               
+ PIH                        Param  51       R(4)            4           scalar                                                      
+ RA                         Local  259      R(4)            4           scalar                    259,260,272                       
+ REAL                       Func   205                                  scalar                    205,212,213,228,230               
+ SIDTIM                     Local  268      R(4)            4           scalar                    268,269,270,271,272               
+ SIN                        Func   253                                  scalar                    253,258,281                       
+ SINALT                     Local  281      R(4)            4           scalar                    281,283,284                       
+ SINGLRST                   Local  152      L(4)            4           scalar                                                      
+ SLON                       Local  253      R(4)            4           scalar                    253,254,258,259,260               
+ SLONM                      Local  245      R(4)            4           scalar                    245,253                           
+ STARTYR                    Local  232      R(4)            4           scalar                    232,236,265                       
+ STIM0                      Local  267      R(4)            4           scalar                    267,268                           
+ TEMPCOM                    Common 126                                  6603768  SAVE                                               
+ TIMES                      Dummy  3        R(4)            4           scalar   ARG,INOUT        212                               
+ TOPO                       Common 134                                  17478548 SAVE                                               
+ TU                         Local  266      R(4)            4           scalar                    266,267                           
+ YFCTR                      Local  215      R(4)            4           scalar                    215,245,268                       
+ ZENITH                     Subr   3                                                                                                
+ ZEROJD                     Param  52       R(4)            4           scalar                    232,241                           
+
+
+
+Page 6           Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     264      1     45       COM                                                 
+ ALBASE                     R(4)            4     1009004  2     17955    COM                                                 
+ ALBEDO                     R(4)            4     1080824  2     17955    COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CNVBOT                     R(4)            4     721724   2     17955    COM                                                 
+ CNVTOP                     R(4)            4     649904   2     17955    COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     434444   2     17955    COM              284                                
+ CZMEAN                     R(4)            4     1296284  2     17955    COM                                                 
+ DETA                       R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ EPSR                       R(4)            4     75344    2     17955    COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ GFFC                       R(4)            4     865364   2     17955    COM                                                 
+ GLAT                       R(4)            4     290804   2     17955    COM              281,282                            
+ GLON                       R(4)            4     362624   2     17955    COM              276                                
+ HBOT                       R(4)            4     578084   2     17955    COM                                                 
+ HDAC                       R(4)            4     1152644  2     17955    COM                                                 
+ HDACV                      R(4)            4     1224464  2     17955    COM                                                 
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ HTOP                       R(4)            4     506264   2     17955    COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     620      1     8        COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM              198,202,203,212,215,222            
+ IDTAD                      I(4)            4     72             scalar   COM                                                 
+ IE_GLB_TABLE               I(4)            4     32       1     8        COM                                                 
+ IE_LOC_TABLE               I(4)            4     556      1     8        COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM              212                                
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1064     1     100      COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IQUILT_GROUP               I(4)            4     1060           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     8        COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     8        COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+
+Page 7           Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     96       1     8        COM                                                 
+ JE_LOC_TABLE               I(4)            4     588      1     8        COM                                                 
+ JS_GLB_TABLE               I(4)            4     64       1     8        COM                                                 
+ JS_LOC_TABLE               I(4)            4     524      1     8        COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ MPI_COMM_COMP              I(4)            4     652            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     656            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     660      1     100      COM                                                 
+ MXSNAL                     R(4)            4     3524     2     17955    COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM              275                                
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM              275                                
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM              274                                
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+
+Page 8           Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE2                      I(4)            4     244            scalar   COM                                                 
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM              274                                
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM                                                 
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM                                                 
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+
+Page 9           Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM                                                 
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ NPHS                       I(4)            4     88             scalar   COM                                                 
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM                                                 
+ NRADS                      I(4)            4     96             scalar   COM                                                 
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM                                                 
+ NTDDMP                     I(4)            4     64             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ PT                         R(4)            4     4              scalar   COM                                                 
+ PTBL                       R(4)            4     1439924  2     10184    COM                                                 
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ RADIN                      R(4)            4     147164   2     17955    COM                                                 
+ RADOT                      R(4)            4     218984   2     17955    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     1368104  2     17955    COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SST                        R(4)            4     937184   2     17955    COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+
+Page 10          Source Listing                  ZENITH
+2022-02-15 16:37 Symbol Table                    ZENITH.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TG                         R(4)            4     793544   2     17955    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ TTBL                       R(4)            4     1480660  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     1521396  2     66880    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+
+Page 11          Source Listing                  ZENITH
+2022-02-15 16:37 Subprograms/Common Blocks       ZENITH.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 154                                  112      SAVE                                               
+ GLB_TABLE                  Common 121                                  128      SAVE                                               
+ MAPPINGS                   Common 140                                  5024     SAVE                                               
+ MPPCOM                     Common 85                                   1464     SAVE                                               
+ PHYS                       Common 165                                  1788916  SAVE                                               
+ TEMPCOM                    Common 126                                  6603768  SAVE                                               
+ TOPO                       Common 134                                  17478548 SAVE                                               
+ ZENITH                     Subr   3                                                                                                
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+
+Page 12          Source Listing                  ZENITH
+2022-02-15 16:37                                 ZENITH.F
+
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+
+Page 13          Source Listing                  ZENITH
+2022-02-15 16:37                                 ZENITH.F
+
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : ZENITH.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

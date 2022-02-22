@@ -1,0 +1,505 @@
+Page 1           Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+      1       SUBROUTINE CETLIH4(HE,HX,IMOT,JMOT,KSB,IOFFS)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    CETLIH4     INTERPOLATES
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-23
+      6 C     
+      7 C ABSTRACT:
+      8 C     THIS ROUTINE INTERPOLATES DATA IN ARRAY HE FROM HEIGHT
+      9 C     POINTS ON AN ETA GRID TO HEIGHT POINTS ON ANOTHER GRID
+     10 C     IN ARRAY HX.  THE INTERPOLATION CONSERVES THE AREA 
+     11 C     INTEGRAL OF HE.
+     12 C     
+     13 C     ***WARNING*** 
+     14 C     COMPUTATION OF THE INTERPOLATION 'WEIGHTS' CONSUMES 
+     15 C     AN ENORMOUS AMOUNT OF CPU TIME, MUCH MORE THAN 
+     16 C     THE ACTUAL TIME IT TAKES TO DO THE INTERPOLATION.
+     17 C     IT IS MUCH BETTER TO PRECOMPUTE THE REQUIRED
+     18 C     WEIGHTS.  SUBROUINE GD2EGK COMPUTES THESE 'WEIGHTS'.
+     19 C   .     
+     20 C     
+     21 C PROGRAM HISTORY LOG:
+     22 C   ??-??-??  ???
+     23 C   92-12-23  RUSS TREADON - GENERALIZED CODE BY REMOVING 
+     24 C                            HARDCODED (IM,JM).
+     25 C   93-06-09  RUSS TREADON - EXPANDED COMMENTS.
+     26 C   98-06-17  T BLACK      - CONVERSION FROM 1-D TO 2-D
+     27 C     
+     28 C USAGE:    CETLIH4(HE,HX,IMOT,JMOT,KSB)
+     29 C   INPUT ARGUMENT LIST:
+     30 C     HE       - DATA ON E-GRID.
+     31 C     IMOT     - FIRST DIMENSION OF OUTPUT GRID.
+     32 C     JMOT     - SECOND DIMENSION OF OUTPUT GRID.
+     33 C     KSB      - NUMBER OF SUB BOXES
+     34 C     IOFFS    - WIDTH (IN GRID POINTS) OF SEARCH WINDOW
+     35 C                AROUND E-GRID POINT FROM WHICH INTERPOLATING.
+     36 C
+     37 C   OUTPUT ARGUMENT LIST: 
+     38 C     HX       - DATA INTERPOLATED TO THE OUTPUT GRID
+     39 C     
+     40 C   OUTPUT FILES:
+     41 C     NONE
+     42 C     
+     43 C   SUBPROGRAMS CALLED:
+     44 C     UTILITIES:
+     45 C       NONE
+     46 C     LIBRARY:
+     47 C       COMMON   - LLGRDS
+     48 C       COMMON   - INDX
+     49 C     
+     50 C   ATTRIBUTES:
+     51 C     LANGUAGE: FORTRAN
+     52 C     MACHINE : CRAY C-90
+     53 C$$$  
+     54 C     
+     55 C     
+     56 C     INCLUDE ETA GRID DIMENSIONS.  COMPUTE DEPENDENT PARAMETERS.
+     57 C     
+
+Page 2           Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+     58       INCLUDE "parmeta"
+     76       INCLUDE "parmout"
+     77 C
+     81       PARAMETER (IMT=2*IM-1,JMT=JM)
+     82 C
+     83 C     DECLARE VARIABLES.
+     84       INTEGER NZ(IMX,JMX)
+     85       REAL HE(IM,JM),HX(IMOT,JMOT)
+     86 C     
+     87 C     INCLUDE COMMON BLOCK.
+     88       INCLUDE "LLGRDS.comm"
+    102       INCLUDE "INDX.comm"
+    103 C
+    109       REAL SBLAT(IM,JM),SBLON(IM,JM),DSQMN(IM,JM)
+    110       INTEGER IISB(IM,JM),JJSB(IM,JM)
+    111 C     
+    112 C     
+    113 C**********************************************************************
+    114 C     START CETLIH4.
+    115 C     
+    116 C     ZERO OUTPUT ARRAY AND NORMALIZATION ARRAY.
+    117 !$omp  parallel do
+    118       DO 100 JJ=1,JMOT
+    119       DO 100 II=1,IMOT
+    120          HX(II,JJ)=0.
+    121          NZ(II,JJ)=0
+    122  100  CONTINUE
+    123 C     
+    124 C     SET CONSTANTS.
+    125       JMOT2 = JMOT-2
+    126       IMOT2 = IMOT-2
+    127       SBS=1./KSB
+    128 C     
+    129 C     LOOP OVER E-GRID.  MOVE SOUTH TO NORTH THROUGH JM2 ROWS. 
+    130 C     ON EACH ROW MOVE WEST TO EAST THROUGH THE E-GRID K INDEX.
+    131 C     AT EACH K INTERPOLATE DATA IN E-GRID ARRAY HE TO OUTPUT
+    132 C     GRID ARRAY HX.
+    133 C
+    134 !$omp  parallel do
+    135 !$omp& private(clat,clon,dsq,ie,iend,ip,is,iw,jp,js,p,pq,q)
+    136       DO 185 J=3,JM-2
+    137 C     
+    138       IEND=IM-1-MOD(J+1,2)
+    139 C
+    140 C        DISTRIBUTE THE E-GRID VALUES (IN ARRAY HE) TO THE SURROUNDING
+    141 C        KSB*KSB OUTPUT GRID POINTS.
+    142 C     
+    143          DO 160 JB=1,KSB
+    144          DO 160 IB=1,KSB
+    145            DO 175 I=2,IEND
+    146 C     
+    147 C        SET TRANSFORMED (LAT,LON) OF THE K-TH E-GRID MASS POINT.
+    148 C        THIS BECOMES THE CENTER OF THE BOX OVER WHICH THE AREA
+    149 C        CONSERVING INTERPOLATION IS DONE.
+    150 C
+    151          DSQMN(I,J)=  1.
+    152          IISB(I,J) = -1 
+
+Page 3           Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+    153          JJSB(I,J) = -1
+    154          JP  = JEGRDK(I,J)
+    155          IF (JP.LT.1) GOTO 175
+    156          CLON=HTLON(I,J)
+    157          CLAT=HTLAT(I,j)
+    158 C     
+    159 C        LOAD THE OUTPUT GRID (I,J) NEAREST TO K-TH E-GRID MASS POINT.
+    160 C        IF INTERPOLATION FROM THE K-TH E-GRID MASS POINT TO THE 
+    161 C        OUTPUT GRID IS NOT POSSIBLE (AT INDICATED BY ZERO OR NEGATIVE
+    162 C        OUTPUT GRID (I,J), DO NOT ATTEMPT INTERPOLATION CENTERED ON 
+    163 C        THIS E-GRID MASS POINT.
+    164 C
+    165 C     
+    166 C           FOR THE (IB,JB)-TH SUB-BOX COMPUTE THE TRANSFORMED E-GRID
+    167 C           LATITUDE AND LONGITUDE AT THE CENTER OF THIS SUB-BOX.
+    168 C
+    169             P=(IB-(KSB+1.)/2.)*SBS
+    170             Q=(JB-(KSB+1.)/2.)*SBS
+    171             PQ=P*Q
+    172             IE=I+IHE(J)
+    173             IW=I+IHW(J)
+    174             SBLON(I,J)=CLON+P*(HTLON(IE,J+1)-CLON)
+    175      1                     +Q*(HTLON(IW,J+1)-CLON)
+    176      2           +PQ*(CLON-HTLON(IE,J+1)-HTLON(IW,J+1)+HTLON(I,J+2))
+    177             SBLAT(I,J)=CLAT+P*(HTLAT(IE,J+1)-CLAT)
+    178      1                     +Q*(HTLAT(IW,J+1)-CLAT)
+    179      2           +PQ*(CLAT-HTLAT(IE,J+1)-HTLAT(IW,J+1)+HTLAT(I,J+2))
+    180  175        CONTINUE
+    181 C
+    182          DO 150 JJ=0,IOFFS
+    183          DO 150 II=0,IOFFS
+    184 C
+    185             DO 180 I=2,IEND
+    186          JP  = JEGRDK(I,J)
+    187          IF (JP.LT.1) GOTO 180
+    188          IP  = IEGRDK(I,J)
+    189 
+    190 C        SET OUTPUT GRID (I,J) SURROUNDING THE E-GRID MASS POINT.
+    191 C 
+    192          IS=IP-(IOFFS-1)
+    193          JS=JP-(IOFFS-1)
+    194 C           SEARCH FOR THE OUTPUT GRID POINT NEAREST TO THE CENTER 
+    195 C           OF THE (IB,JB)-TH SUB-BOX.  ASSIGN THE (I,J) INDEX OF 
+    196 C           THIS POINT TO (IISB,JJSB)
+    197 C
+    198              DSQ=(GDTLON((IS+II),(JS+JJ))-SBLON(I,J))**2
+    199      *          +(GDTLAT((IS+II),(JS+JJ))-SBLAT(I,J))**2
+    200                IF(DSQ.LT.DSQMN(I,J)) THEN
+    201                   DSQMN(I,J)=DSQ
+    202                   IISB(I,J)=IS+II
+    203                   JJSB(I,J)=JS+JJ
+    204                ENDIF
+    205  180        CONTINUE
+    206  150        CONTINUE
+    207 C     
+    208 C           IF INTERPOLATION WAS NOT POSSIBLE TO THE CURRENT
+    209 C           OUTPUT GRID SUB-BOX, THEN SKIP THIS SUB-BOX AND 
+
+Page 4           Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+    210 C           TRY THE NEXT ONE.
+    211 C
+    212             DO 155 I=2,IEND
+    213               IF(IISB(I,J).GT.0)THEN
+    214 C     
+    215 C            ADD E-GRID AMOUNT IN ARRAY HE ON INPUT E-GRID TO THE 
+    216 C            NEAREST NEIGHBOR OUTPUT GRID SUB-BOX IDENTIFIED ABOVE.
+    217 C
+    218              HX(IISB(I,J),JJSB(I,J))=HX(IISB(I,J),JJSB(I,J))+HE(I,J)
+    219              NZ(IISB(I,J),JJSB(I,J))=NZ(IISB(I,J),JJSB(I,J))+1
+    220             ENDIF
+    221  155        CONTINUE
+    222 C     
+    223 C        REPEAT FOR NEXT SUB-BOX.
+    224 C
+    225  160     CONTINUE
+    226 C     
+    227 C     REPEAT INTERPOLATION FOR NEXT E-GRID MASS POINT.
+    228 C
+    229  185  CONTINUE
+    230 C     
+    231 C     NORMALIZE OUTPUT GRID AMOUNT IN ARRAY HX BY THE NUMBER OF
+    232 C     E-GRID AMOUNTS SUMMED TO OBTAIN THE OUTPUT GRID AMOUNT.
+    233 C
+    234 !$omp  parallel do
+    235       DO 200 JJ=1,JMOT
+    236          DO 200 II=1,IMOT
+    237 C     
+    238 C           AVOID DIVISION BY ZERO.  NZ=0 INDICATES NO
+    239 C           INTERPOLATION WAS POSSIBLE AND SO THE OUTPUT
+    240 C           GRID VALUE IN ARRAY HX SHOULD REMAIN THE ZERO
+    241 C           IT WAS INITIALIZED TO.
+    242 c            IF (NZ(II,JJ).EQ.0) NZ(II,JJ) = 1
+    243 C
+    244             IF (NZ(II,JJ).NE.0) THEN
+    245              HX (II,JJ)=HX(II,JJ) / NZ(II,JJ)
+    246             ENDIF
+    247   200 CONTINUE
+    248 C     
+    249 C     END OF ROUTINE.
+    250 C
+    251       RETURN
+    252       END
+
+Page 5           Source Listing                  CETLIH4
+2022-02-15 16:38 Entry Points                    CETLIH4.f
+
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ cetlih4_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 100                        Label  122                                                            118,119                           
+ 150                        Label  206                                                            182,183                           
+ 155                        Label  221                                                            212                               
+ 160                        Label  225                                                            143,144                           
+ 175                        Label  180                                                            145,155                           
+ 180                        Label  205                                                            185,187                           
+ 185                        Label  229                                                            136                               
+ 200                        Label  247                                                            235,236                           
+ CETLIH4                    Subr   1                                                                                                
+ CLAT                       Local  157      R(4)            4           scalar                    157,177,178,179                   
+ CLON                       Local  156      R(4)            4           scalar                    156,174,175,176                   
+ DSQ                        Local  198      R(4)            4           scalar                    198,200,201                       
+ DSQMN                      Local  109      R(4)            4     2     91719                     151,200,201                       
+ HE                         Dummy  1        R(4)            4     2     91719    ARG,INOUT        218                               
+ HX                         Dummy  1        R(4)            4     2     0        ARG,INOUT        120,218,245                       
+ I                          Local  145      I(4)            4           scalar                    145,151,152,153,154,156,157,172,17
+                                                                                                  3,174,176,177,179,185,186,188,198,
+                                                                                                  199,200,201,202,203,212,213,218,21
+                                                                                                  9                                 
+ IB                         Local  144      I(4)            4           scalar                    144,169                           
+ IDIM1                      Param  72       I(4)            4           scalar                                                      
+ IDIM2                      Param  72       I(4)            4           scalar                                                      
+ IE                         Local  172      I(4)            4           scalar                    172,174,176,177,179               
+ IEND                       Local  138      I(4)            4           scalar                    138,145,185,212                   
+ IGSTL                      Param  67       I(4)            4           scalar                    72                                
+ IGSTR                      Param  67       I(4)            4           scalar                    72                                
+ II                         Local  119      I(4)            4           scalar                    119,120,121,183,198,199,202,236,24
+                                                                                                  4,245                             
+ IISB                       Local  110      I(4)            4     2     91719                     152,202,213,218,219               
+ IM                         Param  61       I(4)            4           scalar                    69,72,80,81,85,93,94,95,109,110,13
+                                                                                                  8                                 
+ IMOT                       Dummy  1        I(4)            4           scalar   ARG,INOUT        85,119,126,236                    
+ IMOT2                      Local  126      I(4)            4           scalar                    126                               
+ IMT                        Param  81       I(4)            4           scalar                    95,96                             
+ IMX                        Param  80       I(4)            4           scalar                    84,91,92,97,98,99,100             
+ INDX                       Common 105                                  6192     SAVE                                               
+ INPES                      Param  64       I(4)            4           scalar                    69,72                             
+ IOFFS                      Dummy  1        I(4)            4           scalar   ARG,INOUT        182,183,192,193                   
+ IP                         Local  188      I(4)            4           scalar                    188,192                           
+ IS                         Local  192      I(4)            4           scalar                    192,198,199,202                   
+ ITAIL                      Param  69       I(4)            4           scalar                                                      
+ IW                         Local  173      I(4)            4           scalar                    173,175,176,178,179               
+ J                          Local  136      I(4)            4           scalar                    136,138,151,152,153,154,156,157,17
+                                                                                                  2,173,174,175,176,177,178,179,186,
+
+Page 6           Source Listing                  CETLIH4
+2022-02-15 16:38 Symbol Table                    CETLIH4.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  188,198,199,200,201,202,203,213,21
+                                                                                                  8,219                             
+ JB                         Local  143      I(4)            4           scalar                    143,170                           
+ JDIM1                      Param  73       I(4)            4           scalar                                                      
+ JDIM2                      Param  73       I(4)            4           scalar                                                      
+ JGSTL                      Param  68       I(4)            4           scalar                    73                                
+ JGSTR                      Param  68       I(4)            4           scalar                    73                                
+ JJ                         Local  118      I(4)            4           scalar                    118,120,121,182,198,199,203,235,24
+                                                                                                  4,245                             
+ JJSB                       Local  110      I(4)            4     2     91719                     153,203,218,219                   
+ JM                         Param  61       I(4)            4           scalar                    70,73,80,81,85,93,94,95,106,109,11
+                                                                                                  0,136                             
+ JMOT                       Dummy  1        I(4)            4           scalar   ARG,INOUT        85,118,125,235                    
+ JMOT2                      Local  125      I(4)            4           scalar                    125                               
+ JMT                        Param  81       I(4)            4           scalar                    95,96                             
+ JMX                        Param  80       I(4)            4           scalar                    84,91,92,97,98,99,100             
+ JNPES                      Param  64       I(4)            4           scalar                    70,73                             
+ JP                         Local  154      I(4)            4           scalar                    154,155,186,187,193               
+ JS                         Local  193      I(4)            4           scalar                    193,198,199,203                   
+ JTAIL                      Param  70       I(4)            4           scalar                                                      
+ KSB                        Dummy  1        I(4)            4           scalar   ARG,INOUT        127,143,144,169,170               
+ LLGRDS                     Common 90                                   9167256  SAVE                                               
+ LM                         Param  61       I(4)            4           scalar                    80                                
+ LSM                        Param  61       I(4)            4           scalar                                                      
+ MOD                        Func   138                                  scalar                    138                               
+ MXFLD                      Param  80       I(4)            4           scalar                                                      
+ MXLVL                      Param  80       I(4)            4           scalar                                                      
+ NZ                         Local  84       I(4)            4     2     91719                     121,219,244,245                   
+ P                          Local  169      R(4)            4           scalar                    169,171,174,177                   
+ PQ                         Local  171      R(4)            4           scalar                    171,176,179                       
+ Q                          Local  170      R(4)            4           scalar                    170,171,175,178                   
+ SBLAT                      Local  109      R(4)            4     2     91719                     177,199                           
+ SBLON                      Local  109      R(4)            4     2     91719                     174,198                           
+ SBS                        Local  127      R(4)            4           scalar                    127,169,170                       
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ EGRDI                      R(4)            4     5865372  2     91719    COM                                                 
+ EGRDJ                      R(4)            4     6232248  2     91719    COM                                                 
+ EVLAT                      R(4)            4     4400964  2     183051   COM                                                 
+ EVLON                      R(4)            4     5133168  2     183051   COM                                                 
+ FVTLON                     R(4)            4     3668760  2     183051   COM                                                 
+ GDLAT                      R(4)            4     0        2     91719    COM                                                 
+ GDLON                      R(4)            4     366876   2     91719    COM                                                 
+ GDTLAT                     R(4)            4     733752   2     91719    COM              199                                
+ GDTLON                     R(4)            4     1100628  2     91719    COM              198                                
+ HTLAT                      R(4)            4     1467504  2     91719    COM              157,177,178,179                    
+ HTLON                      R(4)            4     1834380  2     91719    COM              156,174,175,176                    
+ IEGRD                      I(4)            4     6599124  2     91719    COM                                                 
+ IEGRDK                     I(4)            4     2201256  2     91719    COM              188                                
+ IHE                        I(4)            4     0        1     387      COM              172                                
+ IHW                        I(4)            4     1548     1     387      COM              173                                
+
+Page 7           Source Listing                  CETLIH4
+2022-02-15 16:38 Symbol Table                    CETLIH4.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IVE                        I(4)            4     3096     1     387      COM                                                 
+ IVW                        I(4)            4     4644     1     387      COM                                                 
+ IWGT                       I(4)            4     7332876  2     91719    COM                                                 
+ JEGRD                      I(4)            4     6966000  2     91719    COM                                                 
+ JEGRDK                     I(4)            4     2568132  2     91719    COM              154,186                            
+ VTLAT                      R(4)            4     2935008  2     91719    COM                                                 
+ VTLON                      R(4)            4     3301884  2     91719    COM                                                 
+ WIJ                        R(4)            4     7699752  2     91719    COM                                                 
+ WIJP                       R(4)            4     8433504  2     91719    COM                                                 
+ WIPJ                       R(4)            4     8066628  2     91719    COM                                                 
+ WIPJP                      R(4)            4     8800380  2     91719    COM                                                 
+
+Page 8           Source Listing                  CETLIH4
+2022-02-15 16:38 Subprograms/Common Blocks       CETLIH4.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CETLIH4                    Subr   1                                                                                                
+ INDX                       Common 105                                  6192     SAVE                                               
+ LLGRDS                     Common 90                                   9167256  SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 9           Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 10          Source Listing                  CETLIH4
+2022-02-15 16:38                                 CETLIH4.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CETLIH4.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

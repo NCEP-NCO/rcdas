@@ -1,0 +1,1488 @@
+Page 1           Source Listing                  HZADV
+2022-02-15 16:37                                 /tmp/ifort4iFNcx.i
+
+      1 # 1 "HZADV.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3                              SUBROUTINE HZADV 
+      4 C     ******************************************************************
+      5 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      6 C                .      .    .
+      7 C SUBPROGRAM:    HZADV       HORIZONTAL ADVECTION
+      8 C   PRGRMMR: JANJIC          ORG: W/NP22     DATE: 93-10-28
+      9 C
+     10 C ABSTRACT:
+     11 C     HZADV CALCULATES THE CONTRIBUTION OF THE HORIZONTAL ADVECTION
+     12 C     TO THE TENDENCIES OF TEMPERATURE, WIND COMPONENTS, AND
+     13 C     TURBULENT KINETIC ENERGY AND THEN UPDATES THOSE VARIABLES.
+     14 C     THE JANJIC ADVECTION SCHEME FOR THE ARAKAWA E GRID IS USED
+     15 C     FOR ALL VARIABLES INSIDE THE FIFTH ROW.  AN UPSTREAM SCHEME
+     16 C     IS USED ON ALL VARIABLES IN THE THIRD, FOURTH, AND FIFTH
+     17 C     OUTERMOST ROWS.  A MODIFIED EULER-BACKWARD TIME SCHEME (HEUN)
+     18 C     IS USED.  UNDERGROUND WINDS MUST BE EQUAL TO ZERO SINCE THEY
+     19 C     ARE USED EXPLICITLY WITHOUT THE VELOCITY MASK IN THE FLUX
+     20 C     CALCULATIONS.
+     21 C
+     22 C PROGRAM HISTORY LOG:
+     23 C   87-06-??  JANJIC     - ORIGINATOR
+     24 C   95-03-25  BLACK      - CONVERSION FROM 1-D TO 2-D IN HORIZONTAL
+     25 C   96-03-28  BLACK      - ADDED EXTERNAL EDGE
+     26 C   98-10-30  BLACK      - MODIFIED FOR DISTRIBUTED MEMORY
+     27 C
+     28 C USAGE: CALL HZADV FROM MAIN PROGRAM EBU
+     29 C   INPUT ARGUMENT LIST:
+     30 C       NONE
+     31 C
+     32 C   OUTPUT ARGUMENT LIST:
+     33 C     NONE
+     34 C
+     35 C   OUTPUT FILES:
+     36 C     NONE
+     37 C
+     38 C   SUBPROGRAMS CALLED:
+     39 C
+     40 C     UNIQUE: NONE
+     41 C
+     42 C     LIBRARY: NONE
+     43 C
+     44 C   COMMON BLOCKS: CTLBLK
+     45 C                  LOOPS
+     46 C                  MASKS
+     47 C                  DYNAM
+     48 C                  VRBLS
+     49 C                  CONTIN
+     50 C                  PVRBLS
+     51 C                  INDX
+     52 C
+     53 C ATTRIBUTES:
+     54 C   LANGUAGE: FORTRAN 90
+     55 C   MACHINE : IBM SP
+     56 C$$$
+     57 C***********************************************************************
+
+Page 2           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+     58                              P A R A M E T E R
+     59      & (TLC=2.*0.703972477)
+     60 C-----------------------------------------------------------------------
+     61       INCLUDE "parmeta"
+     84       INCLUDE "mpp.h"
+     85 # 1 "./sp.h" 1 
+     86 # 4
+     87 
+     88 # 63 "HZADV.F" 2 
+     89 C-----------------------------------------------------------------------
+    148                              P A R A M E T E R
+    149      & (IM1=IM-1,JAM=6+2*(JM-10)
+    150      &, IMJM=IM*JM-JM/2,LP1=LM+1
+    151      &, JAMD=(JAM*2-10)*3)
+    152 C-----------------------------------------------------------------------
+    153                              L O G I C A L
+    154      & RUN,FIRST,RESTRT,ITER2,SIGMA
+    155 C----------------------------------------------------------------------
+    156       INCLUDE "CTLBLK.comm"
+    157 C-----------------------------------------------------------------------
+    167       INCLUDE "LOOPS.comm"
+    168 C-----------------------------------------------------------------------
+    175       INCLUDE "MASKS.comm"
+    176 C-----------------------------------------------------------------------
+    187       INCLUDE "DYNAM.comm"
+    188 C-----------------------------------------------------------------------
+    204       INCLUDE "VRBLS.comm"
+    205 C-----------------------------------------------------------------------
+    215       INCLUDE "CONTIN.comm"
+    216 C-----------------------------------------------------------------------
+    226       INCLUDE "PVRBLS.comm"
+    256       INCLUDE "CLDWTR.comm"
+    257 C-----------------------------------------------------------------------
+    265       INCLUDE "INDX.comm"
+    266 C-----------------------------------------------------------------------
+    278                              D I M E N S I O N
+    279      & HM    (IDIM1:IDIM2,JDIM1:JDIM2),VM    (IDIM1:IDIM2,JDIM1:JDIM2)
+    280      &,RDPD  (IDIM1:IDIM2,JDIM1:JDIM2)
+    281      &,ADPDX (IDIM1:IDIM2,JDIM1:JDIM2),ADPDY (IDIM1:IDIM2,JDIM1:JDIM2)
+    282      &,RDPDX (IDIM1:IDIM2,JDIM1:JDIM2),RDPDY (IDIM1:IDIM2,JDIM1:JDIM2)
+    283      &,ADT   (IDIM1:IDIM2,JDIM1:JDIM2)
+    284      &,ADU   (IDIM1:IDIM2,JDIM1:JDIM2),ADV   (IDIM1:IDIM2,JDIM1:JDIM2)
+    285      &,ADQ2M (IDIM1:IDIM2,JDIM1:JDIM2),ADQ2L (IDIM1:IDIM2,JDIM1:JDIM2)
+    286      &,Q2MNS (IDIM1:IDIM2,JDIM1:JDIM2),Q2LNS (IDIM1:IDIM2,JDIM1:JDIM2)
+    287      &,UDY   (IDIM1:IDIM2,JDIM1:JDIM2),VDX   (IDIM1:IDIM2,JDIM1:JDIM2)
+    288 C
+    289                              D I M E N S I O N
+    290      & DPDE  (IDIM1:IDIM2,JDIM1:JDIM2)
+    291      &,TEMPA (IDIM1:IDIM2,JDIM1:JDIM2),TEMPB (IDIM1:IDIM2,JDIM1:JDIM2)
+    292      &,TST   (IDIM1:IDIM2,JDIM1:JDIM2)
+    293      &,UST   (IDIM1:IDIM2,JDIM1:JDIM2),VST   (IDIM1:IDIM2,JDIM1:JDIM2)
+    294      &,Q2M   (IDIM1:IDIM2,JDIM1:JDIM2),Q2L   (IDIM1:IDIM2,JDIM1:JDIM2)
+    295      &,TEW   (IDIM1:IDIM2,JDIM1:JDIM2),TNS   (IDIM1:IDIM2,JDIM1:JDIM2)
+    296      &,Q2MEW (IDIM1:IDIM2,JDIM1:JDIM2),Q2LEW (IDIM1:IDIM2,JDIM1:JDIM2)
+    297 C
+    298                              D I M E N S I O N
+    299      & TNE   (IDIM1:IDIM2,JDIM1:JDIM2),TSE   (IDIM1:IDIM2,JDIM1:JDIM2)
+
+Page 3           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    300      &,Q2MNE (IDIM1:IDIM2,JDIM1:JDIM2),Q2MSE (IDIM1:IDIM2,JDIM1:JDIM2)
+    301      &,Q2LNE (IDIM1:IDIM2,JDIM1:JDIM2),Q2LSE (IDIM1:IDIM2,JDIM1:JDIM2)
+    302      &,UEW   (IDIM1:IDIM2,JDIM1:JDIM2),UNS   (IDIM1:IDIM2,JDIM1:JDIM2)
+    303      &,VEW   (IDIM1:IDIM2,JDIM1:JDIM2),VNS   (IDIM1:IDIM2,JDIM1:JDIM2)
+    304      &,UNE   (IDIM1:IDIM2,JDIM1:JDIM2),USE   (IDIM1:IDIM2,JDIM1:JDIM2)
+    305      &,VNE   (IDIM1:IDIM2,JDIM1:JDIM2),VSE   (IDIM1:IDIM2,JDIM1:JDIM2)
+    306      &,FEW   (IDIM1:IDIM2,JDIM1:JDIM2),FNS   (IDIM1:IDIM2,JDIM1:JDIM2)
+    307      &,FNE   (IDIM1:IDIM2,JDIM1:JDIM2),FSE   (IDIM1:IDIM2,JDIM1:JDIM2)
+    308 C
+    309                              D I M E N S I O N
+    310      & ADQ2HL(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    311      &,Q2ML(IDIM1:IDIM2,JDIM1:JDIM2,LM+1)
+    312 C
+    313       DIMENSION ARRAY0(JAMD)  
+    314       DIMENSION ARRAY1(JAMD) 
+    315       DIMENSION ARRAY2(JAMD)   
+    316       DIMENSION ARRAY3(JAMD)  
+    317       DIMENSION KHHAS(JAMD)  
+    318       DIMENSION IHLAS(JAMD) 
+    319       DIMENSION JHLAS(JAMD)
+    320       DIMENSION KVHAS(JAMD)    
+    321       DIMENSION IVLAS(JAMD)   
+    322       DIMENSION JVLAS(JAMD)  
+    323       DIMENSION ISPA(JAMD)  
+    324       DIMENSION ISQA(JAMD) 
+    325 c
+    326       LOGICAL UPSTRM,LJRA(JAM)
+    327 C--------------------------------------------------------------------
+    328 C***********************************************************************
+    329 C-----------------------------------------------------------------------
+    330 C
+    331 C***  FIGURE OUT IF WE ARE IN THE UPSTREAM REGION
+    332 C
+    333       UPSTRM=.FALSE.
+    334       IF(MYPE.LE.INPES-1)UPSTRM=.TRUE.
+    335       IF(MYPE.GE.NPES-INPES)UPSTRM=.TRUE.
+    336       IF(MOD(MYPE,INPES).EQ.0)UPSTRM=.TRUE.
+    337       IF(MOD(MYPE+1,INPES).EQ.0)UPSTRM=.TRUE.
+    338 C
+    339       JAKONE=0 
+    340 C
+    341       DO 25 JA=1,JAM
+    342       IHL=IHLA(JA)
+    343       IHH=IHHA(JA)
+    344       J=JRA(JA)
+    345       LJRA(JA)=.FALSE.
+    346 C
+    347       IF(J.GE.MY_JS_GLB-JBPAD2.AND.J.LE.MY_JE_GLB+JTPAD2)THEN
+    348         LJRA(JA)=.TRUE.
+    349         DO I=IHL,IHH
+    350           IF(I.GE.MY_IS_GLB-ILPAD2.AND.I.LE.MY_IE_GLB+IRPAD2)THEN
+    351             JAKONE=JAKONE+1
+    352             KHHAS(JAKONE)=JA
+    353             IHLAS(JAKONE)=I
+    354             JHLAS(JAKONE)=J
+    355           ENDIF
+    356         ENDDO
+
+Page 4           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    357       ENDIF
+    358 C
+    359    25 CONTINUE
+    360 C
+    361       JAKTWO=0
+    362       DO 50 JA=1,JAM
+    363         IVL=IVLA(JA)
+    364         IVH=IVHA(JA)
+    365         J=JRA(JA)
+    366 C
+    367       DO 50 I=IVL,IVH
+    368       IF(I.GE.MY_IS_GLB-ILPAD2.AND.I.LE.MY_IE_GLB+IRPAD2.AND.
+    369      1   J.GE.MY_JS_GLB-JBPAD2.AND.J.LE.MY_JE_GLB+JTPAD2)THEN
+    370         JAKTWO=JAKTWO+1
+    371         KVHAS(JAKTWO)=JA
+    372         IVLAS(JAKTWO)=I
+    373         JVLAS(JAKTWO)=J
+    374       ENDIF
+    375    50 CONTINUE
+    376 C
+    377 C
+    378       DO 70 J=MYJS_P5,MYJE_P5
+    379       DO 70 I=MYIS_P4,MYIE_P4
+    380         Q2ML(I,J,1)=0.
+    381    70 CONTINUE
+    382 C
+    383 !$omp parallel do
+    384       DO 80 L=2,LM+1 
+    385       DO 80 J=MYJS_P5,MYJE_P5
+    386       DO 80 I=MYIS_P4,MYIE_P4
+    387         Q2ML(I,J,L)=Q2(I,J,L-1)
+    388    80 CONTINUE
+    389 C***********************************************************************
+    390 !$omp parallel do
+    391 !$omp& private(adpdx,adpdy,adq,adq2l,adq2m,adt,adu,adv,
+    392 !$omp&         array0,array1,array2,array3,dpde,f0,f1,f2,f3,
+    393 !$omp&         few,fne,fns,fse,hm,i,ifp,ifq,ihh,ihl,ipq,isp,
+    394 !$omp&         ispa,isq,isqa,iter2,ix,iy,j,ja,jak,l,pp,q2l,
+    395 !$omp&         q2lew,q2lne,q2lns,q2lse,q2m,q2mew,q2mne,q2mns,
+    396 !$omp&         q2mse,qew,qne,qns,qp,qse,qst,rdpd,rdpdx,rdpdy,
+    397 !$omp&         tempa,tempb,tew,tne,tns,tse,tst,tta,ttb,udy,uew,une,
+    398 !$omp&         uns,use,ust,vdx,vew,vm,vne,vns,vse,vst)
+    399 C***********************************************************************
+    400                              DO 500 L=1,LM
+    401 C***********************************************************************
+    402       CALL ZERO2(ADT)
+    403       CALL ZERO2(ADU)
+    404       CALL ZERO2(ADV)
+    405       CALL ZERO2(ADQ2M)
+    406       CALL ZERO2(ADQ2L)
+    407       CALL ZERO2(DPDE)
+    408       CALL ZERO2(FEW)
+    409       CALL ZERO2(FNE)
+    410       CALL ZERO2(FNS)
+    411       CALL ZERO2(FSE)
+    412       CALL ZERO2(Q2L)
+    413       CALL ZERO2(Q2LEW)
+
+Page 5           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    414       CALL ZERO2(Q2LNE)
+    415       CALL ZERO2(Q2LSE)
+    416       CALL ZERO2(Q2M)
+    417       CALL ZERO2(Q2MEW)
+    418       CALL ZERO2(Q2MNE)
+    419       CALL ZERO2(Q2MSE)
+    420       CALL ZERO2(RDPD)
+    421       CALL ZERO2(TEMPA)
+    422       CALL ZERO2(TEMPB)
+    423       CALL ZERO2(TEW)
+    424       CALL ZERO2(TNE)
+    425       CALL ZERO2(TNS)
+    426       CALL ZERO2(TSE)
+    427       CALL ZERO2(TST)
+    428       CALL ZERO2(UDY)
+    429       CALL ZERO2(UEW)
+    430       CALL ZERO2(UNE)
+    431       CALL ZERO2(UNS)
+    432       CALL ZERO2(USE)
+    433       CALL ZERO2(UST)
+    434       CALL ZERO2(VEW)
+    435       CALL ZERO2(VNE)
+    436       CALL ZERO2(VNS)
+    437       CALL ZERO2(VSE)
+    438       CALL ZERO2(VST)
+    439       CALL ZERO2(VM)
+    440 C***********************************************************************
+    441                              ITER2=.FALSE.
+    442 C-----------------------------------------------------------------------
+    443       DO J=MYJS_P4,MYJE_P4
+    444       DO I=MYIS_P4,MYIE_P4
+    445 c       Q2M(I,J)=0.
+    446         Q2M(I,J)=Q2ML(I,J,L)
+    447       ENDDO
+    448       ENDDO
+    449 C
+    450       DO 110 J=MYJS_P5,MYJE_P5
+    451       DO 110 I=MYIS_P4,MYIE_P4
+    452       HM(I,J)=HTM(I,J,L)*HBM2(I,J)
+    453       DPDE(I,J)=PDSL(I,J)*DETA(L)
+    454       RDPD(I,J)=1./DPDE(I,J)
+    455       UST(I,J)=U(I,J,L)
+    456       VST(I,J)=V(I,J,L)
+    457       TST(I,J)=T(I,J,L)
+    458       Q2L(I,J)=Q2ML(I,J,L+1)
+    459   110 CONTINUE
+    460 C-----------------------------------------------------------------------
+    461       DO 120 J=MYJS1_P4,MYJE1_P4
+    462       DO 120 I=MYIS_P4,MYIE_P4
+    463       VM(I,J)=VTM(I,J,L)*VBM2(I,J)
+    464       ADPDX(I,J)=DPDE(I+IVW(J),J)+DPDE(I+IVE(J),J)
+    465       ADPDY(I,J)=DPDE(I,J-1)+DPDE(I,J+1)
+    466       RDPDX(I,J)=1./ADPDX(I,J)
+    467       RDPDY(I,J)=1./ADPDY(I,J)
+    468   120 CONTINUE
+    469 C--------------MASS FLUXES AND MASS POINTS ADVECTION COMPONENTS---------
+    470 C***
+
+Page 6           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    471 C***  THE NS AND EW FLUXES IN THE FOLLOWING LOOP ARE ON V POINTS
+    472 C***
+    473   125 DO 130 J=MYJS1_P4,MYJE1_P4
+    474       DO 130 I=MYIS_P4,MYIE_P4
+    475       UDY(I,J)=UST(I,J)*DY
+    476       FEW(I,J)=UDY(I,J)*ADPDX(I,J)
+    477       TEW(I,J)=FEW(I,J)*(TST(I+IVE(J),J)-TST(I+IVW(J),J))
+    478       Q2MEW(I,J)=FEW(I,J)*(Q2M(I+IVE(J),J)-Q2M(I+IVW(J),J))
+    479       Q2LEW(I,J)=FEW(I,J)*(Q2L(I+IVE(J),J)-Q2L(I+IVW(J),J))
+    480       VDX(I,J)=VST(I,J)*DX(I,J)
+    481       FNS(I,J)=VDX(I,J)*ADPDY(I,J)
+    482       TNS(I,J)=FNS(I,J)*(TST(I,J+1)-TST(I,J-1))
+    483       Q2MNS(I,J)=FNS(I,J)*(Q2M(I,J+1)-Q2M(I,J-1))
+    484       Q2LNS(I,J)=FNS(I,J)*(Q2L(I,J+1)-Q2L(I,J-1))
+    485   130 CONTINUE
+    486 C--------------DIAGONAL FLUXES AND DIAGONALLY AVERAGED WIND-------------
+    487 C***
+    488 C***  THE NE AND SE FLUXES ARE ON H POINTS
+    489 C***  (ACTUALLY JUST TO THE NE AND SE OF EACH H POINT)
+    490 C***
+    491       DO 145 J=MYJS2_P4,MYJE2_P4
+    492       DO 145 I=MYIS_P4,MYIE_P4
+    493       TEMPA(I,J)=UDY(I,J)+VDX(I,J)
+    494       TEMPB(I,J)=UDY(I,J)-VDX(I,J)
+    495   145 CONTINUE
+    496 C
+    497       DO 150 J=MYJS2_P4,MYJE2_P4
+    498       DO 150 I=MYIS_P4,MYIE_P4
+    499       FNE(I,J)=(TEMPA(I+IHE(J),J)+TEMPA(I,J+1))
+    500      1         *(DPDE(I,J)+DPDE(I+IHE(J),J+1))
+    501       TNE(I,J)=FNE(I,J)*(TST(I+IHE(J),J+1)-TST(I,J))
+    502       Q2MNE(I,J)=FNE(I,J)*(Q2M(I+IHE(J),J+1)-Q2M(I,J))
+    503       Q2LNE(I,J)=FNE(I,J)*(Q2L(I+IHE(J),J+1)-Q2L(I,J))
+    504       FSE(I,J)=(TEMPB(I+IHE(J),J)+TEMPB(I,J-1))
+    505      1         *(DPDE(I,J)+DPDE(I+IHE(J),J-1))
+    506       TSE(I,J)=FSE(I,J)*(TST(I+IHE(J),J-1)-TST(I,J))
+    507       Q2MSE(I,J)=FSE(I,J)*(Q2M(I+IHE(J),J-1)-Q2M(I,J))
+    508       Q2LSE(I,J)=FSE(I,J)*(Q2L(I+IHE(J),J-1)-Q2L(I,J))
+    509   150 CONTINUE
+    510 C--------------THERMODYNAMIC EQUATION & MOISTURE------------------------
+    511 C***
+    512 C***  THE AD ARRAYS IN THE 170 LOOP ARE ON H POINTS
+    513 C***
+    514       DO 170 J=MYJS5_P2,MYJE5_P2
+    515       DO 170 I=MYIS_P2,MYIE_P2
+    516       ADT(I,J)=(TEW(I+IHW(J),J)+TEW(I+IHE(J),J)+TNS(I,J-1)+TNS(I,J+1)
+    517      1         +TNE(I+IHW(J),J-1)+TNE(I,J)+TSE(I,J)+TSE(I+IHW(J),J+1))
+    518      2         *RDPD(I,J)*FAD(I,J)
+    519       ADQ2M(I,J)=(Q2MEW(I+IHW(J),J)+Q2MEW(I+IHE(J),J)
+    520      1           +Q2MNS(I,J-1)+Q2MNS(I,J+1)
+    521      2           +Q2MNE(I+IHW(J),J-1)+Q2MNE(I,J)
+    522      3           +Q2MSE(I,J)+Q2MSE(I+IHW(J),J+1))
+    523      4           *RDPD(I,J)*FAD(I,J)
+    524       ADQ2L(I,J)=(Q2LEW(I+IHW(J),J)+Q2LEW(I+IHE(J),J)
+    525      1           +Q2LNS(I,J-1)+Q2LNS(I,J+1)
+    526      2           +Q2LNE(I+IHW(J),J-1)+Q2LNE(I,J)
+    527      3           +Q2LSE(I,J)+Q2LSE(I+IHW(J),J+1))
+
+Page 7           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    528      4           *RDPD(I,J)*FAD(I,J)
+    529   170 CONTINUE
+    530 C-----------------------------------------------------------------------
+    531 C--------------UPSTREAM ADVECTION OF T, Q AND Q2------------------------
+    532 C-----------------------------------------------------------------------
+    533       IF(UPSTRM)THEN
+    534         DO 171 JAK=1,JAKONE
+    535         JA=KHHAS(JAK)
+    536         I =IHLAS(JAK)
+    537         J =JHLAS(JAK)
+    538         IX=I-MY_IS_GLB+1
+    539         JX=J-MY_JS_GLB+1
+    540         TTA=EMT(JA)*(UST(IX,JX-1)+UST(IX+IHW(JX),JX)
+    541      1              +UST(IX+IHE(JX),JX)+UST(IX,JX+1))
+    542         TTB=ENT    *(VST(IX,JX-1)+VST(IX+IHW(JX),JX)
+    543      1              +VST(IX+IHE(JX),JX)+VST(IX,JX+1))
+    544         PP=-TTA-TTB
+    545         QP= TTA-TTB
+    546 C
+    547         IF(PP.LT.0.)THEN
+    548           ISPA(JAK)=-1
+    549         ELSE
+    550           ISPA(JAK)= 1
+    551         ENDIF
+    552 C
+    553         IF(QP.LT.0.)THEN
+    554           ISQA(JAK)=-1
+    555         ELSE
+    556           ISQA(JAK)= 1
+    557         ENDIF
+    558 C
+    559         PP=ABS(PP)
+    560         QP=ABS(QP)
+    561         ARRAY3(JAK)=PP*QP
+    562         ARRAY0(JAK)=ARRAY3(JAK)-PP-QP
+    563         ARRAY1(JAK)=PP-ARRAY3(JAK)
+    564         ARRAY2(JAK)=QP-ARRAY3(JAK)
+    565   171   CONTINUE
+    566 C
+    567         JAK=0
+    568         DO 173 JA=1,JAM
+    569         IHL=IHLA(JA)
+    570         IHH=IHHA(JA)
+    571         J=JRA(JA)
+    572         IF(.NOT.LJRA(JA))GO TO 173
+    573 C
+    574         DO I=IHL,IHH
+    575         IF(I.GE.MY_IS_GLB-ILPAD2.AND.I.LE.MY_IE_GLB+IRPAD2)THEN
+    576           JAK=JAK+1
+    577           ISP=ISPA(JAK)
+    578           ISQ=ISQA(JAK)
+    579           IFP=(ISP-1)/2
+    580           IFQ=(-ISQ-1)/2
+    581           IPQ=(ISP-ISQ)/2
+    582 C
+    583           IX=I-MY_IS_GLB+1
+    584           JX=J-MY_JS_GLB+1
+
+Page 8           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    585 C
+    586           IF(HTM(IX+IHE(JX)+IFP,JX+ISP,L)*HTM(IX+IHE(JX)+IFQ,JX+ISQ,L)
+    587      1      *HTM(IX+IPQ,JX+ISP+ISQ,L).GT.0.1)GO TO 172
+    588 C
+    589           IF(HTM(IX+IHE(JX)+IFP,JX+ISP,L)+HTM(IX+IHE(JX)+IFQ,JX+ISQ,L)
+    590      1      +HTM(IX+IPQ,JX+ISP+ISQ,L).LT.0.1)THEN
+    591 C
+    592             TST(IX+IHE(JX)+IFP,JX+ISP)=TST(IX,JX)
+    593             TST(IX+IHE(JX)+IFQ,JX+ISQ)=TST(IX,JX)
+    594             TST(IX+IPQ,JX+ISP+ISQ)    =TST(IX,JX)
+    595 C
+    596           ELSEIF
+    597      1     (HTM(IX+IHE(JX)+IFP,JX+ISP,L)+HTM(IX+IPQ,JX+ISP+ISQ,L)
+    598      2      .LT.0.99)THEN
+    599 C
+    600             TST(IX+IHE(JX)+IFP,JX+ISP)=TST(IX,JX)
+    601             TST(IX+IPQ,JX+ISP+ISQ)    =TST(IX+IHE(JX)+IFQ,JX+ISQ)
+    602 C
+    603           ELSEIF
+    604      1     (HTM(IX+IHE(JX)+IFQ,JX+ISQ,L)+HTM(IX+IPQ,JX+ISP+ISQ,L)
+    605      2      .LT.0.99)THEN
+    606 C
+    607             TST(IX+IHE(JX)+IFQ,JX+ISQ)=TST(IX,JX)
+    608             TST(IX+IPQ,JX+ISP+ISQ)    =TST(IX+IHE(JX)+IFP,JX+ISP)
+    609 C
+    610           ELSEIF
+    611      1     (HTM(IX+IHE(JX)+IFP,JX+ISP,L)+HTM(IX+IHE(JX)+IFQ,JX+ISQ,L)
+    612      2      .LT.0.99)THEN
+    613             TST(IX+IHE(JX)+IFP,JX+ISP)=
+    614      1                    0.5*(TST(IX,JX)+TST(IX+IPQ,JX+ISP+ISQ))
+    615             TST(IX+IHE(JX)+IFQ,JX+ISQ)=TST(IX+IHE(JX)+IFP,JX+ISP)
+    616 C
+    617           ELSEIF(HTM(IX+IHE(JX)+IFP,JX+ISP,L).LT.0.99)THEN
+    618             TST(IX+IHE(JX)+IFP,JX+ISP)=
+    619      1        TST(IX,JX)+TST(IX+IPQ,JX+ISP+ISQ)
+    620      2                  -TST(IX+IHE(JX)+IFQ,JX+ISQ)
+    621 C
+    622           ELSEIF(HTM(IX+IHE(JX)+IFQ,JX+ISQ,L).LT.0.99)THEN
+    623             TST(IX+IHE(JX)+IFQ,JX+ISQ)=
+    624      1        TST(IX,JX)+TST(IX+IPQ,JX+ISP+ISQ)
+    625      2                  -TST(IX+IHE(JX)+IFP,JX+ISP)
+    626 C
+    627           ELSE
+    628             TST(IX+IPQ,JX+ISP+ISQ)=
+    629      1        TST(IX+IHE(JX)+IFP,JX+ISP)
+    630      2       +TST(IX+IHE(JX)+IFQ,JX+ISQ)-TST(IX,JX)
+    631 C
+    632           ENDIF
+    633 C
+    634   172     CONTINUE
+    635 C
+    636           F0=ARRAY0(JAK)
+    637           F1=ARRAY1(JAK)
+    638           F2=ARRAY2(JAK)
+    639           F3=ARRAY3(JAK)
+    640           ADT(IX,JX)=F0*TST(IX,JX)+F1*TST(IX+IHE(JX)+IFP,JX+ISP)
+    641      1                            +F2*TST(IX+IHE(JX)+IFQ,JX+ISQ)
+
+Page 9           Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    642      2                            +F3*TST(IX+IPQ,JX+ISP+ISQ)
+    643         ENDIF
+    644 C
+    645         ENDDO
+    646   173   CONTINUE
+    647 C
+    648         DO 175 JAK=1,JAKONE
+    649         I=IHLAS(JAK)
+    650         J=JHLAS(JAK)
+    651 C
+    652         IX=I-MY_IS_GLB+1
+    653         JX=J-MY_JS_GLB+1
+    654 C
+    655         ISP=ISPA(JAK)
+    656         ISQ=ISQA(JAK)
+    657         IFP=(ISP-1)/2
+    658         IFQ=(-ISQ-1)/2
+    659         IPQ=(ISP-ISQ)/2
+    660         F0=ARRAY0(JAK)
+    661         F1=ARRAY1(JAK)
+    662         F2=ARRAY2(JAK)
+    663         F3=ARRAY3(JAK)
+    664         ADQ2M(IX,JX)=F0*Q2M(IX,JX)+F1*Q2M(IX+IHE(JX)+IFP,JX+ISP)
+    665      1                            +F2*Q2M(IX+IHE(JX)+IFQ,JX+ISQ)
+    666      2                            +F3*Q2M(IX+IPQ,JX+ISP+ISQ)
+    667         ADQ2L(IX,JX)=F0*Q2L(IX,JX)+F1*Q2L(IX+IHE(JX)+IFP,JX+ISP)
+    668      1                            +F2*Q2L(IX+IHE(JX)+IFQ,JX+ISQ)
+    669      2                            +F3*Q2L(IX+IPQ,JX+ISP+ISQ)
+    670  175    CONTINUE
+    671 c
+    672       ENDIF
+    673 C***
+    674 C***  END OF THIS UPSTREAM REGION
+    675 C***
+    676 C--------------CALCULATION OF MOMENTUM ADVECTION COMPONENTS-------------
+    677 C***
+    678 C***  THE FOLLOWING EW AND NS ARRAYS ARE ON H POINTS
+    679 C***
+    680       DO 180 J=MYJS4_P4,MYJE4_P4
+    681       DO 180 I=MYIS_P4,MYIE_P4
+    682       UEW(I,J)=(FEW(I+IHW(J),J)+FEW(I+IHE(J),J))
+    683      1         *(UST(I+IHE(J),J)-UST(I+IHW(J),J))
+    684       UNS(I,J)=(FNS(I+IHW(J),J)+FNS(I+IHE(J),J))
+    685      1         *(UST(I,J+1)-UST(I,J-1))
+    686       VEW(I,J)=(FEW(I,J-1)+FEW(I,J+1))
+    687      1         *(VST(I+IHE(J),J)-VST(I+IHW(J),J))
+    688       VNS(I,J)=(FNS(I,J-1)+FNS(I,J+1))*(VST(I,J+1)-VST(I,J-1))
+    689 C***
+    690 C***  THE FOLLOWING NE AND SE ARRAYS ARE TIED TO V POINTS
+    691 C***
+    692       UNE(I,J)=(FNE(I+IVW(J),J)+FNE(I+IVE(J),J))
+    693      1         *(UST(I+IVE(J),J+1)-UST(I,J))
+    694       USE(I,J)=(FSE(I+IVW(J),J)+FSE(I+IVE(J),J))
+    695      1         *(UST(I+IVE(J),J-1)-UST(I,J))
+    696       VNE(I,J)=(FNE(I,J-1)+FNE(I,J+1))*(VST(I+IVE(J),J+1)-VST(I,J))
+    697       VSE(I,J)=(FSE(I,J-1)+FSE(I,J+1))*(VST(I+IVE(J),J-1)-VST(I,J))
+    698   180 CONTINUE
+
+Page 10          Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    699 C--------------EQUATION OF MOTION---------------------------------------
+    700 C***
+    701 C***  ADU AND ADV ARE ON V POINTS
+    702 C***
+    703       DO 200 J=MYJS5_P2,MYJE5_P2
+    704       DO 200 I=MYIS_P2,MYIE_P2
+    705       ADU(I,J)=(UEW(I+IVW(J),J)+UEW(I+IVE(J),J)+UNS(I,J-1)+UNS(I,J+1)
+    706      1       +UNE(I+IVW(J),J-1)+UNE(I,J)+USE(I,J)+USE(I+IVW(J),J+1))
+    707      2       *RDPDX(I,J)*FAD(I+IVW(J),J)
+    708       ADV(I,J)=(VEW(I+IVW(J),J)+VEW(I+IVE(J),J)+VNS(I,J-1)+VNS(I,J+1)
+    709      1       +VNE(I+IVW(J),J-1)+VNE(I,J)+VSE(I,J)+VSE(I+IVW(J),J+1))
+    710      2       *RDPDY(I,J)*FAD(I+IVW(J),J)
+    711   200 CONTINUE
+    712 C
+    713 C--------------UPSTREAM ADVECTION OF VELOCITY COMPONENTS----------------
+    714 C
+    715       IF(UPSTRM)THEN
+    716         DO 205 JAK=1,JAKTWO
+    717         JA=KVHAS(JAK)
+    718         I=IVLAS(JAK)
+    719         J=JVLAS(JAK)
+    720 C
+    721         IX=I-MY_IS_GLB+1
+    722         JX=J-MY_JS_GLB+1
+    723 C
+    724         TTA=EM(JA)*UST(IX,JX)
+    725         TTB=EN    *VST(IX,JX)
+    726         PP=-TTA-TTB
+    727         QP=TTA-TTB
+    728 C
+    729         IF(PP.LT.0.)THEN
+    730           ISP=-1
+    731         ELSE
+    732           ISP= 1
+    733         ENDIF
+    734 C
+    735         IF(QP.LT.0.)THEN
+    736           ISQ=-1
+    737         ELSE
+    738           ISQ= 1
+    739         ENDIF
+    740 C
+    741         IFP=(ISP-1)/2
+    742         IFQ=(-ISQ-1)/2
+    743         IPQ=(ISP-ISQ)/2
+    744         PP=ABS(PP)
+    745         QP=ABS(QP)
+    746         F3=PP*QP
+    747         F0=F3-PP-QP
+    748         F1=PP-F3
+    749         F2=QP-F3
+    750         ADU(IX,JX)=F0*UST(IX,JX)+F1*UST(IX+IVE(JX)+IFP,JX+ISP)
+    751      1                          +F2*UST(IX+IVE(JX)+IFQ,JX+ISQ)
+    752      2                          +F3*UST(IX+IPQ,JX+ISP+ISQ)
+    753         ADV(IX,JX)=F0*VST(IX,JX)+F1*VST(IX+IVE(JX)+IFP,JX+ISP)
+    754      1                          +F2*VST(IX+IVE(JX)+IFQ,JX+ISQ)
+    755      2                          +F3*VST(IX+IPQ,JX+ISP+ISQ)
+
+Page 11          Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    756   205   CONTINUE
+    757       ENDIF
+    758 C***
+    759 C***  END OF THIS UPSTREAM REGION
+    760 C***
+    761 C-----------------------------------------------------------------------
+    762       IF(ITER2)GO TO 235
+    763 C-----------------------------------------------------------------------
+    764       DO 220 J=MYJS2_P2,MYJE2_P2
+    765       DO 220 I=MYIS1_P2,MYIE1_P2
+    766       TST(I,J)=ADT  (I,J)*(HM(I,J)*TLC)+TST(I,J)
+    767       Q2M(I,J)=ADQ2M(I,J)*(HM(I,J)*TLC)+Q2M(I,J)
+    768       Q2L(I,J)=ADQ2L(I,J)*(HM(I,J)*TLC)+Q2L(I,J)
+    769   220 CONTINUE
+    770 C
+    771       DO 230 J=MYJS2_P2,MYJE2_P2
+    772       DO 230 I=MYIS1_P2,MYIE1_P2
+    773       UST(I,J)=ADU(I,J)*VM(I,J)*TLC+UST(I,J)
+    774       VST(I,J)=ADV(I,J)*VM(I,J)*TLC+VST(I,J)
+    775   230 CONTINUE
+    776 C-----------------------------------------------------------------------
+    777       ITER2=.TRUE.
+    778       GO TO 125
+    779 C-----------------------------------------------------------------------
+    780   235 DO 240 J=MYJS2,MYJE2
+    781       DO 240 I=MYIS1,MYIE1
+    782       T(I,J,L)=ADT(I,J)*(2.0*HM(I,J))+T(I,J,L)  
+    783   240 CONTINUE
+    784 C
+    785       DO 250 J=MYJS2,MYJE2
+    786       DO 250 I=MYIS1,MYIE1
+    787       U(I,J,L)=ADU(I,J)*(2.0*VM(I,J))+U(I,J,L)
+    788       V(I,J,L)=ADV(I,J)*(2.0*VM(I,J))+V(I,J,L)
+    789   250 CONTINUE
+    790 C-----------------------------------------------------------------------
+    791       IF(L.EQ.1)THEN  
+    792         DO 260 J=MYJS2,MYJE2
+    793         DO 260 I=MYIS1,MYIE1
+    794         ADQ2HL(I,J,1)=ADQ2L(I,J)
+    795   260   CONTINUE
+    796       ELSE
+    797         DO 270 J=MYJS2,MYJE2
+    798         DO 270 I=MYIS1,MYIE1
+    799         ADQ2HL(I,J,L)=ADQ2L(I,J)
+    800         Q2(I,J,L-1)=ADQ2M(I,J)*HM(I,J)+Q2(I,J,L-1)
+    801   270   CONTINUE
+    802       ENDIF
+    803 C***********************************************************************
+    804   500                        CONTINUE
+    805 C***********************************************************************
+    806 !$omp parallel do private(hm)
+    807       DO 600 L=2,LM
+    808       DO J=MYJS2,MYJE2
+    809       DO I=MYIS1,MYIE1
+    810         HM(I,J)=HTM(I,J,L)*HBM2(I,J)
+    811         Q2(I,J,L-1)=ADQ2HL(I,J,L-1)*HM(I,J)+Q2(I,J,L-1)
+    812       ENDDO
+
+Page 12          Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+    813       ENDDO
+    814   600 CONTINUE
+    815 C-----------------------------------------------------------------------
+    816                              RETURN
+    817                              END
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ hzadv_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 110                        Label  459                                                            450,451                           
+ 120                        Label  468                                                            461,462                           
+ 125                        Label  473                                                            778                               
+ 130                        Label  485                                                            473,474                           
+ 145                        Label  495                                                            491,492                           
+ 150                        Label  509                                                            497,498                           
+ 170                        Label  529                                                            514,515                           
+ 171                        Label  565                                                            534                               
+ 172                        Label  634                                                            587                               
+ 173                        Label  646                                                            568,572                           
+ 175                        Label  670                                                            648                               
+ 180                        Label  698                                                            680,681                           
+ 200                        Label  711                                                            703,704                           
+ 205                        Label  756                                                            716                               
+ 220                        Label  769                                                            764,765                           
+ 230                        Label  775                                                            771,772                           
+ 235                        Label  780                                                            762                               
+ 240                        Label  783                                                            780,781                           
+ 25                         Label  359                                                            341                               
+ 250                        Label  789                                                            785,786                           
+ 260                        Label  795                                                            792,793                           
+ 270                        Label  801                                                            797,798                           
+ 50                         Label  375                                                            362,367                           
+ 500                        Label  804                                                            400                               
+ 600                        Label  814                                                            807                               
+ 70                         Label  381                                                            378,379                           
+ 80                         Label  388                                                            384,385,386                       
+ ABS                        Func   559                                  scalar                    559,560,744,745                   
+ ADPDX                      Local  281      R(4)            4     2     17955                     464,466,476                       
+ ADPDY                      Local  281      R(4)            4     2     17955                     465,467,481                       
+ ADQ2HL                     Local  310      R(4)            4     3     807975                    794,799,811                       
+ ADQ2L                      Local  285      R(4)            4     2     17955                     406,524,667,768,794,799           
+ ADQ2M                      Local  285      R(4)            4     2     17955                     405,519,664,767,800               
+ ADT                        Local  283      R(4)            4     2     17955                     402,516,640,766,782               
+ ADU                        Local  284      R(4)            4     2     17955                     403,705,750,773,787               
+ ADV                        Local  284      R(4)            4     2     17955                     404,708,753,774,788               
+ ARRAY0                     Local  313      R(4)            4     1     4530                      562,636,660                       
+ ARRAY1                     Local  314      R(4)            4     1     4530                      563,637,661                       
+ ARRAY2                     Local  315      R(4)            4     1     4530                      564,638,662                       
+
+Page 13          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ARRAY3                     Local  316      R(4)            4     1     4530                      561,562,563,564,639,663           
+ CLDWTR                     Common 259                                  3447720  SAVE                                               
+ CONTIN                     Common 218                                  12999420 SAVE                                               
+ CTLBLK                     Common 161                                  112      SAVE                                               
+ DPDE                       Local  290      R(4)            4     2     17955                     407,453,454,464,465,500,505       
+ DYNAM                      Common 190                                  725404   SAVE                                               
+ F0                         Local  636      R(4)            4           scalar                    636,640,660,664,667,747,750,753   
+ F1                         Local  637      R(4)            4           scalar                    637,640,661,664,667,748,750,753   
+ F2                         Local  638      R(4)            4           scalar                    638,641,662,665,668,749,751,754   
+ F3                         Local  639      R(4)            4           scalar                    639,642,663,666,669,746,747,748,74
+                                                                                                  9,752,755                         
+ FEW                        Local  306      R(4)            4     2     17955                     408,476,477,478,479,682,686       
+ FNE                        Local  307      R(4)            4     2     17955                     409,499,501,502,503,692,696       
+ FNS                        Local  306      R(4)            4     2     17955                     410,481,482,483,484,684,688       
+ FSE                        Local  307      R(4)            4     2     17955                     411,504,506,507,508,694,697       
+ GLB_TABLE                  Common 126                                  128      SAVE                                               
+ HM                         Local  279      R(4)            4     2     17955                     452,766,767,768,782,800,810,811   
+ HZADV                      Subr   3                                                                                                
+ I                          Local  349      I(4)            4           scalar                    349,350,353,367,368,372,379,380,38
+                                                                                                  6,387,444,446,451,452,453,454,455,
+                                                                                                  456,457,458,462,463,464,465,466,46
+                                                                                                  7,474,475,476,477,478,479,480,481,
+                                                                                                  482,483,484,492,493,494,498,499,50
+                                                                                                  0,501,502,503,504,505,506,507,508,
+                                                                                                  515,516,517,518,519,520,521,522,52
+                                                                                                  3,524,525,526,527,528,536,538,574,
+                                                                                                  575,583,649,652,681,682,683,684,68
+                                                                                                  5,686,687,688,692,693,694,695,696,
+                                                                                                  697,704,705,706,707,708,709,710,71
+                                                                                                  8,721,765,766,767,768,772,773,774,
+                                                                                                  781,782,786,787,788,793,794,798,79
+                                                                                                  9,800,809,810,811                 
+ IDIM1                      Param  80       I(4)            4           scalar                    172,179,180,182,183,184,196,197,19
+                                                                                                  8,199,200,201,208,210,211,212,219,
+                                                                                                  220,221,222,223,229,230,231,232,23
+                                                                                                  3,234,235,236,237,238,239,240,241,
+                                                                                                  242,243,244,245,247,252,260,262,27
+                                                                                                  1,279,280,281,282,283,284,285,286,
+                                                                                                  287,290,291,292,293,294,295,296,29
+                                                                                                  9,300,301,302,303,304,305,306,307,
+                                                                                                  310,311                           
+ IDIM2                      Param  80       I(4)            4           scalar                    172,179,180,182,183,184,196,197,19
+                                                                                                  8,199,200,201,208,210,211,212,219,
+                                                                                                  220,221,222,223,229,230,231,232,23
+                                                                                                  3,234,235,236,237,238,239,240,241,
+                                                                                                  242,243,244,245,247,252,260,262,27
+                                                                                                  1,279,280,281,282,283,284,285,286,
+                                                                                                  287,290,291,292,293,294,295,296,29
+                                                                                                  9,300,301,302,303,304,305,306,307,
+                                                                                                  310,311                           
+ IFP                        Local  579      I(4)            4           scalar                    579,586,589,592,597,600,608,611,61
+                                                                                                  3,615,617,618,625,629,640,657,664,
+                                                                                                  667,741,750,753                   
+ IFQ                        Local  580      I(4)            4           scalar                    580,586,589,593,601,604,607,611,61
+                                                                                                  5,620,622,623,630,641,658,665,668,
+
+Page 14          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  742,751,754                       
+ IGSTL                      Param  75       I(4)            4           scalar                    80                                
+ IGSTR                      Param  75       I(4)            4           scalar                    80                                
+ IHH                        Local  343      I(4)            4           scalar                    343,349,570,574                   
+ IHL                        Local  342      I(4)            4           scalar                    342,349,569,574                   
+ IHLAS                      Local  318      I(4)            4     1     4530                      353,536,649                       
+ IM                         Param  64       I(4)            4           scalar                    77,80,132,133,134,135,136,140,141,
+                                                                                                  146,149,150,275                   
+ IM1                        Param  149      I(4)            4           scalar                                                      
+ IMJM                       Param  150      I(4)            4           scalar                                                      
+ INDX                       Common 268                                  6564     SAVE                                               
+ INDXG                      Common 274                                  8084     SAVE                                               
+ INPES                      Param  72       I(4)            4           scalar                    77,80,116,117,118,127,128,334,335,
+                                                                                                  336,337                           
+ IPQ                        Local  581      I(4)            4           scalar                    581,587,590,594,597,601,604,608,61
+                                                                                                  4,619,624,628,642,659,666,669,743,
+                                                                                                  752,755                           
+ ISP                        Local  577      I(4)            4           scalar                    577,579,581,586,587,589,590,592,59
+                                                                                                  4,597,600,601,604,608,611,613,614,
+                                                                                                  615,617,618,619,624,625,628,629,64
+                                                                                                  0,642,655,657,659,664,666,667,669,
+                                                                                                  730,732,741,743,750,752,753,755   
+ ISPA                       Local  323      I(4)            4     1     4530                      548,550,577,655                   
+ ISQ                        Local  578      I(4)            4           scalar                    578,580,581,586,587,589,590,593,59
+                                                                                                  4,597,601,604,607,608,611,614,615,
+                                                                                                  619,620,622,623,624,628,630,641,64
+                                                                                                  2,656,658,659,665,666,668,669,736,
+                                                                                                  738,742,743,751,752,754,755       
+ ISQA                       Local  324      I(4)            4     1     4530                      554,556,578,656                   
+ ITAIL                      Param  77       I(4)            4           scalar                                                      
+ ITER2                      Local  154      L(4)            4           scalar                    441,762,777                       
+ IVH                        Local  364      I(4)            4           scalar                    364,367                           
+ IVL                        Local  363      I(4)            4           scalar                    363,367                           
+ IVLAS                      Local  321      I(4)            4     1     4530                      372,718                           
+ IX                         Local  538      I(4)            4           scalar                    538,540,541,542,543,583,586,587,58
+                                                                                                  9,590,592,593,594,597,600,601,604,
+                                                                                                  607,608,611,613,614,615,617,618,61
+                                                                                                  9,620,622,623,624,625,628,629,630,
+                                                                                                  640,641,642,652,664,665,666,667,66
+                                                                                                  8,669,721,724,725,750,751,752,753,
+                                                                                                  754,755                           
+ J                          Local  344      I(4)            4           scalar                    344,347,354,365,369,373,378,380,38
+                                                                                                  5,387,443,446,450,452,453,454,455,
+                                                                                                  456,457,458,461,463,464,465,466,46
+                                                                                                  7,473,475,476,477,478,479,480,481,
+                                                                                                  482,483,484,491,493,494,497,499,50
+                                                                                                  0,501,502,503,504,505,506,507,508,
+                                                                                                  514,516,517,518,519,520,521,522,52
+                                                                                                  3,524,525,526,527,528,537,539,571,
+                                                                                                  584,650,653,680,682,683,684,685,68
+                                                                                                  6,687,688,692,693,694,695,696,697,
+                                                                                                  703,705,706,707,708,709,710,719,72
+                                                                                                  2,764,766,767,768,771,773,774,780,
+                                                                                                  782,785,787,788,792,794,797,799,80
+                                                                                                  0,808,810,811                     
+
+Page 15          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ JA                         Local  341      I(4)            4           scalar                    341,342,343,344,345,348,352,362,36
+                                                                                                  3,364,365,371,535,540,568,569,570,
+                                                                                                  571,572,717,724                   
+ JAK                        Local  534      I(4)            4           scalar                    534,535,536,537,548,550,554,556,56
+                                                                                                  1,562,563,564,567,576,577,578,636,
+                                                                                                  637,638,639,648,649,650,655,656,66
+                                                                                                  0,661,662,663,716,717,718,719     
+ JAKONE                     Local  339      I(4)            4           scalar                    339,351,352,353,354,534,648       
+ JAKTWO                     Local  361      I(4)            4           scalar                    361,370,371,372,373,716           
+ JAM                        Param  149      I(4)            4           scalar                    151,171,194,326,341,362,568       
+ JAMD                       Param  151      I(4)            4           scalar                    313,314,315,316,317,318,319,320,32
+                                                                                                  1,322,323,324                     
+ JDIM1                      Param  81       I(4)            4           scalar                    172,179,180,182,183,184,196,197,19
+                                                                                                  8,199,200,201,208,210,211,212,219,
+                                                                                                  220,221,222,223,229,230,231,232,23
+                                                                                                  3,234,235,236,237,238,239,240,241,
+                                                                                                  242,243,244,245,247,252,260,262,26
+                                                                                                  9,270,279,280,281,282,283,284,285,
+                                                                                                  286,287,290,291,292,293,294,295,29
+                                                                                                  6,299,300,301,302,303,304,305,306,
+                                                                                                  307,310,311                       
+ JDIM2                      Param  81       I(4)            4           scalar                    172,179,180,182,183,184,196,197,19
+                                                                                                  8,199,200,201,208,210,211,212,219,
+                                                                                                  220,221,222,223,229,230,231,232,23
+                                                                                                  3,234,235,236,237,238,239,240,241,
+                                                                                                  242,243,244,245,247,252,260,262,26
+                                                                                                  9,270,279,280,281,282,283,284,285,
+                                                                                                  286,287,290,291,292,293,294,295,29
+                                                                                                  6,299,300,301,302,303,304,305,306,
+                                                                                                  307,310,311                       
+ JGSTL                      Param  76       I(4)            4           scalar                    81                                
+ JGSTR                      Param  76       I(4)            4           scalar                    81                                
+ JHLAS                      Local  319      I(4)            4     1     4530                      354,537,650                       
+ JM                         Param  64       I(4)            4           scalar                    78,81,132,133,134,135,136,140,141,
+                                                                                                  146,149,150,275                   
+ JNPES                      Param  72       I(4)            4           scalar                    78,81,116,117,118,127,128         
+ JTAIL                      Param  78       I(4)            4           scalar                                                      
+ JVLAS                      Local  322      I(4)            4     1     4530                      373,719                           
+ JX                         Local  539      I(4)            4           scalar                    539,540,541,542,543,584,586,587,58
+                                                                                                  9,590,592,593,594,597,600,601,604,
+                                                                                                  607,608,611,613,614,615,617,618,61
+                                                                                                  9,620,622,623,624,625,628,629,630,
+                                                                                                  640,641,642,653,664,665,666,667,66
+                                                                                                  8,669,722,724,725,750,751,752,753,
+                                                                                                  754,755                           
+ KHHAS                      Local  317      I(4)            4     1     4530                      352,535                           
+ KVHAS                      Local  320      I(4)            4     1     4530                      371,717                           
+ L                          Local  384      I(4)            4           scalar                    384,387,400,446,452,453,455,456,45
+                                                                                                  7,458,463,586,587,589,590,597,604,
+                                                                                                  611,617,622,782,787,788,791,799,80
+                                                                                                  0,807,810,811                     
+ LJRA                       Local  326      L(4)            4     1     760                       345,348,572                       
+ LM                         Param  64       I(4)            4           scalar                    141,150,182,183,192,210,211,220,22
+                                                                                                  1,222,223,247,260,261,310,311,384,
+                                                                                                  400,807                           
+
+Page 16          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LOOPS                      Common 170                                  158840   SAVE                                               
+ LP1                        Param  150      I(4)            4           scalar                    192                               
+ LSM                        Param  64       I(4)            4           scalar                                                      
+ MAPPINGS                   Common 145                                  5024     SAVE                                               
+ MASKS                      Common 178                                  6894720  SAVE                                               
+ MOD                        Func   336                                  scalar                    336,337                           
+ MPPCOM                     Common 90                                   1464     SAVE                                               
+ PP                         Local  544      R(4)            4           scalar                    544,547,559,561,562,563,726,729,74
+                                                                                                  4,746,747,748                     
+ PVRBLS                     Common 228                                  5530140  SAVE                                               
+ Q2L                        Local  294      R(4)            4     2     17955                     412,458,479,484,503,508,667,668,66
+                                                                                                  9,768                             
+ Q2LEW                      Local  296      R(4)            4     2     17955                     413,479,524                       
+ Q2LNE                      Local  301      R(4)            4     2     17955                     414,503,526                       
+ Q2LNS                      Local  286      R(4)            4     2     17955                     484,525                           
+ Q2LSE                      Local  301      R(4)            4     2     17955                     415,508,527                       
+ Q2M                        Local  294      R(4)            4     2     17955                     416,446,478,483,502,507,664,665,66
+                                                                                                  6,767                             
+ Q2MEW                      Local  296      R(4)            4     2     17955                     417,478,519                       
+ Q2ML                       Local  311      R(4)            4     3     825930                    380,387,446,458                   
+ Q2MNE                      Local  300      R(4)            4     2     17955                     418,502,521                       
+ Q2MNS                      Local  286      R(4)            4     2     17955                     483,520                           
+ Q2MSE                      Local  300      R(4)            4     2     17955                     419,507,522                       
+ QP                         Local  545      R(4)            4           scalar                    545,553,560,561,562,564,727,735,74
+                                                                                                  5,746,747,749                     
+ RDPD                       Local  280      R(4)            4     2     17955                     420,454,518,523,528               
+ RDPDX                      Local  282      R(4)            4     2     17955                     466,707                           
+ RDPDY                      Local  282      R(4)            4     2     17955                     467,710                           
+ SINGLRST                   Local  159      L(4)            4           scalar                                                      
+ TEMPA                      Local  291      R(4)            4     2     17955                     421,493,499                       
+ TEMPB                      Local  291      R(4)            4     2     17955                     422,494,504                       
+ TEMPCOM                    Common 131                                  6603768  SAVE                                               
+ TEW                        Local  295      R(4)            4     2     17955                     423,477,516                       
+ TLC                        Param  59       R(4)            4           scalar                    766,767,768,773,774               
+ TNE                        Local  299      R(4)            4     2     17955                     424,501,517                       
+ TNS                        Local  295      R(4)            4     2     17955                     425,482,516                       
+ TOPO                       Common 139                                  17478548 SAVE                                               
+ TSE                        Local  299      R(4)            4     2     17955                     426,506,517                       
+ TST                        Local  292      R(4)            4     2     17955                     427,457,477,482,501,506,592,593,59
+                                                                                                  4,600,601,607,608,613,614,615,618,
+                                                                                                  619,620,623,624,625,628,629,630,64
+                                                                                                  0,641,642,766                     
+ TTA                        Local  540      R(4)            4           scalar                    540,544,545,724,726,727           
+ TTB                        Local  542      R(4)            4           scalar                    542,544,545,725,726,727           
+ UDY                        Local  287      R(4)            4     2     17955                     428,475,476,493,494               
+ UEW                        Local  302      R(4)            4     2     17955                     429,682,705                       
+ UNE                        Local  304      R(4)            4     2     17955                     430,692,706                       
+ UNS                        Local  302      R(4)            4     2     17955                     431,684,705                       
+ UPSTRM                     Local  326      L(4)            4           scalar                    333,334,335,336,337,533,715       
+ USE                        Local  304      R(4)            4     2     17955                     432,694,706                       
+ UST                        Local  293      R(4)            4     2     17955                     433,455,475,540,541,683,685,693,69
+                                                                                                  5,724,750,751,752,773             
+ VDX                        Local  287      R(4)            4     2     17955                     480,481,493,494                   
+ VEW                        Local  303      R(4)            4     2     17955                     434,686,708                       
+ VM                         Local  279      R(4)            4     2     17955                     439,463,773,774,787,788           
+
+Page 17          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ VNE                        Local  305      R(4)            4     2     17955                     435,696,709                       
+ VNS                        Local  303      R(4)            4     2     17955                     436,688,708                       
+ VRBLS                      Common 207                                  13143060 SAVE                                               
+ VSE                        Local  305      R(4)            4     2     17955                     437,697,709                       
+ VST                        Local  293      R(4)            4     2     17955                     438,456,480,542,543,687,688,696,69
+                                                                                                  7,725,753,754,755,774             
+ ZERO2                      Subr   402                                                            402,403,404,405,406,407,408,409,41
+                                                                                                  0,411,412,413,414,415,416,417,418,
+                                                                                                  419,420,421,422,423,424,425,426,42
+                                                                                                  7,428,429,430,431,432,433,434,435,
+                                                                                                  436,437,438,439                   
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     1292760  2     17955    COM                                                 
+ ACPREC                     R(4)            4     1220940  2     17955    COM                                                 
+ AETA                       R(4)            4     396      1     45       COM                                                 
+ AFSI                       R(4)            4     5458320  2     17955    COM                                                 
+ AKHS                       R(4)            4     646380   2     17955    COM                                                 
+ AKMS                       R(4)            4     574560   2     17955    COM                                                 
+ CLDEFI                     R(4)            4     1077300  2     17955    COM                                                 
+ CPGFU                      R(4)            4     150844   2     17955    COM                                                 
+ CPGFV                      R(4)            4     4              scalar   COM                                                 
+ CUPREC                     R(4)            4     1364580  2     17955    COM                                                 
+ CURV                       R(4)            4     222664   2     17955    COM                                                 
+ CWM                        R(4)            4     0        3     807975   COM                                                 
+ DDMPU                      R(4)            4     509944   2     17955    COM                                                 
+ DDMPV                      R(4)            4     581764   2     17955    COM                                                 
+ DETA                       R(4)            4     36       1     45       COM              453                                
+ DFL                        R(4)            4     940      1     46       COM                                                 
+ DIV                        R(4)            4     6607440  3     807975   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DX                         R(4)            4     7204     2     17955    COM              480                                
+ DY                         R(4)            4     0              scalar   COM              475                                
+ EF4T                       R(4)            4     32             scalar   COM                                                 
+ EM                         R(4)            4     1124     1     760      COM              724                                
+ EMT                        R(4)            4     4164     1     760      COM              540                                
+ EN                         R(4)            4     8              scalar   COM              725                                
+ ENT                        R(4)            4     12             scalar   COM              542                                
+ ETA                        R(4)            4     756      1     46       COM                                                 
+ ETADT                      R(4)            4     9839340  3     790020   COM                                                 
+ F                          R(4)            4     438124   2     17955    COM                                                 
+ F4D                        R(4)            4     24             scalar   COM                                                 
+ F4Q                        R(4)            4     28             scalar   COM                                                 
+ F4Q2                       R(4)            4     576      1     45       COM                                                 
+ FAD                        R(4)            4     653584   2     17955    COM              518,523,528,707,710                
+ FCP                        R(4)            4     294484   2     17955    COM                                                 
+ FDIV                       R(4)            4     366304   2     17955    COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     12999420 2     17955    COM                                                 
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+
+Page 18          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ HBM2                       R(4)            4     6751080  2     17955    COM              452,810                            
+ HBM3                       R(4)            4     6822900  2     17955    COM                                                 
+ HTM                        R(4)            4     287280   3     807975   COM              452,586,587,589,590,597,604,611,61 
+                                                                                           7,622,810                          
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     620      1     8        COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDTAD                      I(4)            4     72             scalar   COM                                                 
+ IE_GLB_TABLE               I(4)            4     32       1     8        COM                                                 
+ IE_LOC_TABLE               I(4)            4     556      1     8        COM                                                 
+ IHE                        I(4)            4     0        1     399      COM              499,500,501,502,503,504,505,506,50 
+                                                                                           7,508,516,519,524,541,543,586,589, 
+                                                                                           592,593,597,600,601,604,607,608,61 
+                                                                                           1,613,615,617,618,620,622,623,625, 
+                                                                                           629,630,640,641,664,665,667,668,68 
+                                                                                           2,683,684,687                      
+ IHEG                       I(4)            4     0        1     387      COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM              343,570                            
+ IHLA                       I(4)            4     0        1     760      COM              342,569                            
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1596     1     399      COM              516,517,519,521,522,524,526,527,54 
+                                                                                           0,542,682,683,684,687              
+ IHWG                       I(4)            4     1548     1     387      COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM              350,368,575                        
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1064     1     100      COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IQUILT_GROUP               I(4)            4     1060           scalar   COM                                                 
+ IRAD                       I(4)            4     6384     1     45       COM                                                 
+ IRADG                      I(4)            4     6192     1     473      COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM              350,368,575                        
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     8        COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     8        COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ IVE                        I(4)            4     3192     1     399      COM              464,477,478,479,692,693,694,695,69 
+                                                                                           6,697,705,708,750,751,753,754      
+ IVEG                       I(4)            4     3096     1     387      COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM              364                                
+ IVLA                       I(4)            4     6080     1     760      COM              363                                
+ IVW                        I(4)            4     4788     1     399      COM              464,477,478,479,692,694,705,706,70 
+                                                                                           7,708,709,710                      
+ IVWG                       I(4)            4     4644     1     387      COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+
+Page 19          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ JBPAD2                     I(4)            4     456            scalar   COM              347,369                            
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     96       1     8        COM                                                 
+ JE_LOC_TABLE               I(4)            4     588      1     8        COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM              344,365,571                        
+ JS_GLB_TABLE               I(4)            4     64       1     8        COM                                                 
+ JS_LOC_TABLE               I(4)            4     524      1     8        COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM              347,369                            
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ LC                         I(4)            4     3304080  2     17955    COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     17955    COM                                                 
+ LMV                        I(4)            4     87020    2     17955    COM                                                 
+ MPI_COMM_COMP              I(4)            4     652            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     656            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     660      1     100      COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM                                                 
+ MYIE1                      I(4)            4     56             scalar   COM              781,786,793,798,809                
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM              765,772                            
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM              515,704                            
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM              379,386,444,451,462,474,492,498,68 
+                                                                                           1                                  
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM                                                 
+ MYIS1                      I(4)            4     44             scalar   COM              781,786,793,798,809                
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM              765,772                            
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM              515,704                            
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM              379,386,444,451,462,474,492,498,68 
+                                                                                           1                                  
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM                                                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+
+Page 20          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE1_P4                   I(4)            4     292            scalar   COM              461,473                            
+ MYJE2                      I(4)            4     244            scalar   COM              780,785,792,797,808                
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM              764,771                            
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM              491,497                            
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM              680                                
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM              514,703                            
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM              443                                
+ MYJE_P5                    I(4)            4     276            scalar   COM              378,385,450                        
+ MYJS                       I(4)            4     140            scalar   COM                                                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM              461,473                            
+ MYJS2                      I(4)            4     148            scalar   COM              780,785,792,797,808                
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM              764,771                            
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM              491,497                            
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM              680                                
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM              514,703                            
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM              443                                
+ MYJS_P5                    I(4)            4     180            scalar   COM              378,385,450                        
+ MYPE                       I(4)            4     0              scalar   COM              334,335,336,337                    
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM              350,368,575                        
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM              350,368,538,575,583,652,721        
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+ MY_JE_GLB                  I(4)            4     20             scalar   COM              347,369                            
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM              347,369,539,584,653,722            
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+
+Page 21          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM                                                 
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM              335                                
+ NPHS                       I(4)            4     88             scalar   COM                                                 
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM                                                 
+ NRADS                      I(4)            4     96             scalar   COM                                                 
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM                                                 
+ NTDDMP                     I(4)            4     64             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ OMGALF                     R(4)            4     3375540  3     807975   COM                                                 
+ PD                         R(4)            4     0        2     17955    COM                                                 
+ PDSL                       R(4)            4     0        2     17955    COM              453                                
+ PREC                       R(4)            4     1149120  2     17955    COM                                                 
+ PSDT                       R(4)            4     71820    2     17955    COM                                                 
+ PSHLTR                     R(4)            4     2154600  2     17955    COM                                                 
+ PT                         R(4)            4     20             scalar   COM                                                 
+ Q                          R(4)            4     9767520  3     807975   COM                                                 
+ Q10                        R(4)            4     1795500  2     17955    COM                                                 
+ Q2                         R(4)            4     2226420  3     807975   COM              387,800,811                        
+ Q30                        R(4)            4     1508220  2     17955    COM                                                 
+ QS                         R(4)            4     502740   2     17955    COM                                                 
+ QSHLTR                     R(4)            4     2082780  2     17955    COM                                                 
+ QWBS                       R(4)            4     861840   2     17955    COM                                                 
+ QZ0                        R(4)            4     359100   2     17955    COM                                                 
+ R                          R(4)            4     16             scalar   COM                                                 
+ RDETA                      R(4)            4     216      1     45       COM                                                 
+ RES                        R(4)            4     13071240 2     17955    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RF                         R(4)            4     718200   2     17955    COM                                                 
+ RTOP                       R(4)            4     143640   3     807975   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SI                         R(4)            4     1005480  2     17955    COM                                                 
+ SICE                       R(4)            4     215460   2     17955    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SM                         R(4)            4     143640   2     17955    COM                                                 
+ SNO                        R(4)            4     933660   2     17955    COM                                                 
+ SR                         R(4)            4     3375900  2     17955    COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+ T                          R(4)            4     71820    3     807975   COM              457,782                            
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+
+Page 22          Source Listing                  HZADV
+2022-02-15 16:37 Symbol Table                    HZADV.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TH10                       R(4)            4     1723680  2     17955    COM                                                 
+ TH30                       R(4)            4     1436400  2     17955    COM                                                 
+ THS                        R(4)            4     430920   2     17955    COM                                                 
+ THZ0                       R(4)            4     287280   2     17955    COM                                                 
+ TSHLTR                     R(4)            4     2010960  2     17955    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+ TWBS                       R(4)            4     790020   2     17955    COM                                                 
+ U                          R(4)            4     3303720  3     807975   COM              455,787                            
+ U00                        R(4)            4     3231900  2     17955    COM                                                 
+ U10                        R(4)            4     1867320  2     17955    COM                                                 
+ U30                        R(4)            4     1580040  2     17955    COM                                                 
+ UL                         R(4)            4     3303720  1     90       COM                                                 
+ USTAR                      R(4)            4     71820    2     17955    COM                                                 
+ UZ0                        R(4)            4     143640   2     17955    COM                                                 
+ V                          R(4)            4     6535620  3     807975   COM              456,788                            
+ V10                        R(4)            4     1939140  2     17955    COM                                                 
+ V30                        R(4)            4     1651860  2     17955    COM                                                 
+ VBM2                       R(4)            4     0        2     17955    COM              463                                
+ VBM3                       R(4)            4     71820    2     17955    COM                                                 
+ VTM                        R(4)            4     3519180  3     807975   COM              463                                
+ VZ0                        R(4)            4     215460   2     17955    COM                                                 
+ WPDAR                      R(4)            4     79024    2     17955    COM                                                 
+ Z0                         R(4)            4     0        2     17955    COM                                                 
+
+Page 23          Source Listing                  HZADV
+2022-02-15 16:37 Subprograms/Common Blocks       HZADV.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CLDWTR                     Common 259                                  3447720  SAVE                                               
+ CONTIN                     Common 218                                  12999420 SAVE                                               
+ CTLBLK                     Common 161                                  112      SAVE                                               
+ DYNAM                      Common 190                                  725404   SAVE                                               
+ GLB_TABLE                  Common 126                                  128      SAVE                                               
+ HZADV                      Subr   3                                                                                                
+ INDX                       Common 268                                  6564     SAVE                                               
+ INDXG                      Common 274                                  8084     SAVE                                               
+ LOOPS                      Common 170                                  158840   SAVE                                               
+ MAPPINGS                   Common 145                                  5024     SAVE                                               
+ MASKS                      Common 178                                  6894720  SAVE                                               
+ MPPCOM                     Common 90                                   1464     SAVE                                               
+ PVRBLS                     Common 228                                  5530140  SAVE                                               
+ TEMPCOM                    Common 131                                  6603768  SAVE                                               
+ TOPO                       Common 139                                  17478548 SAVE                                               
+ VRBLS                      Common 207                                  13143060 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+
+Page 24          Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+
+Page 25          Source Listing                  HZADV
+2022-02-15 16:37                                 HZADV.F
+
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : HZADV.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

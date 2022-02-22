@@ -1,0 +1,566 @@
+Page 1           Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+      1       SUBROUTINE CALMCVG(Q1D,U1D,V1D,IH,QCNVG)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    CALMCVG     COMPUTES MOISTURE CONVERGENCE
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-01-22       
+      6 C     
+      7 C ABSTRACT:
+      8 C     GIVEN SPECIFIC HUMIDITY, Q, AND THE U-V WIND COMPONENTS
+      9 C     THIS ROUTINE EVALUATES THE VECTOR OPERATION, 
+     10 C                      DEL DOT (Q*VEC)
+     11 C     WHERE,
+     12 C        DEL IS THE VECTOR GRADIENT OPERATOR,
+     13 C        DOT IS THE STANDARD DOT PRODUCT OPERATOR, AND
+     14 C        VEC IS THE VECTOR WIND.
+     15 C     MINUS ONE TIMES THE RESULTING SCALAR FIELD IS THE 
+     16 C     MOISTURE CONVERGENCE WHICH IS RETURNED BY THIS ROUTINE.
+     17 C     
+     18 C     THE ROUTINE USES THE SAME FINITE DIFFERENCING SCHEME
+     19 C     USED IN CALCULATING ABSOLUTE VORTICITY (SUBROUTINE 
+     20 C     CALVOR).  THIS REQUIRES WINDS BE AT VELOCITY POINTS.
+     21 C     IF THE U-V WIND COMPONENTS ARE AT MASS POINTS, SET 
+     22 C     IH TO A POSITIVE INTEGER GREATER THAN ZERO.  REGARDLESS,
+     23 C     SPECIFIC HUMIDITY IS INTERPOLATED TO VELOCITY POINTS.
+     24 C   .     
+     25 C     
+     26 C PROGRAM HISTORY LOG:
+     27 C   93-01-22  RUSS TREADON
+     28 C   98-06-08  T BLACK - CONVERSION FROM 1-D TO 2-D
+     29 C   00-01-04  JIM TUCCILLO - MPI VERSION              
+     30 C     
+     31 C USAGE:    CALL CALMCVG(Q1D,U1D,V1D,IH,QCNVG)
+     32 C   INPUT ARGUMENT LIST:
+     33 C     Q1D      - SPECIFIC HUMIDITY AT MASS POINTS (KG/KG)
+     34 C     U1D      - U WIND COMPONENT (M/S)
+     35 C     V1D      - V WIND COMPONENT (M/S)
+     36 C     IH       - FLAG FOR MASS POINT WINDS.
+     37 C                IH.GT.0 MEANS WINDS AT MASS POINTS.
+     38 C
+     39 C   OUTPUT ARGUMENT LIST: 
+     40 C     QCNVG    - MOISTURE CONVERGENCE (1/S)
+     41 C     
+     42 C   OUTPUT FILES:
+     43 C     NONE
+     44 C     
+     45 C   SUBPROGRAMS CALLED:
+     46 C     UTILITIES:
+     47 C       NONE
+     48 C     LIBRARY:
+     49 C       COMMON   - MASKS
+     50 C                  DYNAM
+     51 C                  OPTIONS
+     52 C                  INDX
+     53 C     
+     54 C   ATTRIBUTES:
+     55 C     LANGUAGE: FORTRAN 90
+     56 C     MACHINE : CRAY C-90
+     57 C$$$  
+
+Page 2           Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+     58 C
+     59 C     
+     60 C     
+     61 C     INCLUDE ETA GRID DIMENSIONS.  SET/DERIVE OTHER PARAMETERS.
+     62 C     PARAMETER IPASS WAS THE NUMBER OF SMOOTHING PASSES TO APPLY
+     63 C     TO THE FIELDS.  THIS IS NO LONGER DONE.
+     64 C     
+     65       INCLUDE "parmeta"
+     83       INCLUDE "params"
+    125       PARAMETER (IPASS=6)
+    126 C
+    127 C     DECLARE VARIABLES.
+    128 C     
+    129       REAL QDIV, R2DY, R2DX
+    130       REAL Q1D(IM,JM), U1D(IM,JM), V1D(IM,JM), QV(IM,JM)
+    131       REAL QCNVG(IM,JM), UWND(IM,JM), VWND(IM,JM)
+    132 C     
+    133 C     DECLARE COMMONS.
+    134       INCLUDE "DYNAM.comm"
+    146       INCLUDE "MASKS.comm"
+    154       INCLUDE "OPTIONS.comm"
+    158       INCLUDE "INDX.comm"
+    164       INCLUDE "CTLBLK.comm"
+    165 C     
+    166 C     
+    167 C***************************************************************************
+    168 C     START CALMCVG HERE.
+    169 C     
+    170 C     INITIALIZE MOISTURE CONVERGENCE ARRAY.  LOAD TEMPORARY WIND ARRAYS.
+    171 C     
+    186 !$omp  parallel do
+    187       DO J=JSTA,JEND
+    188       DO I=1,IM
+    189         QV(I,J) = D00
+    190         QCNVG(I,J) = D00
+    191         UWND(I,J)  = U1D(I,J)
+    192         VWND(I,J)  = V1D(I,J)
+    193         IF (UWND(I,J).EQ.SPVAL) UWND(I,J) = D00
+    194         IF (VWND(I,J).EQ.SPVAL) VWND(I,J) = D00
+    195       ENDDO
+    196       ENDDO
+    197 C     
+    198 C     FIND Q (AND U-V IF NECESSARY) AT V POINTS.
+    199 C
+    200       CALL EXCH(Q1D)
+    201       CALL EXCH(U1D)
+    202       CALL EXCH(V1D)
+    203 C
+    204 !$omp  parallel do
+    205       DO J=JSTA_M,JEND_M
+    206       DO I=2,IM-1
+    207          QV(I,J) = D25*(Q1D(I,J-1)+Q1D(I+IVW(J),J)
+    208      1                 +Q1D(I+IVE(J),J)+Q1D(I,J+1))
+    209          IF (IH.GT.0) THEN
+    210             UWND(I,J) = D25*(U1D(I,J-1)+U1D(I+IVW(J),J)
+    211      1                      +U1D(I+IVE(J),J)+U1D(I,J+1))
+    212      2                      *VBM2(I,J)
+
+Page 3           Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+    213             VWND(I,J) = D25*(V1D(I,J-1)+V1D(I+IVW(J),J)
+    214      1                      +V1D(I+IVE(J),J)+V1D(I,J+1))
+    215      2                      *VBM2(I,J)
+    216          ENDIF
+    217       ENDDO
+    218       ENDDO
+    219 C     
+    220 C     LOOP TO COMPUTE MOISTURE CONVERGENCE.
+    221 C
+    222       CALL EXCH(QV)
+    223       CALL EXCH(VWND)
+    224 C
+    225 !$omp  parallel do
+    226 !$omp& private(iend,qdiv,qudx,qvdy,r2dx,r2dy)
+    227       DO J=JSTA_M2,JEND_M2
+    228       IEND=IM-1-MOD(J,2)
+    229         DO I=2,IEND
+    230           R2DX   = 1./(2.*DX(I,J))
+    231           R2DY   = 1./(2.*DY)   
+    232           QUDX   = (QV(I+IHE(J),J)*UWND(I+IHE(J),J)
+    233      1             -QV(I+IHW(J),J)*UWND(I+IHW(J),J))*R2DX
+    234           QVDY   = (QV(I,J+1)*VWND(I,J+1)-QV(I,J-1)*VWND(I,J-1))*R2DY
+    235           QDIV   = QUDX + QVDY
+    236           QCNVG(I,J) = -1.*QDIV*HBM2(I,J)
+    237         ENDDO
+    238       ENDDO
+    239 C
+    240 C     END OF ROUTINE.
+    241 C     
+    242       RETURN
+    243       END
+
+Page 4           Source Listing                  CALMCVG
+2022-02-15 16:38 Entry Points                    CALMCVG.f
+
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ calmcvg_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ A2                         Param  124      R(4)            4           scalar                                                      
+ A3                         Param  124      R(4)            4           scalar                                                      
+ A4                         Param  124      R(4)            4           scalar                                                      
+ AD05                       Param  116      R(4)            4           scalar                                                      
+ BETA                       Param  120      R(4)            4           scalar                    120                               
+ BTG                        Param  120      R(4)            4           scalar                                                      
+ CALMCVG                    Subr   1                                                                                                
+ CAPA                       Param  111      R(4)            4           scalar                    118                               
+ CFT0                       Param  116      R(4)            4           scalar                                                      
+ CM1                        Param  106      R(4)            4           scalar                                                      
+ CM2                        Param  106      R(4)            4           scalar                                                      
+ CM3                        Param  106      R(4)            4           scalar                                                      
+ CP                         Param  117      R(4)            4           scalar                    119,123                           
+ CPDR                       Param  119      R(4)            4           scalar                                                      
+ CTLBLK                     Common 173                                  96       SAVE                                               
+ D00                        Param  108      R(4)            4           scalar                    189,190,193,194                   
+ D001                       Param  108      R(4)            4           scalar                                                      
+ D0065                      Param  112      R(4)            4           scalar                                                      
+ D01                        Param  108      R(4)            4           scalar                                                      
+ D05                        Param  112      R(4)            4           scalar                    116                               
+ D1                         Param  108      R(4)            4           scalar                                                      
+ D115                       Param  112      R(4)            4           scalar                                                      
+ D125                       Param  110      R(4)            4           scalar                                                      
+ D25                        Param  110      R(4)            4           scalar                    207,210,213                       
+ D50                        Param  108      R(4)            4           scalar                                                      
+ D608                       Param  112      R(4)            4           scalar                                                      
+ DP10M                      Param  118      R(4)            4           scalar                                                      
+ DTR                        Param  117      R(4)            4           scalar                    117                               
+ DYNAM                      Common 136                                  3675964  SAVE                                               
+ ELDR                       Param  119      R(4)            4           scalar                                                      
+ ELWV                       Param  119      R(4)            4           scalar                    119                               
+ EPS                        Param  122      R(4)            4           scalar                    122                               
+ EPSQ2                      Param  123      R(4)            4           scalar                                                      
+ ERAD                       Param  117      R(4)            4           scalar                                                      
+ EXCH                       Subr   200                                                            200,201,202,222,223               
+ FMD                        Param  122      R(4)            4           scalar                    122                               
+ FMW                        Param  122      R(4)            4           scalar                    122                               
+ G                          Param  115      R(4)            4           scalar                    115                               
+ GI                         Param  115      R(4)            4           scalar                    119                               
+ H1                         Param  109      R(4)            4           scalar                    116                               
+ H100                       Param  110      R(4)            4           scalar                                                      
+ H1000                      Param  110      R(4)            4           scalar                                                      
+ H10000                     Param  111      R(4)            4           scalar                                                      
+ H10E5                      Param  111      R(4)            4           scalar                                                      
+
+Page 5           Source Listing                  CALMCVG
+2022-02-15 16:38 Symbol Table                    CALMCVG.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ H1E2                       Param  113      R(4)            4           scalar                                                      
+ H1E4                       Param  113      R(4)            4           scalar                                                      
+ H1M12                      Param  109      R(4)            4           scalar                                                      
+ H1M2                       Param  113      R(4)            4           scalar                                                      
+ H1M5                       Param  110      R(4)            4           scalar                                                      
+ H2                         Param  109      R(4)            4           scalar                                                      
+ H4                         Param  109      R(4)            4           scalar                                                      
+ H999                       Param  108      R(4)            4           scalar                                                      
+ H99999                     Param  109      R(4)            4           scalar                                                      
+ I                          Local  188      I(4)            4           scalar                    188,189,190,191,192,193,194,206,20
+                                                                                                  7,208,210,211,212,213,214,215,229,
+                                                                                                  230,232,233,234,236               
+ IDIM1                      Param  79       I(4)            4           scalar                                                      
+ IDIM2                      Param  79       I(4)            4           scalar                                                      
+ IEND                       Local  228      I(4)            4           scalar                    228,229                           
+ IGSTL                      Param  74       I(4)            4           scalar                    79                                
+ IGSTR                      Param  74       I(4)            4           scalar                    79                                
+ IH                         Dummy  1        I(4)            4           scalar   ARG,INOUT        209                               
+ IM                         Param  68       I(4)            4           scalar                    76,79,87,89,90,92,130,131,142,143,
+                                                                                                  149,151,188,206,228               
+ IM1                        Param  89       I(4)            4           scalar                                                      
+ IMT                        Param  87       I(4)            4           scalar                                                      
+ INDX                       Common 160                                  6192     SAVE                                               
+ INPES                      Param  71       I(4)            4           scalar                    76,79                             
+ IPASS                      Param  125      I(4)            4           scalar                                                      
+ ITAIL                      Param  76       I(4)            4           scalar                                                      
+ J                          Local  187      I(4)            4           scalar                    187,189,190,191,192,193,194,205,20
+                                                                                                  7,208,210,211,212,213,214,215,227,
+                                                                                                  228,230,232,233,234,236           
+ JAM                        Param  89       I(4)            4           scalar                    140                               
+ JDIM1                      Param  80       I(4)            4           scalar                                                      
+ JDIM2                      Param  80       I(4)            4           scalar                                                      
+ JGSTL                      Param  75       I(4)            4           scalar                    80                                
+ JGSTR                      Param  75       I(4)            4           scalar                    80                                
+ JM                         Param  68       I(4)            4           scalar                    77,80,87,89,92,130,131,142,143,149
+                                                                                                  ,151,161                          
+ JM2                        Param  89       I(4)            4           scalar                                                      
+ JMT                        Param  87       I(4)            4           scalar                                                      
+ JNPES                      Param  71       I(4)            4           scalar                    77,80                             
+ JTAIL                      Param  77       I(4)            4           scalar                                                      
+ KSAV                       Param  97       I(4)            4           scalar                                                      
+ KSFI                       Param  96       I(4)            4           scalar                                                      
+ KSLI                       Param  97       I(4)            4           scalar                                                      
+ KSLP                       Param  97       I(4)            4           scalar                                                      
+ KSLPD                      Param  96       I(4)            4           scalar                                                      
+ KSMUD                      Param  96       I(4)            4           scalar                                                      
+ KSRH                       Param  97       I(4)            4           scalar                                                      
+ KSSLP                      Param  96       I(4)            4           scalar                                                      
+ KST                        Param  96       I(4)            4           scalar                                                      
+ KSUV                       Param  97       I(4)            4           scalar                                                      
+ LB                         Param  92       I(4)            4           scalar                                                      
+ LHEAT                      Param  123      I(4)            4           scalar                    123                               
+ LHTOCP                     Param  123      I(4)            4           scalar                                                      
+ LM                         Param  68       I(4)            4           scalar                    91,102,138,151                    
+ LM1                        Param  91       I(4)            4           scalar                                                      
+
+Page 6           Source Listing                  CALMCVG
+2022-02-15 16:38 Symbol Table                    CALMCVG.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LP1                        Param  91       I(4)            4           scalar                    138                               
+ LSM                        Param  68       I(4)            4           scalar                                                      
+ MASKS                      Common 148                                  34853220 SAVE                                               
+ MOD                        Func   228                                  scalar                    228                               
+ NINC                       Param  90       I(4)            4           scalar                                                      
+ NSTAT                      Param  102      I(4)            4           scalar                                                      
+ NSUMD                      Param  98       I(4)            4           scalar                                                      
+ NWORD                      Param  102      I(4)            4           scalar                    102                               
+ NWORD3                     Param  102      I(4)            4           scalar                                                      
+ NWORD6                     Param  102      I(4)            4           scalar                                                      
+ ONEPS                      Param  122      R(4)            4           scalar                                                      
+ OPTIONS                    Common 156                                  24       SAVE                                               
+ OVERRC                     Param  116      R(4)            4           scalar                    116                               
+ P1000                      Param  118      R(4)            4           scalar                                                      
+ PARALLEL                   Common 180                                  8240                                                        
+ PQ0                        Param  124      R(4)            4           scalar                                                      
+ Q1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        200,207,208                       
+ QCNVG                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        190,236                           
+ QDIV                       Local  129      R(4)            4           scalar                    235,236                           
+ QUDX                       Local  232      R(4)            4           scalar                    232,235                           
+ QV                         Local  130      R(4)            4     2     91719                     189,207,222,232,233,234           
+ QVDY                       Local  234      R(4)            4           scalar                    234,235                           
+ R2DX                       Local  129      R(4)            4           scalar                    230,233                           
+ R2DY                       Local  129      R(4)            4           scalar                    231,234                           
+ RCAPA                      Param  118      R(4)            4           scalar                                                      
+ RD                         Param  115      R(4)            4           scalar                    115,119,123                       
+ RDOCP                      Param  123      R(4)            4           scalar                                                      
+ RG                         Param  119      R(4)            4           scalar                                                      
+ ROG                        Param  115      R(4)            4           scalar                                                      
+ RTD                        Param  117      R(4)            4           scalar                                                      
+ SMTHA                      Param  98       R(4)            4           scalar                                                      
+ SMTHB                      Param  98       R(4)            4           scalar                                                      
+ TFRZ                       Param  122      R(4)            4           scalar                                                      
+ U1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        191,201,210,211                   
+ UWND                       Local  131      R(4)            4     2     91719                     191,193,210,232,233               
+ V1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        192,202,213,214                   
+ VWND                       Local  131      R(4)            4     2     91719                     192,194,213,223,234               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     396      1     45       COM                                                 
+ CPGFU                      R(4)            4     740956   2     91719    COM                                                 
+ CPGFV                      R(4)            4     4              scalar   COM                                                 
+ CURV                       R(4)            4     1107832  2     91719    COM                                                 
+ DDMPU                      R(4)            4     2942212  2     91719    COM                                                 
+ DDMPV                      R(4)            4     3309088  2     91719    COM                                                 
+ DETA                       R(4)            4     36       1     45       COM                                                 
+ DFL                        R(4)            4     940      1     46       COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DX                         R(4)            4     7204     2     91719    COM              230                                
+ DY                         R(4)            4     0              scalar   COM              231                                
+ EF4T                       R(4)            4     32             scalar   COM                                                 
+
+Page 7           Source Listing                  CALMCVG
+2022-02-15 16:38 Symbol Table                    CALMCVG.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ EM                         R(4)            4     1124     1     760      COM                                                 
+ EMT                        R(4)            4     4164     1     760      COM                                                 
+ EN                         R(4)            4     8              scalar   COM                                                 
+ ENT                        R(4)            4     12             scalar   COM                                                 
+ ETA                        R(4)            4     756      1     46       COM                                                 
+ F                          R(4)            4     2575336  2     91719    COM                                                 
+ F4D                        R(4)            4     24             scalar   COM                                                 
+ F4Q                        R(4)            4     28             scalar   COM                                                 
+ F4Q2                       R(4)            4     576      1     45       COM                                                 
+ FAD                        R(4)            4     2208460  2     91719    COM                                                 
+ FCP                        R(4)            4     1474708  2     91719    COM                                                 
+ FDIV                       R(4)            4     1841584  2     91719    COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM              236                                
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IHE                        I(4)            4     0        1     387      COM              232                                
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1548     1     387      COM              233                                
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVE                        I(4)            4     3096     1     387      COM              208,211,214                        
+ IVW                        I(4)            4     4644     1     387      COM              207,210,213                        
+ JEND                       I(4)            4     12             scalar   COM              187                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              205                                
+ JEND_M2                    I(4)            4     28             scalar   COM              227                                
+ JSTA                       I(4)            4     8              scalar   COM              187                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              205                                
+ JSTA_M2                    I(4)            4     24             scalar   COM              227                                
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ PT                         R(4)            4     20             scalar   COM                                                 
+
+Page 8           Source Listing                  CALMCVG
+2022-02-15 16:38 Symbol Table                    CALMCVG.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ R                          R(4)            4     16             scalar   COM                                                 
+ RDETA                      R(4)            4     216      1     45       COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM              193,194                            
+ VBM2                       R(4)            4     366876   2     91719    COM              212,215                            
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ WPDAR                      R(4)            4     374080   2     91719    COM                                                 
+
+Page 9           Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+    244 
+
+Page 10          Source Listing                  CALMCVG
+2022-02-15 16:38 Subprograms/Common Blocks       CALMCVG.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CALMCVG                    Subr   1                                                                                                
+ CTLBLK                     Common 173                                  96       SAVE                                               
+ DYNAM                      Common 136                                  3675964  SAVE                                               
+ INDX                       Common 160                                  6192     SAVE                                               
+ MASKS                      Common 148                                  34853220 SAVE                                               
+ OPTIONS                    Common 156                                  24       SAVE                                               
+ PARALLEL                   Common 180                                  8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+
+Page 11          Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+
+Page 12          Source Listing                  CALMCVG
+2022-02-15 16:38                                 CALMCVG.f
+
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CALMCVG.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

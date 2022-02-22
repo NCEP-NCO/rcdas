@@ -1,0 +1,748 @@
+Page 1           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+      1       SUBROUTINE E2OUT(ITAG1,ITAG2,EGRID1,EGRID2,
+      2      1     GRID1,GRID2,IMOUT,JMOUT)
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    E2OUT       INTRP E-GRID TO OUTPUT GRID
+      6 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-21       
+      7 C     
+      8 C ABSTRACT:  
+      9 C     THIS SUBROUTINE PERFORMS ALL ETA POST PROCESSOR 
+     10 C     INTERPOLATION/CONVERSION OF DATA ON THE E-GRID TO
+     11 C     THE OUTPUT GRID.  ADDITIONALLY, THE ROUTINE WILL
+     12 C     SMOOTH OR FILTER THE FIELD(S) AT ANY OF THREE 
+     13 C     STEPS IN THE ROUTINE.  DATA MAY BE SMOOTHED ON 
+     14 C     THE INPUT E-GRID, FILTERED ON A FILLED E-GRID, OR
+     15 C     FILTERED ON THE OUTPUT GRID.  VORTICITY FIELDS ARE
+     16 C     GIVEN AN ADDITIONAL HEAVY HANDED SMOOTHING TO PRODUCE
+     17 C     A PLEASING PRODUCT.  CONTROL OF SMOOTHING/FILTERING
+     18 C     IS VIA SWITCHES SET IN THE CONTROL FILE.  
+     19 C   .     
+     20 C     
+     21 C PROGRAM HISTORY LOG:
+     22 C   92-12-21  RUSS TREADON
+     23 C   93-06-13  RUSS TREADON - ADDED INTERPOLATION TO LAT-LON GRID.
+     24 C   98-06-01  BLACK - CONVERSION FROM 1-D TO 2-D
+     25 C   00-01-05  JIM TUCCILLO - MPI VERSION
+     26 C     
+     27 C USAGE:    CALL E2OUT(ITAG1,ITAG2,EGRID1,EGRID2,
+     28 C                      GRID1,GRID2,IMOUT,JMOUT)
+     29 C   INPUT ARGUMENT LIST:
+     30 C     ITAG1    - INTEGER ID FOR DATA IN EGRID1
+     31 C     ITAG2    - INTEGER ID FOR DATA IN EGRID2
+     32 C     EGRID1   - FIRST FIELD ON E-GRID
+     33 C     EGRID2   - SECOND FIELD ON E-GRID
+     34 C     IMOUT    - FIRST DIMENSION OF OUTPUT GRID
+     35 C     JMOUT    - SECOND DIMENSION OF OUTPUT GRID
+     36 C
+     37 C   OUTPUT ARGUMENT LIST: 
+     38 C     GRID1    - FIRST FIELD ON OUTPUT GRID
+     39 C     GRID2    - SECOND FIELD ON OUTPUT GRID
+     40 C     
+     41 C   OUTPUT FILES:
+     42 C     STDOUT  - RUN TIME STANDARD OUT.
+     43 C     
+     44 C   SUBPROGRAMS CALLED:
+     45 C     UTILITIES:
+     46 C       LOAD     - LOAD FILLED E-GRID INTO 2-D OUTPUT GRID
+     47 C       EFILL    - REPLACES MISSING VALUES ON E-GRID WITH FIELD MEAN
+     48 C       FILLH    - FILL MASS POINTS FOR VELOCITY POINT E-GRID
+     49 C       FILLV    - FILL VELOCITY POINTS FOR MASS POINT E-GRID
+     50 C       CETLIH4  - INTERPOLATE E-GRID TO OUPUT GRID CONSERVING
+     51 C                  THE AREA INTEGRAL OF THE INPUT FIELD OVER
+     52 C                  SPECIFIED SUB-GRIDS.
+     53 C       EUVGUV   - ROTATE ETA (U,V) TO OUTPUT GRID (U,V)
+     54 C       INTERP3  - BILINEAR INTERPOLATION TO OUTPUT GRID
+     55 C       P2FILTF  - SMOOTH MASS POINT DATA ON E-GRID
+     56 C       P2FLTVF  - SMOOTH VELOCITY POINT DATA ON E-GRID
+     57 C       EFILT    - HEAVY-HANDED MASS POINT SMOOTHER.  CURRENTLY
+
+Page 2           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+     58 C                  HARDWIRED FOR USE ON VORITCITY FIELDS.
+     59 C       FILTER   - 25 POINT BLECK FILTER ON A REGULAR GRID.
+     60 C     LIBRARY:
+     61 C       COMMON   - OPTIONS
+     62 C                  LLGRDS
+     63 C                  RQSTFLD
+     64 C                  MASKS
+     65 C                  IOUNIT
+     66 C                  OUTGRD
+     67 C     
+     68 C   ATTRIBUTES:
+     69 C     LANGUAGE: FORTRAN
+     70 C     MACHINE : CRAY C-90
+     71 C$$$  
+     72 C     
+     73 C     
+     74 C     INCLUDE ETA MODEL DIMENSIONS.  SET/DERIVE OTHER PARAMETERS.
+     75 C     
+     76       INCLUDE "parmeta"
+     94       INCLUDE "parmout"
+     98       PARAMETER (IMJM=IM*JM-JM/2,IMT=2*IM-1,JMT=JM,LP1=LM+1)
+     99       PARAMETER (D00=0.0)
+    100 C     
+    101 C     DECLARE VARIABLES.
+    102       CHARACTER*6  PROJ
+    103       LOGICAL NORTH
+    104       REAL EGRID1(IM,JM),EGRID2(IM,JM)
+    105       REAL GRID1(IMOUT,JMOUT),GRID2(IMOUT,JMOUT)
+    106       REAL HFUL(IMT,JMT),UFUL(IMT,JMT),VFUL(IMT,JMT)
+    107 C     
+    108 C     INCLUDE COMMONS.
+    109       INCLUDE "OPTIONS.comm"
+    113       INCLUDE "LLGRDS.comm"
+    127       INCLUDE "RQSTFLD.comm"
+    140       INCLUDE "MASKS.comm"
+    148       INCLUDE "BITMAP.comm"
+    154       INCLUDE "IOUNIT.comm"
+    162       INCLUDE "OUTGRD.comm"
+    167       INCLUDE "CTLBLK.comm"
+    168 C
+    183       common/jjt/time_output, time_e2out
+    184       real(8) ist, rtc, time_output, time_e2out
+    185 C*****************************************************************************
+    186 C     START SUBROUTINE E2OUT.
+    187 C     
+    188 C
+    189       ist = rtc()
+    190 C     ZERO OUTPUT GRIDS.
+    191 C
+    192 !$omp  parallel do
+    193       DO J=JSTA,JEND
+    194       DO I=1,IMOUT
+    195         GRID1(I,J)=D00
+    196         GRID2(I,J)=D00
+    197       ENDDO
+    198       ENDDO
+    199 C     
+
+Page 3           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+    200 C     GRID TYPE KGTYPE=90,92,94,96 IS OUTPUT ON THE STAGGERED MODEL
+    201 C     GRIDS. SIMPLY LOAD DATA INTO OUTPUT GRID ARRAYS.  IF WANTED,
+    202 C     SMOOTH DATA ON OUTPUT GRID.  (YOU NEVER KNOW!)
+    203 C     
+    204       IF (KGTYPE.EQ.90.OR.KGTYPE.EQ.92.OR.
+    205      X      KGTYPE.EQ.94.OR.KGTYPE.EQ.96
+    206      X      .OR.KGTYPE.EQ.99.OR.KGTYPE.EQ.190.OR.KGTYPE.EQ.192
+    207      X      .OR.KGTYPE.EQ.194.OR.KGTYPE.EQ.196) THEN
+    208 c          call ps7
+    209          CALL EFILL(EGRID1,IM,JM)
+    210 c           call ps8
+    211          DO J=JSTA,JEND
+    212          DO I=1,IM
+    213            GRID1(I,J)=EGRID1(I,J)
+    214            IBMAP(I,J)=1
+    215          ENDDO
+    216          ENDDO
+    217 cc          call ps9
+    218          IF (ITAG2.GT.0) THEN
+    219 c              call psa
+    220             CALL EFILL(EGRID2,IM,JM)
+    221 c
+    222             DO J=JSTA,JEND
+    223             DO I=1,IM
+    224               GRID2(I,J)=EGRID2(I,J)
+    225             ENDDO
+    226             ENDDO
+    227 c              call psb
+    228          ENDIF
+    229          GOTO 400
+    230       ENDIF
+    231 C     
+    232 C     IF SELECTED, SMOOTH DATA ON STAGGERED E-GRID.
+    233 C     
+    234       ISMTH = ISMSTG(IGET(ITAG1))
+    235       IF (IFILV(ITAG1).GT.0) THEN
+    236          IF (ISMTH.GT.0) THEN
+    237               CALL P2FILTF(ISMTH,HBM2,EGRID1)
+    238          END IF
+    239          IF ((ISMTH.GT.0).AND.((ITAG1.EQ.10).OR.(ITAG1.EQ.21))) THEN
+    240               CALL EFILT(EGRID1)
+    241          END IF
+    242          IF(ITAG2.GT.0)THEN
+    243            ISMTH = ISMSTG(IGET(ITAG2))
+    244            IF(ISMTH.GT.0) THEN 
+    245               CALL P2FILTF(ISMTH,HBM2,EGRID2)
+    246            END IF
+    247          ENDIF
+    248       ELSE
+    249          IF (ISMTH.GT.0) THEN
+    250               CALL P2FLTVF(ISMTH,VBM2,EGRID1)
+    251          END IF
+    252          IF(ITAG2.GT.0)THEN
+    253            ISMTH = ISMSTG(IGET(ITAG2))
+    254            IF(ISMTH.GT.0) THEN
+    255               CALL P2FLTVF(ISMTH,VBM2,EGRID2)
+    256            END IF
+
+Page 4           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+    257          ENDIF
+    258       ENDIF
+    259 C     
+    260 C     INTERPOLATE H-POINT FIELDS FROM STAGGERED E-GRID TO OUTPUT GRID.
+    261 C     
+    262       IF ( IFILV(ITAG1).GT.0) THEN
+    263 C     
+    264 C        FILL H-POINT FIELD AT V POINTS.
+    265 c         call psd
+    266          CALL FILLV(EGRID1,HFUL,IFLAG,IMT,JMT)
+    267 c          call pse
+    268 C     
+    269 C        IF REQUESTED, SMOOTH DATA ON FILLED E-GRID.
+    270          ISMTH = ISMFUL(IGET(ITAG1))
+    271          IF (ISMTH.GT.0) CALL FILTER(IMT,JMT,HFUL,ISMTH)
+    272 C     
+    273 C        INTERPOLATE TO OUTPUT GRID.
+    274          IF ((KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    275      1        .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    276      1        .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196))THEN
+    277 C     
+    278 C           INTERPOLATION FOR GENERIC FIELDS.
+    279 c       call ps1
+    280             CALL INTERP3(HFUL,GRID1,IMOUT,JMOUT)
+    281 C
+    282 C           U-V FIELDS ORGINALLY AT H POINTS NEED TO BE ROTATED.
+    283             IF ( (ITAG1.EQ.056).OR.(ITAG1.EQ.057).OR.
+    284      X           (ITAG1.EQ.060).OR.(ITAG1.EQ.061).OR.
+    285      X           (ITAG1.EQ.064).OR.(ITAG1.EQ.065).OR.
+    286      X           (ITAG1.EQ.073).OR.(ITAG1.EQ.074).OR.
+    287      X           (ITAG1.EQ.095).OR.(ITAG1.EQ.096) ) THEN
+    288                CALL FILLV(EGRID2,VFUL,IFLAG,IMT,JMT)
+    289                IF(ITAG2.GT.0)THEN
+    290                  ISMTH = ISMFUL(IGET(ITAG2))
+    291                  IF(ISMTH.GT.0)CALL FILTER(IMT,JMT,VFUL,ISMTH)
+    292                ENDIF
+    293                CALL EUVGUV(HFUL,VFUL,FVTLON,IMT,JMT,EVLAT,
+    294      X              EVLON,ALATVT,ALONVT,NORTH,PROJ)
+    295 c               call ps3
+    296                CALL INTERP3(HFUL,GRID1,IMOUT,JMOUT)
+    297                CALL INTERP3(VFUL,GRID2,IMOUT,JMOUT)
+    298             ENDIF
+    299 C     
+    300 C           PRECIPITATION FIELDS USE AREA CONSERVING INTERPOLATION.
+    301 c            call ps4
+    302             IF ( (ITAG1.EQ.033).OR.(ITAG1.EQ.034).OR.
+    303      X           (ITAG1.EQ.087) )
+    304      X           CALL CETLIH4(EGRID1,GRID1,IMOUT,JMOUT,KSB,IOFFS)
+    305 C     
+    306 C        OUTPUT ON FILLED E-GRID REQUIRES NO INTERPOLATION.
+    307          ELSE
+    308             DO J=1,JMT
+    309             DO I=1,IMT
+    310               GRID1(I,J)=HFUL(I,J)
+    311               IBMAP(I,J)=1
+    312             ENDDO
+    313             ENDDO
+
+Page 5           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+    314 C
+    315             IF ( (ITAG1.EQ.056).OR.(ITAG1.EQ.057).OR.
+    316      X           (ITAG1.EQ.060).OR.(ITAG1.EQ.061).OR.
+    317      X           (ITAG1.EQ.064).OR.(ITAG1.EQ.065).OR.
+    318      X           (ITAG1.EQ.073).OR.(ITAG1.EQ.074).OR.
+    319      X           (ITAG1.EQ.095).OR.(ITAG1.EQ.096) ) THEN
+    320                CALL FILLV(EGRID2,VFUL,IFLAG,IMT,JMT)
+    321                IF(ITAG2.GT.0)THEN
+    322                  ISMTH = ISMFUL(IGET(ITAG2))
+    323                  IF(ISMTH.GT.0)CALL FILTER(IMT,JMT,VFUL,ISMTH)
+    324                ENDIF
+    325 C
+    326                DO J=1,JMT
+    327                DO I=1,IMT
+    328                  GRID2(I,J)=VFUL(I,J)
+    329                ENDDO
+    330                ENDDO
+    331 C
+    332             ENDIF
+    333          ENDIF
+    334 C     
+    335 C     NOW HANDLE FIELDS AT V-POINTS.
+    336 C
+    337       ELSE
+    338          IF (ITAG1.NE.053.AND.ITAG1.NE.162) THEN
+    339             CALL FILLH(EGRID1,UFUL,IMT,JMT)
+    340             CALL FILLH(EGRID2,VFUL,IMT,JMT)
+    341             ISMTH = ISMFUL(IGET(ITAG1))
+    342             IF (ISMTH.GT.0) CALL FILTER(IMT,JMT,UFUL,ISMTH)
+    343             IF(ITAG2.GT.0)THEN
+    344               ISMTH = ISMFUL(IGET(ITAG2))
+    345               IF(ISMTH.GT.0)
+    346      X           CALL FILTER(IMT,JMT,VFUL,ISMTH)
+    347             ENDIF
+    348 C
+    349             IF ((KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    350      1          .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    351      1          .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196))THEN
+    352                CALL EUVGUV(UFUL,VFUL,FVTLON,IMT,JMT,
+    353      X              EVLAT,EVLON,ALATVT,ALONVT,NORTH,PROJ)
+    354                CALL INTERP3(UFUL,GRID1,IMOUT,JMOUT)
+    355                CALL INTERP3(VFUL,GRID2,IMOUT,JMOUT)
+    356             ELSE
+    357 C
+    358                DO J=1,JMT
+    359                DO I=1,IMT
+    360                  GRID1(I,J)=UFUL(I,J)
+    361                  IBMAP(I,J)=1
+    362                ENDDO
+    363                ENDDO
+    364 C
+    365                DO J=1,JMT
+    366                DO I=1,IMT
+    367                  GRID2(I,J)=VFUL(I,J)
+    368                ENDDO
+    369                ENDDO
+    370 C
+
+Page 6           Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+    371             ENDIF
+    372          ELSE
+    373             CALL FILLH(EGRID1,HFUL,IMT,JMT)
+    374             ISMTH = ISMFUL(ITAG1)
+    375             IF (ISMTH.GT.0) CALL FILTER(IMT,JMT,HFUL,ISMTH)
+    376             IF ((KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    377      1          .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    378      1          .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196))THEN
+    379 c        call ps6
+    380                CALL INTERP3(HFUL,GRID1,IMOUT,JMOUT)
+    381             ELSE
+    382                DO J=1,JMT
+    383                DO I=1,IMT
+    384                  GRID1(I,J)=HFUL(I,J)
+    385                  IBMAP(I,J)=1
+    386                ENDDO
+    387                ENDDO
+    388             ENDIF
+    389          ENDIF
+    390       ENDIF
+    391 C     
+    392 C     ZERO FILLED EGRID ARRAYS.
+    393 C
+    394 !$omp  parallel do
+    395       DO 300 J = 1,JMT
+    396       DO 300 I = 1,IMT
+    397          HFUL(I,J) = 0.0
+    398          UFUL(I,J) = 0.0
+    399          VFUL(I,J) = 0.0
+    400  300  CONTINUE
+    401 C     
+    402 C     IF SELECTED, APPLY SMOOTHER TO OUTPUT GRID(S).
+    403 C     
+    404  400  CONTINUE
+    405 C
+    406       IF(ITAG1.GT.0)THEN
+    407         IF(IGET(ITAG1).GT.0)THEN
+    408           ISMTH=ISMOUT(IGET(ITAG1))
+    409           IF(ISMTH.GT.0)CALL FILTER(IMOUT,JMOUT,GRID1,ISMTH)
+    410         ENDIF
+    411       ENDIF
+    412 C
+    413       IF(ITAG2.GT.0)THEN
+    414         IF(IGET(ITAG2).GT.0)THEN
+    415           ISMTH=ISMOUT(IGET(ITAG2))
+    416           IF(ISMTH.GT.0)CALL FILTER(IMOUT,JMOUT,GRID2,ISMTH)
+    417         ENDIF
+    418       ENDIF
+    419 C     
+    420       time_e2out = time_e2out + rtc() - ist
+    421 C     END OF ROUTINE.
+    422 C     
+    423       RETURN
+    424       END
+
+Page 7           Source Listing                  E2OUT
+2022-02-15 16:38 Entry Points                    E2OUT.f
+
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ e2out_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 300                        Label  400                                                            395,396                           
+ 400                        Label  404                                                            229                               
+ BITMAP                     Common 150                                  366876   SAVE                                               
+ CETLIH4                    Subr   304                                                            304                               
+ CTLBLK                     Common 170                                  96       SAVE                                               
+ D00                        Param  99       R(4)            4           scalar                    195,196                           
+ E2OUT                      Subr   1                                                                                                
+ EFILL                      Subr   209                                                            209,220                           
+ EFILT                      Subr   240                                                            240                               
+ EGRID1                     Dummy  1        R(4)            4     2     91719    ARG,INOUT        209,213,237,240,250,266,304,339,37
+                                                                                                  3                                 
+ EGRID2                     Dummy  1        R(4)            4     2     91719    ARG,INOUT        220,224,245,255,288,320,340       
+ EUVGUV                     Subr   293                                                            293,352                           
+ FILLH                      Subr   339                                                            339,340,373                       
+ FILLV                      Subr   266                                                            266,288,320                       
+ FILTER                     Subr   271                                                            271,291,323,342,346,375,409,416   
+ GRID1                      Dummy  2        R(4)            4     2     0        ARG,INOUT        195,213,280,296,304,310,354,360,38
+                                                                                                  0,384,409                         
+ GRID2                      Dummy  2        R(4)            4     2     0        ARG,INOUT        196,224,297,328,355,367,416       
+ HFUL                       Local  106      R(4)            4     2     183051                    266,271,280,293,296,310,373,375,38
+                                                                                                  0,384,397                         
+ I                          Local  194      I(4)            4           scalar                    194,195,196,212,213,214,223,224,30
+                                                                                                  9,310,311,327,328,359,360,361,366,
+                                                                                                  367,383,384,385,396,397,398,399   
+ IDIM1                      Param  90       I(4)            4           scalar                                                      
+ IDIM2                      Param  90       I(4)            4           scalar                                                      
+ IGSTL                      Param  85       I(4)            4           scalar                    90                                
+ IGSTR                      Param  85       I(4)            4           scalar                    90                                
+ IM                         Param  79       I(4)            4           scalar                    87,90,97,98,104,118,119,120,143,14
+                                                                                                  5,209,212,220,223                 
+ IMJM                       Param  98       I(4)            4           scalar                                                      
+ IMOUT                      Dummy  2        I(4)            4           scalar   ARG,INOUT        105,194,280,296,297,304,354,355,38
+                                                                                                  0,409,416                         
+ IMT                        Param  98       I(4)            4           scalar                    106,120,121,266,271,288,291,293,30
+                                                                                                  9,320,323,327,339,340,342,346,352,
+                                                                                                  359,366,373,375,383,396           
+ IMX                        Param  97       I(4)            4           scalar                    116,117,122,123,124,125,151       
+ INPES                      Param  82       I(4)            4           scalar                    87,90                             
+ INTERP3                    Subr   280                                                            280,296,297,354,355,380           
+ IOUNIT                     Common 158                                  20       SAVE                                               
+ ISMTH                      Local  234      I(4)            4           scalar                    234,236,237,239,243,244,245,249,25
+                                                                                                  0,253,254,255,270,271,290,291,322,
+                                                                                                  323,341,342,344,345,346,374,375,40
+                                                                                                  8,409,415,416                     
+
+Page 8           Source Listing                  E2OUT
+2022-02-15 16:38 Symbol Table                    E2OUT.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ IST                        Local  184      R(8)            8           scalar                    189,420                           
+ ITAG1                      Dummy  1        I(4)            4           scalar   ARG,INOUT        234,235,239,262,270,283,284,285,28
+                                                                                                  6,287,302,303,315,316,317,318,319,
+                                                                                                  338,341,374,406,407,408           
+ ITAG2                      Dummy  1        I(4)            4           scalar   ARG,INOUT        218,242,243,252,253,289,290,321,32
+                                                                                                  2,343,344,413,414,415             
+ ITAIL                      Param  87       I(4)            4           scalar                                                      
+ J                          Local  193      I(4)            4           scalar                    193,195,196,211,213,214,222,224,30
+                                                                                                  8,310,311,326,328,358,360,361,365,
+                                                                                                  367,382,384,385,395,397,398,399   
+ JDIM1                      Param  91       I(4)            4           scalar                                                      
+ JDIM2                      Param  91       I(4)            4           scalar                                                      
+ JGSTL                      Param  86       I(4)            4           scalar                    91                                
+ JGSTR                      Param  86       I(4)            4           scalar                    91                                
+ JJT                        Common 183                                  16                                                          
+ JM                         Param  79       I(4)            4           scalar                    88,91,97,98,104,118,119,120,143,14
+                                                                                                  5,209,220                         
+ JMOUT                      Dummy  2        I(4)            4           scalar   ARG,INOUT        105,280,296,297,304,354,355,380,40
+                                                                                                  9,416                             
+ JMT                        Param  98       I(4)            4           scalar                    106,120,121,266,271,288,291,293,30
+                                                                                                  8,320,323,326,339,340,342,346,352,
+                                                                                                  358,365,373,375,382,395           
+ JMX                        Param  97       I(4)            4           scalar                    116,117,122,123,124,125,151       
+ JNPES                      Param  82       I(4)            4           scalar                    88,91                             
+ JTAIL                      Param  88       I(4)            4           scalar                                                      
+ LLGRDS                     Common 115                                  9167256  SAVE                                               
+ LM                         Param  79       I(4)            4           scalar                    97,98,145                         
+ LP1                        Param  98       I(4)            4           scalar                                                      
+ LSM                        Param  79       I(4)            4           scalar                                                      
+ MASKS                      Common 142                                  34853220 SAVE                                               
+ MXFLD                      Param  97       I(4)            4           scalar                    129,135,136,137,138               
+ MXLVL                      Param  97       I(4)            4           scalar                    137                               
+ OPTIONS                    Common 111                                  24       SAVE                                               
+ OUTGRD                     Common 164                                  50       SAVE                                               
+ P2FILTF                    Subr   237                                                            237,245                           
+ P2FLTVF                    Subr   250                                                            250,255                           
+ PARALLEL                   Common 177                                  8240                                                        
+ RQSTFLD                    Common 134                                  64130                                                       
+ RTC                        Func   184      R(8)            8           scalar                    189,420                           
+ UFUL                       Local  106      R(4)            4     2     183051                    339,342,352,354,360,398           
+ VFUL                       Local  106      R(4)            4     2     183051                    288,291,293,297,320,323,328,340,34
+                                                                                                  6,352,355,367,399                 
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ALATVT                     R(4)            4     0              scalar   COM              294,353                            
+ ALONVT                     R(4)            4     4              scalar   COM              294,353                            
+ AVBL                       CHAR            20    59130    1     250      COM                                                 
+ DATSET                     CHAR            6     54124          scalar   COM                                                 
+ DEC                        R(4)            4     1016     1     250      COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ EGRDI                      R(4)            4     5865372  2     91719    COM                                                 
+
+Page 9           Source Listing                  E2OUT
+2022-02-15 16:38 Symbol Table                    E2OUT.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ EGRDJ                      R(4)            4     6232248  2     91719    COM                                                 
+ EVLAT                      R(4)            4     4400964  2     183051   COM              293,353                            
+ EVLON                      R(4)            4     5133168  2     183051   COM              294,353                            
+ FIELD                      CHAR            20    54130    1     250      COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FVTLON                     R(4)            4     3668760  2     183051   COM              293,352                            
+ GDLAT                      R(4)            4     0        2     91719    COM                                                 
+ GDLON                      R(4)            4     366876   2     91719    COM                                                 
+ GDTLAT                     R(4)            4     733752   2     91719    COM                                                 
+ GDTLON                     R(4)            4     1100628  2     91719    COM                                                 
+ GI2                        R(4)            4     36             scalar   COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM              237,245                            
+ HTLAT                      R(4)            4     1467504  2     91719    COM                                                 
+ HTLON                      R(4)            4     1834380  2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ IBMAP                      I(4)            4     0        2     91719    COM              214,311,361,385                    
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ ID                         I(4)            4     54016    1     25       COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDENT                      I(4)            4     52016    1     250      COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IEGRD                      I(4)            4     6599124  2     91719    COM                                                 
+ IEGRDK                     I(4)            4     2201256  2     91719    COM                                                 
+ IFILV                      I(4)            4     53016    1     250      COM              235,262                            
+ IFLAG                      I(4)            4     16             scalar   COM              266,288,320                        
+ IGET                       I(4)            4     16       1     250      COM              234,243,253,270,290,322,341,344,40 
+                                                                                           7,408,414,415                      
+ IGOUT                      I(4)            4     20             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IMDLTY                     I(4)            4     28             scalar   COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM              304                                
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IOUTYP                     I(4)            4     4              scalar   COM                                                 
+ IQ                         I(4)            4     2016     1     250      COM                                                 
+ IS                         I(4)            4     3016     1     250      COM                                                 
+ ISMFUL                     I(4)            4     5016     1     250      COM              270,290,322,341,344,374            
+ ISMOUT                     I(4)            4     6016     1     250      COM              408,415                            
+ ISMSTG                     I(4)            4     4016     1     250      COM              234,243,253                        
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IWGT                       I(4)            4     7332876  2     91719    COM                                                 
+ JEGRD                      I(4)            4     6966000  2     91719    COM                                                 
+ JEGRDK                     I(4)            4     2568132  2     91719    COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              193,211,222                        
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JGOUT                      I(4)            4     24             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              193,211,222                        
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KGTYPE                     I(4)            4     0              scalar   COM              204,205,206,207,274,275,276,349,35 
+
+Page 10          Source Listing                  E2OUT
+2022-02-15 16:38 Symbol Table                    E2OUT.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+                                                                                           0,351,376,377,378                  
+ KSB                        I(4)            4     8              scalar   COM              304                                
+ LCNTRL                     I(4)            4     4              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM                                                 
+ LUNOUT                     I(4)            4     16             scalar   COM                                                 
+ LVLS                       I(4)            4     7016     2     11250    COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NFLD                       I(4)            4     12             scalar   COM                                                 
+ NORTH                      L(4)            4     40             scalar   COM              294,353                            
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ POLEI                      R(4)            4     8              scalar   COM                                                 
+ POLEJ                      R(4)            4     12             scalar   COM                                                 
+ PROJ                       CHAR            6     44             scalar   COM              294,353                            
+ RE                         R(4)            4     32             scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RITE2                      L(4)            4     54120          scalar   COM                                                 
+ RITEHD                     L(4)            4     54116          scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ STDOUT                     I(4)            4     0              scalar   COM                                                 
+ SVALUE                     R(4)            4     8              scalar   COM                                                 
+ TIME_E2OUT                 R(8)            8     8              scalar   COM              420                                
+ TIME_OUTPUT                R(8)            8     0              scalar   COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM              250,255                            
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTLAT                      R(4)            4     2935008  2     91719    COM                                                 
+ VTLON                      R(4)            4     3301884  2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ WIJ                        R(4)            4     7699752  2     91719    COM                                                 
+ WIJP                       R(4)            4     8433504  2     91719    COM                                                 
+ WIPJ                       R(4)            4     8066628  2     91719    COM                                                 
+ WIPJP                      R(4)            4     8800380  2     91719    COM                                                 
+ XMESHL                     R(4)            4     16             scalar   COM                                                 
+
+Page 11          Source Listing                  E2OUT
+2022-02-15 16:38 Subprograms/Common Blocks       E2OUT.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ BITMAP                     Common 150                                  366876   SAVE                                               
+ CTLBLK                     Common 170                                  96       SAVE                                               
+ E2OUT                      Subr   1                                                                                                
+ IOUNIT                     Common 158                                  20       SAVE                                               
+ JJT                        Common 183                                  16                                                          
+ LLGRDS                     Common 115                                  9167256  SAVE                                               
+ MASKS                      Common 142                                  34853220 SAVE                                               
+ OPTIONS                    Common 111                                  24       SAVE                                               
+ OUTGRD                     Common 164                                  50       SAVE                                               
+ PARALLEL                   Common 177                                  8240                                                        
+ RQSTFLD                    Common 134                                  64130                                                       
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+
+Page 12          Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+
+Page 13          Source Listing                  E2OUT
+2022-02-15 16:38                                 E2OUT.f
+
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : E2OUT.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

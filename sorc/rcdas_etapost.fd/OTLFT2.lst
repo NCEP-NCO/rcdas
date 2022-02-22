@@ -1,0 +1,813 @@
+Page 1           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+      1       SUBROUTINE OTLFT2(PBND,TBND,QBND,SLINDX)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    OTLFT2      COMPUTES LIFTED INDEX
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-03-10       
+      6 C     
+      7 C ABSTRACT:
+      8 C     THIS ROUTINE COMPUTES LIFTS A PARCEL SPECIFIED BY THE
+      9 C     PASSED PRESSURE, TEMPERATURE, AND SPECIFIC HUMIDITY TO
+     10 C     500MB AND THEN COMPUTES A LIFTED INDEX.  THIS LIFTED 
+     11 C     LIFTED INDEX IS THE DIFFERENCE BETWEEN THE LIFTED 
+     12 C     PARCEL'S TEMPERATURE AT 500MB AND THE AMBIENT 500MB
+     13 C     TEMPERATURE.
+     14 C   .     
+     15 C     
+     16 C PROGRAM HISTORY LOG:
+     17 C   93-03-10  RUSS TREADON - MODIFIED OTLIFT2 TO LIFT PARCELS
+     18 C                            SPECIFIED BY PASSED P, T, AND Q.
+     19 C   98-06-15  T BLACK      - CONVERSION FROM 1-D TO 2-D
+     20 C   00-01-04  JIM TUCCILLO - MPI VERSION
+     21 C     
+     22 C USAGE:    CALL OTLFT2(PBND,TBND,QBND,SLINDX)
+     23 C   INPUT ARGUMENT LIST:
+     24 C     PBND     - PARCEL PRESSURE.
+     25 C     TBND     - PARCEL TEMPERATURE.
+     26 C     QBND     - PARCEL SPECIFIC HUMIDITY.
+     27 C
+     28 C   OUTPUT ARGUMENT LIST: 
+     29 C     SLINDX   - LIFTED INDEX.
+     30 C     
+     31 C   OUTPUT FILES:
+     32 C     NONE
+     33 C     
+     34 C   SUBPROGRAMS CALLED:
+     35 C     UTILITIES:
+     36 C       NONE
+     37 C     LIBRARY:
+     38 C       COMMON   - CTLBLK
+     39 C                  LOOPS
+     40 C                  MASKS
+     41 C                  PHYS
+     42 C                  VRBLS
+     43 C                  EXTRA
+     44 C     
+     45 C   ATTRIBUTES:
+     46 C     LANGUAGE: FORTRAN
+     47 C     MACHINE : CRAY C-90
+     48 C$$$  
+     49 C     
+     50 C     
+     51 C     SET LOCAL PARAMETERS.
+     52       PARAMETER
+     53      & (D00=0.E0,H10E5=100000.E0,H5E4=5.E4,CAPA=0.28589641
+     54      &, D8202=.820231E0)
+     55       PARAMETER
+     56      & (ELIVW=2.72E6,CP=1004.6E0,ELOCP=ELIVW/CP)
+     57 C     
+
+Page 2           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+     58 C     INCLUDE GLOBAL PARAMETERS.
+     59       INCLUDE "parmeta"
+     77       INCLUDE "parm.tbl"
+     78 C     
+     79 C     SET DEPENDENT PARAMETERS.
+     81       PARAMETER
+     82      & (JAM=6+2*(JM-10),LP1=LM+1)
+     83 C     
+     84 C     DECLARE VARIABLES.
+     85 C
+     86                             L O G I C A L
+     87      & RUN,FIRST,RESTRT,SIGMA
+     88 C
+     89                             D I M E N S I O N
+     90      & ITTB  (IM,JM),IQTB  (IM,JM),IPTB  (IM,JM),ITHTB (IM,JM)
+     91      &,TBT   (IM,JM),QBT   (IM,JM)
+     92      &,APEBT (IM,JM),TTHBT (IM,JM),TTH   (IM,JM),PP    (IM,JM)
+     93      &,BQS00 (IM,JM),SQS00 (IM,JM),BQS10 (IM,JM),SQS10 (IM,JM)
+     94      &,BQ    (IM,JM),SQ    (IM,JM),TQ    (IM,JM),QQ    (IM,JM)
+     95      &,P00   (IM,JM),P10   (IM,JM),P01   (IM,JM),P11   (IM,JM)
+     96      &,TPSP  (IM,JM),APESP (IM,JM),TTHES (IM,JM)
+     97      &,PSP   (IM,JM),THBT  (IM,JM),THESP (IM,JM)
+     98      &,P     (IM,JM),TP    (IM,JM),BTH   (IM,JM),STH   (IM,JM)
+     99      &,BTHE00(IM,JM),STHE00(IM,JM),BTHE10(IM,JM),STHE10(IM,JM)
+    100      &,T00   (IM,JM),T10   (IM,JM),T01   (IM,JM),T11   (IM,JM)
+    101      &,PARTMP(IM,JM)
+    102      &,SLINDX(IM,JM)
+    103      &,PBND  (IM,JM),TBND  (IM,JM),QBND  (IM,JM)
+    104 C     
+    105 C     INCLUDE COMMON BLOCKS.
+    106       INCLUDE "CTLBLK.comm"
+    121       INCLUDE "LOOPS.comm"
+    129       INCLUDE "MASKS.comm"
+    137       INCLUDE "PHYS.comm"
+    158       INCLUDE "VRBLS.comm"
+    165       INCLUDE "EXTRA.comm"
+    166 C     
+    167 C     DECLARE EQUIVALENCES.
+    179        EQUIVALENCE
+    180      & (ITTB  (1,1),IPTB  (1,1)                           )
+    181      &,(IQTB  (1,1),ITHTB (1,1)                           )
+    182      &,(QQ    (1,1),APESP (1,1),TTHES (1,1)               )
+    183      &,(TTH   (1,1),TQ    (1,1),TP    (1,1)               )
+    184        EQUIVALENCE
+    185      & (BQS00 (1,1),P00   (1,1),BTHE00(1,1),T00   (1,1)   )
+    186      &,(SQS00 (1,1),P10   (1,1),STHE00(1,1),T10   (1,1)   )
+    187      &,(BQS10 (1,1),P01   (1,1),BTHE10(1,1),T01   (1,1)   )
+    188      &,(SQS10 (1,1),P11   (1,1),STHE10(1,1),T11   (1,1)   )
+    189      &,(BQ    (1,1)          ,BTH   (1,1)                 )
+    190      &,(SQ    (1,1)          ,STH   (1,1)                 )
+    191 
+    192 C
+    193 C     
+    194 C********************************************************************
+    195 C     START OTLFT2 HERE.
+    196 C     
+    197 C     ZERO LIFTED INDEX ARRAY.
+
+Page 3           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+    198 C
+    199       DO J=JSTA,JEND
+    200       DO I=1,IM
+    201         SLINDX(I,J)=D00
+    202       ENDDO
+    203       ENDDO
+    204 C
+    205 C--------------FIND EXNER IN BOUNDARY LAYER-----------------------------
+    206 C
+    207       DO 130 J=JSTA_M2,JEND_M2
+    208       DO 130 I=2,IM-1
+    209       TBT(I,J)   = TBND(I,J)
+    210       QBT(I,J)   = QBND(I,J)
+    211       APEBT(I,J) = PBND(I,J)
+    212       APEBT(I,J) = (H10E5/APEBT(I,J))**CAPA
+    213   130 CONTINUE
+    214 C
+    215 C--------------SCALING POTENTIAL TEMPERATURE & TABLE INDEX--------------
+    216 C
+    217       DO 140 J=JSTA_M2,JEND_M2
+    218       DO 140 I=2,IM-1
+    219       TTHBT(I,J)=TBT(I,J)*APEBT(I,J)
+    220       TTH(I,J)=(TTHBT(I,J)-THL)*RDTH
+    221       QQ(I,J)=TTH(I,J)-AINT(TTH(I,J))
+    222       ITTB(I,J)=INT(TTH(I,J))+1
+    223   140 CONTINUE
+    224 C
+    225 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    226 C
+    227       DO 145 J=JSTA_M2,JEND_M2
+    228       DO 145 I=2,IM-1
+    229       IF(ITTB(I,J).LT.1)THEN
+    230         ITTB(I,J)=1
+    231         QQ(I,J)=D00
+    232       ENDIF
+    233       IF(ITTB(I,J).GE.JTB)THEN
+    234         ITTB(I,J)=JTB-1
+    235         QQ(I,J)=D00
+    236       ENDIF
+    237   145 CONTINUE
+    238 C
+    239 C--------------BASE AND SCALING FACTOR FOR SPEC. HUMIDITY---------------
+    240 C
+    241       DO 150 J=JSTA_M2,JEND_M2
+    242       DO 150 I=2,IM-1
+    243       ITTBK=ITTB(I,J)
+    244       BQS00(I,J)=QS0(ITTBK)
+    245       SQS00(I,J)=SQS(ITTBK)
+    246       BQS10(I,J)=QS0(ITTBK+1)
+    247       SQS10(I,J)=SQS(ITTBK+1)
+    248   150 CONTINUE
+    249 C
+    250 C--------------SCALING SPEC. HUMIDITY & TABLE INDEX---------------------
+    251 C
+    252       DO 160 J=JSTA_M2,JEND_M2
+    253       DO 160 I=2,IM-1
+    254       BQ(I,J)=(BQS10(I,J)-BQS00(I,J))*QQ(I,J)+BQS00(I,J)
+
+Page 4           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+    255       SQ(I,J)=(SQS10(I,J)-SQS00(I,J))*QQ(I,J)+SQS00(I,J)
+    256       TQ(I,J)=(QBT(I,J)-BQ(I,J))/SQ(I,J)*RDQ
+    257       PP(I,J)=TQ(I,J)-AINT(TQ(I,J))
+    258       IQTB(I,J)=INT(TQ(I,J))+1
+    259   160 CONTINUE
+    260 C
+    261 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    262 C
+    263       DO 165 J=JSTA_M2,JEND_M2
+    264       DO 165 I=2,IM-1
+    265         IF(IQTB(I,J).LT.1)THEN
+    266         IQTB(I,J)=1
+    267         PP(I,J)=D00
+    268       ENDIF
+    269       IF(IQTB(I,J).GE.ITB)THEN
+    270         IQTB(I,J)=ITB-1
+    271         PP(I,J)=D00
+    272       ENDIF
+    273  165  CONTINUE
+    274 C
+    275 C--------------SATURATION PRESSURE AT FOUR SURROUNDING TABLE PTS.-------
+    276 C
+    277       DO 170 J=JSTA_M2,JEND_M2
+    278       DO 170 I=2,IM-1
+    279       IQ=IQTB(I,J)
+    280       IT=ITTB(I,J)
+    281       P00(I,J)=PTBL(IQ,IT)
+    282       P10(I,J)=PTBL(IQ+1,IT)
+    283       P01(I,J)=PTBL(IQ,IT+1)
+    284       P11(I,J)=PTBL(IQ+1,IT+1)
+    285   170 CONTINUE
+    286 C
+    287 C--------------SATURATION POINT VARIABLES AT THE BOTTOM-----------------
+    288 C
+    289       DO 180 J=JSTA_M2,JEND_M2
+    290       DO 180 I=2,IM-1
+    291       TPSP(I,J)=P00(I,J)+(P10(I,J)-P00(I,J))*PP(I,J)
+    292      1                  +(P01(I,J)-P00(I,J))*QQ(I,J)
+    293      2      +(P00(I,J)-P10(I,J)-P01(I,J)+P11(I,J))*PP(I,J)*QQ(I,J)
+    294       IF(TPSP(I,J).LE.D00)TPSP(I,J)=H10E5
+    295       APESP(I,J)=(H10E5/TPSP(I,J))**CAPA
+    296       TTHES(I,J)=TTHBT(I,J)*EXP(ELOCP*QBT(I,J)*APESP(I,J)/TTHBT(I,J))
+    297   180 CONTINUE
+    298 C
+    299 C-----------------------------------------------------------------------
+    300 C
+    301       DO J=JSTA_M2,JEND_M2
+    302       DO I=2,IM-1
+    303         PSP(I,J)=TPSP(I,J)
+    304         THBT(I,J)=TTHBT(I,J)
+    305         THESP(I,J)=TTHES(I,J)
+    306       ENDDO
+    307       ENDDO
+    308 C
+    309 C-----------------------------------------------------------------------
+    310 C
+    311  190  CONTINUE
+
+Page 5           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+    312 C
+    313 C--------------SCALING PRESSURE & TT TABLE INDEX------------------------
+    314 C
+    315       DO 210 J=JSTA_M2,JEND_M2
+    316       DO 210 I=2,IM-1
+    317       P (I,J)=H5E4
+    318       TP(I,J)=(P(I,J)-PL)*RDP
+    319       QQ(I,J)=TP(I,J)-AINT(TP(I,J))
+    320       IPTB(I,J)=INT(TP(I,J))+1
+    321   210 CONTINUE
+    322 C
+    323 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    324 C
+    325       DO 215 J=JSTA_M2,JEND_M2
+    326       DO 215 I=2,IM-1
+    327       IF(IPTB(I,J).LT.1)THEN
+    328         IPTB(I,J)=1
+    329         QQ(I,J)=D00
+    330       ENDIF
+    331       IF(IPTB(I,J).GE.ITB)THEN
+    332         IPTB(I,J)=ITB-1
+    333         QQ(I,J)=D00
+    334       ENDIF
+    335  215  CONTINUE
+    336 C
+    337 C--------------BASE AND SCALING FACTOR FOR THE--------------------------
+    338 C
+    339       DO 220 J=JSTA_M2,JEND_M2
+    340       DO 220 I=2,IM-1
+    341       IPTBK=IPTB(I,J)
+    342       BTHE00(I,J)=THE0(IPTBK)
+    343       STHE00(I,J)=STHE(IPTBK)
+    344       BTHE10(I,J)=THE0(IPTBK+1)
+    345       STHE10(I,J)=STHE(IPTBK+1)
+    346   220 CONTINUE
+    347 C
+    348 C--------------SCALING THE & TT TABLE INDEX-----------------------------
+    349 C
+    350       DO 230 J=JSTA_M2,JEND_M2
+    351       DO 230 I=2,IM-1
+    352       BTH(I,J)=(BTHE10(I,J)-BTHE00(I,J))*QQ(I,J)+BTHE00(I,J)
+    353       STH(I,J)=(STHE10(I,J)-STHE00(I,J))*QQ(I,J)+STHE00(I,J)
+    354       TTH(I,J)=(THESP(I,J)-BTH(I,J))/STH(I,J)*RDTHE
+    355       PP(I,J)=TTH(I,J)-AINT(TTH(I,J))
+    356       ITHTB(I,J)=INT(TTH(I,J))+1
+    357   230 CONTINUE
+    358 C
+    359 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    360 C
+    361       DO 235 J=JSTA_M2,JEND_M2
+    362       DO 235 I=2,IM-1
+    363       IF(ITHTB(I,J).LT.1)THEN
+    364         ITHTB(I,J)=1
+    365         PP(I,J)=D00
+    366       ENDIF
+    367       IF(ITHTB(I,J).GE.JTB)THEN
+    368         ITHTB(I,J)=JTB-1
+
+Page 6           Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+    369         PP(I,J)=D00
+    370       ENDIF
+    371  235  CONTINUE
+    372 C
+    373 C--------------TEMPERATURE AT FOUR SURROUNDING TT TABLE PTS.------------
+    374 C
+    375       DO 240 J=JSTA_M2,JEND_M2
+    376       DO 240 I=2,IM-1
+    377       ITH=ITHTB(I,J)
+    378       IP=IPTB(I,J)
+    379       T00(I,J)=TTBL(ITH,IP)
+    380       T10(I,J)=TTBL(ITH+1,IP)
+    381       T01(I,J)=TTBL(ITH,IP+1)
+    382       T11(I,J)=TTBL(ITH+1,IP+1)
+    383   240 CONTINUE
+    384 C
+    385 C--------------PARCEL TEMPERATURE AT 500MB----------------------------
+    386 C
+    387       DO 300 J=JSTA_M2,JEND_M2
+    388       DO 300 I=2,IM-1
+    389       IF(TPSP(I,J).GE.H5E4)THEN
+    390         PARTMP(I,J)=(T00(I,J)+(T10(I,J)-T00(I,J))*PP(I,J)
+    391      1                       +(T01(I,J)-T00(I,J))*QQ(I,J)
+    392      2         +(T00(I,J)-T10(I,J)-T01(I,J)+T11(I,J))*PP(I,J)*QQ(I,J))
+    393       ELSE
+    394         PARTMP(I,J)=TBT(I,J)*APEBT(I,J)*D8202
+    395       ENDIF
+    396 C
+    397 C--------------LIFTED INDEX---------------------------------------------
+    398 C
+    399       SLINDX(I,J)=T500(I,J)-PARTMP(I,J)
+    400   300 CONTINUE
+    401 C     
+    402 C     END OF ROUTINE.
+    403       RETURN
+    404       END
+
+Page 7           Source Listing                  OTLFT2
+2022-02-15 16:39 Entry Points                    OTLFT2.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ otlft2_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 130                        Label  213                                                            207,208                           
+ 140                        Label  223                                                            217,218                           
+ 145                        Label  237                                                            227,228                           
+ 150                        Label  248                                                            241,242                           
+ 160                        Label  259                                                            252,253                           
+ 165                        Label  273                                                            263,264                           
+ 170                        Label  285                                                            277,278                           
+ 180                        Label  297                                                            289,290                           
+ 190                        Label  311                                                                                              
+ 210                        Label  321                                                            315,316                           
+ 215                        Label  335                                                            325,326                           
+ 220                        Label  346                                                            339,340                           
+ 230                        Label  357                                                            350,351                           
+ 235                        Label  371                                                            361,362                           
+ 240                        Label  383                                                            375,376                           
+ 300                        Label  400                                                            387,388                           
+ AINT                       Func   221                                  scalar                    221,257,319,355                   
+ APEBT                      Local  92       R(4)            4     2     91719                     211,212,219,394                   
+ APESP                      Local  96       R(4)            4     2     91719                     295,296                           
+ BQ                         Local  94       R(4)            4     2     91719                     254,256                           
+ BQS00                      Local  93       R(4)            4     2     91719                     244,254                           
+ BQS10                      Local  93       R(4)            4     2     91719                     246,254                           
+ BTH                        Local  98       R(4)            4     2     91719                     352,354                           
+ BTHE00                     Local  99       R(4)            4     2     91719                     342,352                           
+ BTHE10                     Local  99       R(4)            4     2     91719                     344,352                           
+ CAPA                       Param  53       R(4)            4           scalar                    212,295                           
+ CP                         Param  56       R(4)            4           scalar                    56                                
+ CTLBLK                     Common 108                                  96       SAVE                                               
+ D00                        Param  53       R(4)            4           scalar                    201,231,235,267,271,294,329,333,36
+                                                                                                  5,369                             
+ D8202                      Param  54       R(4)            4           scalar                    394                               
+ ELIVW                      Param  56       R(4)            4           scalar                    56                                
+ ELOCP                      Param  56       R(4)            4           scalar                    296                               
+ EXP                        Func   296                                  scalar                    296                               
+ EXTRA                      Common 170                                  71506268 SAVE                                               
+ H10E5                      Param  53       R(4)            4           scalar                    212,294,295                       
+ H5E4                       Param  53       R(4)            4           scalar                    317,389                           
+ I                          Local  200      I(4)            4           scalar                    200,201,208,209,210,211,212,218,21
+                                                                                                  9,220,221,222,228,229,230,231,233,
+                                                                                                  234,235,242,243,244,245,246,247,25
+                                                                                                  3,254,255,256,257,258,264,265,266,
+                                                                                                  267,269,270,271,278,279,280,281,28
+                                                                                                  2,283,284,290,291,292,293,294,295,
+                                                                                                  296,302,303,304,305,316,317,318,31
+
+Page 8           Source Listing                  OTLFT2
+2022-02-15 16:39 Symbol Table                    OTLFT2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  9,320,326,327,328,329,331,332,333,
+                                                                                                  340,341,342,343,344,345,351,352,35
+                                                                                                  3,354,355,356,362,363,364,365,367,
+                                                                                                  368,369,376,377,378,379,380,381,38
+                                                                                                  2,388,389,390,391,392,394,399     
+ IDIM1                      Param  73       I(4)            4           scalar                                                      
+ IDIM2                      Param  73       I(4)            4           scalar                                                      
+ IGSTL                      Param  68       I(4)            4           scalar                    73                                
+ IGSTR                      Param  68       I(4)            4           scalar                    73                                
+ IM                         Param  62       I(4)            4           scalar                    70,73,90,91,92,93,94,95,96,97,98,9
+                                                                                                  9,100,101,102,103,126,132,134,148,
+                                                                                                  149,150,151,152,153,161,163,169,17
+                                                                                                  1,172,173,174,175,176,200,208,218,
+                                                                                                  228,242,253,264,278,290,302,316,32
+                                                                                                  6,340,351,362,376,388             
+ IMJM                       Param  169      I(4)            4           scalar                    172                               
+ INPES                      Param  65       I(4)            4           scalar                    70,73                             
+ INT                        Func   222                                  scalar                    222,258,320,356                   
+ IP                         Local  378      I(4)            4           scalar                    378,379,380,381,382               
+ IPTB                       Local  90       I(4)            4     2     91719                     320,327,328,331,332,341,378       
+ IPTBK                      Local  341      I(4)            4           scalar                    341,342,343,344,345               
+ IQ                         Local  279      I(4)            4           scalar                    279,281,282,283,284               
+ IQTB                       Local  90       I(4)            4     2     91719                     258,265,266,269,270,279           
+ IT                         Local  280      I(4)            4           scalar                    280,281,282,283,284               
+ ITAIL                      Param  70       I(4)            4           scalar                                                      
+ ITB                        Param  80       I(4)            4           scalar                    145,155,269,270,331,332           
+ ITBQ                       Param  80       I(4)            4           scalar                    146,155                           
+ ITH                        Local  377      I(4)            4           scalar                    377,379,380,381,382               
+ ITHTB                      Local  90       I(4)            4     2     91719                     356,363,364,367,368,377           
+ ITTB                       Local  90       I(4)            4     2     91719                     222,229,230,233,234,243,280       
+ ITTBK                      Local  243      I(4)            4           scalar                    243,244,245,246,247               
+ J                          Local  199      I(4)            4           scalar                    199,201,207,209,210,211,212,217,21
+                                                                                                  9,220,221,222,227,229,230,231,233,
+                                                                                                  234,235,241,243,244,245,246,247,25
+                                                                                                  2,254,255,256,257,258,263,265,266,
+                                                                                                  267,269,270,271,277,279,280,281,28
+                                                                                                  2,283,284,289,291,292,293,294,295,
+                                                                                                  296,301,303,304,305,315,317,318,31
+                                                                                                  9,320,325,327,328,329,331,332,333,
+                                                                                                  339,341,342,343,344,345,350,352,35
+                                                                                                  3,354,355,356,361,363,364,365,367,
+                                                                                                  368,369,375,377,378,379,380,381,38
+                                                                                                  2,387,389,390,391,392,394,399     
+ JAM                        Param  82       I(4)            4           scalar                    124                               
+ JDIM1                      Param  74       I(4)            4           scalar                                                      
+ JDIM2                      Param  74       I(4)            4           scalar                                                      
+ JGSTL                      Param  69       I(4)            4           scalar                    74                                
+ JGSTR                      Param  69       I(4)            4           scalar                    74                                
+ JM                         Param  62       I(4)            4           scalar                    71,74,82,90,91,92,93,94,95,96,97,9
+                                                                                                  8,99,100,101,102,103,126,132,134,1
+                                                                                                  48,149,150,151,152,153,161,163,169
+                                                                                                  ,171,172,173,174,175,176          
+ JNPES                      Param  65       I(4)            4           scalar                    71,74                             
+ JTAIL                      Param  71       I(4)            4           scalar                                                      
+ JTB                        Param  80       I(4)            4           scalar                    145,155,233,234,367,368           
+
+Page 9           Source Listing                  OTLFT2
+2022-02-15 16:39 Symbol Table                    OTLFT2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ JTBQ                       Param  80       I(4)            4           scalar                    155                               
+ LM                         Param  62       I(4)            4           scalar                    82,134,144,163,172                
+ LOOPS                      Common 123                                  748952   SAVE                                               
+ LP1                        Param  82       I(4)            4           scalar                    144,171                           
+ LSM                        Param  62       I(4)            4           scalar                                                      
+ MASKS                      Common 131                                  34853220 SAVE                                               
+ OTLFT2                     Subr   1                                                                                                
+ P                          Local  98       R(4)            4     2     91719                     317,318                           
+ P00                        Local  95       R(4)            4     2     91719                     281,291,292,293                   
+ P01                        Local  95       R(4)            4     2     91719                     283,292,293                       
+ P10                        Local  95       R(4)            4     2     91719                     282,291,293                       
+ P11                        Local  95       R(4)            4     2     91719                     284,293                           
+ PARALLEL                   Common 115                                  8240                                                        
+ PARTMP                     Local  101      R(4)            4     2     91719                     390,394,399                       
+ PBND                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        211                               
+ PHYS                       Common 139                                  7690036  SAVE                                               
+ PP                         Local  92       R(4)            4     2     91719                     257,267,271,291,293,355,365,369,39
+                                                                                                  0,392                             
+ PSP                        Local  97       R(4)            4     2     91719                     303                               
+ QBND                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        210                               
+ QBT                        Local  91       R(4)            4     2     91719                     210,256,296                       
+ QQ                         Local  94       R(4)            4     2     91719                     221,231,235,254,255,292,293,319,32
+                                                                                                  9,333,352,353,391,392             
+ SLINDX                     Dummy  1        R(4)            4     2     91719    ARG,INOUT        201,399                           
+ SQ                         Local  94       R(4)            4     2     91719                     255,256                           
+ SQS00                      Local  93       R(4)            4     2     91719                     245,255                           
+ SQS10                      Local  93       R(4)            4     2     91719                     247,255                           
+ STH                        Local  98       R(4)            4     2     91719                     353,354                           
+ STHE00                     Local  99       R(4)            4     2     91719                     343,353                           
+ STHE10                     Local  99       R(4)            4     2     91719                     345,353                           
+ T00                        Local  100      R(4)            4     2     91719                     379,390,391,392                   
+ T01                        Local  100      R(4)            4     2     91719                     381,391,392                       
+ T10                        Local  100      R(4)            4     2     91719                     380,390,392                       
+ T11                        Local  100      R(4)            4     2     91719                     382,392                           
+ TBND                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        209                               
+ TBT                        Local  91       R(4)            4     2     91719                     209,219,394                       
+ THBT                       Local  97       R(4)            4     2     91719                     304                               
+ THESP                      Local  97       R(4)            4     2     91719                     305,354                           
+ TP                         Local  98       R(4)            4     2     91719                     318,319,320                       
+ TPSP                       Local  96       R(4)            4     2     91719                     291,294,295,303,389               
+ TQ                         Local  94       R(4)            4     2     91719                     256,257,258                       
+ TTH                        Local  92       R(4)            4     2     91719                     220,221,222,354,355,356           
+ TTHBT                      Local  92       R(4)            4     2     91719                     219,220,296,304                   
+ TTHES                      Local  96       R(4)            4     2     91719                     296,305                           
+ VRBLS                      Common 160                                  67138308                                                    
+
+
+
+Page 10          Source Listing                  OTLFT2
+2022-02-15 16:39 Symbol Table                    OTLFT2.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     264      1     45       COM                                                 
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     2204780  2     91719    COM                                                 
+ CZMEAN                     R(4)            4     6607292  2     91719    COM                                                 
+ DETA                       R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM                                                 
+ GLON                       R(4)            4     1837904  2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM                                                 
+ HBOT                       R(4)            4     3672284  2     91719    COM                                                 
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ HTOP                       R(4)            4     3305408  2     91719    COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              199                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM              207,217,227,241,252,263,277,289,30 
+                                                                                           1,315,325,339,350,361,375,387      
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              199                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM              207,217,227,241,252,263,277,289,30 
+                                                                                           1,315,325,339,350,361,375,387      
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+
+Page 11          Source Listing                  OTLFT2
+2022-02-15 16:39 Symbol Table                    OTLFT2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM                                                 
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM                                                 
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM                                                 
+ PL                         R(4)            4     48             scalar   COM              318                                
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     4              scalar   COM                                                 
+ PTBL                       R(4)            4     7341044  2     10184    COM              281,282,283,284                    
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM                                                 
+ QS0                        R(4)            4     628      1     134      COM              244,246                            
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM              318                                
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM              256                                
+ RDTH                       R(4)            4     60             scalar   COM              220                                
+ RDTHE                      R(4)            4     68             scalar   COM              354                                
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM              245,247                            
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+
+Page 12          Source Listing                  OTLFT2
+2022-02-15 16:39 Symbol Table                    OTLFT2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM              343,345                            
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM                                                 
+ T500                       R(4)            4     67470624 2     91719    COM              399                                
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM              342,344                            
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM              220                                
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TTBL                       R(4)            4     7381780  2     10184    COM              379,380,381,382                    
+ TTBLQ                      R(4)            4     7422516  2     66880    COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM                                                 
+
+Page 13          Source Listing                  OTLFT2
+2022-02-15 16:39 Subprograms/Common Blocks       OTLFT2.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 108                                  96       SAVE                                               
+ EXTRA                      Common 170                                  71506268 SAVE                                               
+ LOOPS                      Common 123                                  748952   SAVE                                               
+ MASKS                      Common 131                                  34853220 SAVE                                               
+ OTLFT2                     Subr   1                                                                                                
+ PARALLEL                   Common 115                                  8240                                                        
+ PHYS                       Common 139                                  7690036  SAVE                                               
+ VRBLS                      Common 160                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+
+Page 14          Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+
+Page 15          Source Listing                  OTLFT2
+2022-02-15 16:39                                 OTLFT2.f
+
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : OTLFT2.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

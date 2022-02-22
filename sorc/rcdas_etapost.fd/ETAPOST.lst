@@ -1,0 +1,652 @@
+Page 1           Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+      1       PROGRAM ETAPOST
+      2 C$$$  MAIN PROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C MAIN PROGRAM: ETA_ETAPOST
+      5 C   PRGMMR: MANIKIN          ORG: NP22        DATE: 2000-02-01
+      6 C     
+      7 C ABSTRACT:  
+      8 C     THIS PROGRAM DRIVES THE EXTERNAL ETA MODEL POST PROCESSOR.
+      9 C     
+     10 C PROGRAM HISTORY LOG:
+     11 C   92-12-24  RUSS TREADON - CODED ETAPOST AS STAND ALONE CODE
+     12 C   98-03-06  BALDWIN/BLACK/ROGERS - MODIFIED TO POST MULTIPLE
+     13 C             FORECAST HOURS IN ONE EXECUTION; NUMBER AND 
+     14 C             FREQUENCY DETERMINED BY UNIT 5 INPUT CARD
+     15 C   98-05-29  BLACK - CONVERSION OF POST CODE FROM 1-D TO 2-D
+     16 C   00-02-04  JIM TUCCILLO - PARALLEL VERSION VIA MPI
+     17 C     
+     18 C USAGE:    ETAPOST
+     19 C   INPUT ARGUMENT LIST:
+     20 C     NONE     
+     21 C
+     22 C   OUTPUT ARGUMENT LIST: 
+     23 C     NONE
+     24 C     
+     25 C   OUTPUT FILES:
+     26 C     STDOUT  - RUN TIME STANDARD OUT.
+     27 C     
+     28 C   SUBPROGRAMS CALLED:
+     29 C     UTILITIES:
+     30 C       NONE
+     31 C     LIBRARY:
+     32 C       COMMON - IOUNIT
+     33 C                RQSTFLD
+     34 C     
+     35 C   ATTRIBUTES:
+     36 C     LANGUAGE: FORTRAN 90
+     37 C     MACHINE : IBM RS/6000 SP
+     38 C$$$  
+     39 C
+     40 C
+     41 C============================================================================================================
+     42 C
+     43 C     This is an MPI code. All array indexing is with respect to the global indices. Loop indices 
+     44 C     look as follows for N MPI tasks.
+     45 C
+     46 C
+     47 C
+     48 C  Original                                            New
+     49 C  Index                                               Index
+     50 C
+     51 C   JM ----------------------------------------------- JEND
+     52 C JM-1 -                                             - JEND_M
+     53 C JM-2 -               MPI TASK N-1                  - JEND_M2
+     54 C      -                                             -
+     55 C      -                                             -
+     56 C      ----------------------------------------------- JSTA, JSTA_M, JSTA_M2
+     57 C      ----------------------------------------------- JEND, JEND_M, JEND_M2
+
+Page 2           Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+     58 C      -                                             -
+     59 C      -               MPI TASK N-2                  -
+     60 C      -                                             -
+     61 C      -                                             -
+     62 C      ----------------------------------------------- JSTA, JSTA_M, JSTA_M2
+     63 C
+     64 C                           .
+     65 C                           .
+     66 C                           .
+     67 C
+     68 C      ----------------------------------------------- JEND, JEND_M, JEND_M2
+     69 C      -                                             -
+     70 C      -               MPI TASK 1                    -
+     71 C      -                                             -
+     72 C      -                                             -
+     73 C      ----------------------------------------------- JSTA, JSTA_M, JSTA_M2
+     74 C      ----------------------------------------------- JEND, JEND_M, JEND_M2
+     75 C      -                                             - 
+     76 C      -               MPI TASK 0                    - 
+     77 C    3 -                                             - JSTA_M2
+     78 C    2 -                                             - JSTA_M
+     79 C    1 ----------------------------------------------- JSTA
+     80 C
+     81 C     1                                              IM               
+     82 C
+     83 C
+     84 C     Jim Tuccillo
+     85 C     Jan 2000
+     86 C
+     87 C============================================================================================================
+     88 C     
+     89 C     INCLUDE ARRAY DIMENSIONS.
+     90       INCLUDE "parmeta"
+    108       INCLUDE "parmout"
+    112       INCLUDE "mpif.h"
+    113 C
+    114 C     DECLARE VARIABLES.
+    115 C     
+    116 C     
+    117 C     INCLUDE COMMON BLOCKS.
+    335       INCLUDE "OUTFIL.comm"
+    341       INCLUDE "IOUNIT.comm"
+    349       INCLUDE "CTLBLK.comm"
+    350 C     
+    351 C     SET HEADER WRITER FLAGS TO TRUE.
+    352 c
+    367       common/tim_info/ETAFLD2_tim,ETA2P_tim,SURFCE2_tim, CLDRAD_tim,
+    368      *                MISCLN_tim,FIXED_tim
+    369 C
+    370       common/jjt/time_output, time_e2out
+    371       real(8) time_output, time_e2out, time_initpost, rtc, ist
+    372       time_output = 0.
+    373       time_e2out = 0.
+    374       time_initpost = 0.
+    375 C     INITIALIZE MPI
+    376 C
+    377       CALL MPI_FIRST
+
+Page 3           Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+    378 C
+    379       ETAFLD2_tim = 0.0
+    380       ETA2P_tim = 0.0
+    381       SURFCE2_tim = 0.0
+    382       CLDRAD_tim = 0.0
+    383       MISCLN_tim =0.0
+    384       FIXED_tim =  0.0
+    385       bbtim = timef()
+    386 c
+    387 C     
+    388 C
+    389       IF(ME.EQ.0)THEN
+    390         CALL W3TAGB('ETA_ETAPOST',2000,0032,0094,'NP22')
+    391       ENDIF
+    392 C
+    393 C
+    394 C**************************************************************************
+    395 C
+    396 C     START PROGRAM ETAPOST.
+    397 C
+    398       IF(ME.EQ.0)THEN
+    399         READ(5,*)ITAG,NRSTRT,NPINCR
+    400       ENDIF
+    401 C
+    402       CALL MPI_BCAST(ITAG  ,1,MPI_INTEGER,0,MPI_COMM_WORLD,IRTN)
+    403       CALL MPI_BCAST(NRSTRT,1,MPI_INTEGER,0,MPI_COMM_WORLD,IRTN)
+    404       CALL MPI_BCAST(NPINCR,1,MPI_INTEGER,0,MPI_COMM_WORLD,IRTN)
+    405 C
+    406       CALL MPI_BARRIER(MPI_COMM_WORLD,IRTN)
+    407 C
+    408 C     LOOP OVER THE RESTRT FILES
+    409 C
+    410       DO 1000 NR=1,NRSTRT
+    411       LUNCO=19
+    412       LUNLL=29
+    413 C
+    414 C     REWIND ALL INPUT FILE UNIT NUMBERS (FOR CONTROL FILE 
+    415 C     AND INTERPOLATION WEIGHTS)
+    416 C
+    417       REWIND LCNTRL
+    418       DO KER=19,39
+    419         REWIND KER
+    420       ENDDO
+    421 C
+    422 C     INITIALIZE POST COMMON BLOCKS 
+    423 C
+    424       ist = rtc()
+    425       CALL INITPOST
+    426       time_initpost = time_initpost + rtc() - ist
+    427       WRITE(STDOUT,*)'ETAPOST:  INITIALIZED POST COMMON BLOCKS'
+    428 C
+    429 C     LOOP OVER THE OUTPUT GRID(S).  FIELD(S) AND 
+    430 C     OUTPUT GRID(S) ARE SPECIFIED IN THE CONTROL 
+    431 C     FILE.  WE PROCESS ONE GRID AND ITS FIELDS 
+    432 C     AT A TIME.  THAT'S WHAT THIS LOOP DOES.
+    433 C     
+    434  10   CONTINUE
+
+Page 4           Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+    435 C     
+    436 C        READ CONTROL FILE DIRECTING WHICH FIELDS ON WHICH
+    437 C        LEVELS AND TO WHICH GRID TO INTERPOLATE DATA TO.
+    438 C        VARIABLE IEOF.NE.0 WHEN THERE ARE NO MORE GRIDS
+    439 C        TO PROCESS.
+    440 C     
+    441          CALL READCNTRL2(IEOF)
+    442          WRITE(STDOUT,*)'ETAPOST:  RETURN FROM READCNTRL.  ',
+    443      1        'IEOF=',IEOF
+    444          IF (IEOF.NE.0) GOTO 20
+    445 C     
+    446 C        PROCESS SELECTED FIELDS.  FOR EACH SELECTED FIELD/LEVEL
+    447 C        WE GO THROUGH THE FOLLOWING STEPS:
+    448 C           (1) COMPUTE FIELD IF NEED BE
+    449 C           (2) INTERPOLATE FROM E-GRID TO OUTPUT GRID.
+    450 C           (3) WRITE FIELD TO OUTPUT FILE IN REQUESTED FORMAT.
+    451 C
+    452          CALL PROCESS
+    453          WRITE(STDOUT,*)' '
+    454          WRITE(STDOUT,*)'ETAPOST:  PREPARE TO PROCESS NEXT GRID'
+    455 C     
+    456 C     PROCESS NEXT GRID.
+    457 C     
+    458       GO TO 10
+    459 C     
+    460 C     ALL GRIDS PROCESSED.
+    461 C     
+    462  20   CONTINUE
+    463       WRITE(STDOUT,*)' '
+    464       WRITE(STDOUT,*)'ALL GRIDS PROCESSED.'
+    465       WRITE(STDOUT,*)' '
+    466 C
+    467       ITAG=ITAG+NPINCR
+    468  1000 CONTINUE
+    469 C
+    470       print*, 'ETAFLD2_tim = ',  ETAFLD2_tim*1.0e-3
+    471       print*, 'ETA2P_tim =  ',ETA2P_tim *1.0e-3
+    472       print*, 'SURFCE2_tim =  ',SURFCE2_tim*1.0e-3
+    473       print*, 'CLDRAD_tim =  ',CLDRAD_tim *1.0e-3
+    474       print*, 'MISCLN_tim = ',MISCLN_tim*1.0e-3
+    475       print*, 'FIXED_tim = ',FIXED_tim*1.0e-3
+    476       print*, 'Total time = ',(timef() - bbtim) * 1.0e-3
+    477       print*, 'Time for OUTPUT = ',time_output
+    478       print*, 'Time for E2OUT = ',time_e2out
+    479       print*, 'Time for INITPOST = ',time_initpost
+    480 
+    481 C     
+    482 C     END OF PROGRAM.
+    483 C
+    484 C
+    485       IF(ME.EQ.0)THEN
+    486         CALL W3TAGE('ETA_ETAPOST')
+    487       ENDIF
+    488 C
+    489       CALL MPI_LAST
+    490 C
+    491       STOP0
+
+Page 5           Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+    492       END
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ MAIN__             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  434                                                            458                               
+ 1000                       Label  468                                                            410                               
+ 20                         Label  462                                                            444                               
+ BBTIM                      Local  385      R(4)            4           scalar                    385,476                           
+ CTLBLK                     Common 354                                  96       SAVE                                               
+ ETAPOST                    Prog   1                                                                                                
+ IDIM1                      Param  104      I(4)            4           scalar                                                      
+ IDIM2                      Param  104      I(4)            4           scalar                                                      
+ IEOF                       Local  441      I(4)            4           scalar                    441,443,444                       
+ IGSTL                      Param  99       I(4)            4           scalar                    104                               
+ IGSTR                      Param  99       I(4)            4           scalar                    104                               
+ IM                         Param  93       I(4)            4           scalar                    101,104,111                       
+ IMX                        Param  111      I(4)            4           scalar                                                      
+ INITPOST                   Subr   425                                                            425                               
+ INPES                      Param  96       I(4)            4           scalar                    101,104                           
+ IOUNIT                     Common 345                                  20       SAVE                                               
+ IRTN                       Local  402      I(4)            4           scalar                    402,403,404,406                   
+ IST                        Local  371      R(8)            8           scalar                    424,426                           
+ ITAIL                      Param  101      I(4)            4           scalar                                                      
+ JDIM1                      Param  105      I(4)            4           scalar                                                      
+ JDIM2                      Param  105      I(4)            4           scalar                                                      
+ JGSTL                      Param  100      I(4)            4           scalar                    105                               
+ JGSTR                      Param  100      I(4)            4           scalar                    105                               
+ JJT                        Common 370                                  16                                                          
+ JM                         Param  93       I(4)            4           scalar                    102,105,111                       
+ JMX                        Param  111      I(4)            4           scalar                                                      
+ JNPES                      Param  96       I(4)            4           scalar                    102,105                           
+ JTAIL                      Param  102      I(4)            4           scalar                                                      
+ KER                        Local  418      I(4)            4           scalar                    418,419                           
+ LM                         Param  93       I(4)            4           scalar                    111                               
+ LSM                        Param  93       I(4)            4           scalar                                                      
+ MPIPRIV                    Common 326                                  36       SAVE                                               
+ MPI_2COMPLEX               Param  227      I(4)            4           scalar                                                      
+ MPI_2DOUBLE_COMPLEX        Param  227      I(4)            4           scalar                                                      
+ MPI_2DOUBLE_PRECISION      Param  227      I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  226      I(4)            4           scalar                                                      
+ MPI_2REAL                  Param  226      I(4)            4           scalar                                                      
+ MPI_ADDRESS_KIND           Param  306      I(4)            4           scalar                                                      
+ MPI_ANY_SOURCE             Param  297      I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  299      I(4)            4           scalar                                                      
+ MPI_BAND                   Param  231      I(4)            4           scalar                                                      
+ MPI_BARRIER                Subr   406                                                            406                               
+ MPI_BCAST                  Subr   402                                                            402,403,404                       
+
+Page 6           Source Listing                  ETAPOST
+2022-02-15 16:38 Symbol Table                    ETAPOST.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_BOR                    Param  232      I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  172      I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  232      I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  226      I(4)            4           scalar                                                      
+ MPI_CART                   Param  167      I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  226      I(4)            4           scalar                                                      
+ MPI_COMM_NULL              Param  185      I(4)            4           scalar                                                      
+ MPI_COMM_SELF              Param  230      I(4)            4           scalar                                                      
+ MPI_COMM_WORLD             Param  230      I(4)            4           scalar                    402,403,404,406                   
+ MPI_COMPLEX                Param  225      I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  264      I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  264      I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  264      I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  203      I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  188      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  248      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  248      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  249      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  249      I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  225      I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  224      I(4)            4           scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  191      I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  175      I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  235      I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  235      I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  150      I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  147      I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  148      I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  147      I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  150      I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  149      I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  152      I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  152      I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  153      I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  150      I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  151      I(4)            4           scalar                                                      
+ MPI_ERR_PENDING            Param  152      I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  148      I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  153      I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  148      I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  148      I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  150      I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  151      I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  147      I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  151      I(4)            4           scalar                                                      
+ MPI_FIRST                  Subr   377                                                            377                               
+ MPI_GRAPH                  Param  167      I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  230      I(4)            4           scalar                                                      
+ MPI_GROUP_NULL             Param  194      I(4)            4           scalar                                                      
+ MPI_HOST                   Param  220      I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  203      I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  255      I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  224      I(4)            4           scalar                    402,403,404                       
+ MPI_INTEGER1               Param  261      I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  262      I(4)            4           scalar                                                      
+
+Page 7           Source Listing                  ETAPOST
+2022-02-15 16:38 Symbol Table                    ETAPOST.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_INTEGER2               Param  261      I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  261      I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  261      I(4)            4           scalar                                                      
+ MPI_IO                     Param  220      I(4)            4           scalar                                                      
+ MPI_KEYVAL_INVALID         Param  197      I(4)            4           scalar                                                      
+ MPI_LAND                   Param  231      I(4)            4           scalar                                                      
+ MPI_LAST                   Subr   489                                                            489                               
+ MPI_LB                     Param  228      I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  225      I(4)            4           scalar                                                      
+ MPI_LOR                    Param  232      I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  232      I(4)            4           scalar                                                      
+ MPI_MAX                    Param  231      I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  233      I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  179      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  253      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  253      I(4)            4           scalar                                                      
+ MPI_MAX_NAME_STRING        Param  182      I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  179      I(4)            4           scalar                                                      
+ MPI_MIN                    Param  231      I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  232      I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  306      I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  234      I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  246      I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  246      I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  229      I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  169      I(4)            4           scalar                                                      
+ MPI_PROD                   Param  231      I(4)            4           scalar                                                      
+ MPI_REAL                   Param  224      I(4)            4           scalar                                                      
+ MPI_REAL16                 Param  263      I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  263      I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  263      I(4)            4           scalar                                                      
+ MPI_REQUEST_NULL           Param  200      I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  203      I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  175      I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  177      I(4)            4           scalar                    222,223                           
+ MPI_SUBVERSION             Param  302      I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  147      I(4)            4           scalar                                                      
+ MPI_SUM                    Param  231      I(4)            4           scalar                                                      
+ MPI_TAG                    Param  175      I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  220      I(4)            4           scalar                                                      
+ MPI_UB                     Param  228      I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  164      I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  203      I(4)            4           scalar                                                      
+ MPI_VERSION                Param  302      I(4)            4           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  229      I(4)            4           scalar                                                      
+ MXFLD                      Param  111      I(4)            4           scalar                                                      
+ MXLVL                      Param  111      I(4)            4           scalar                                                      
+ NPINCR                     Local  399      I(4)            4           scalar                    399,404,467                       
+ NR                         Local  410      I(4)            4           scalar                    410                               
+ NRSTRT                     Local  399      I(4)            4           scalar                    399,403,410                       
+ OUTFIL                     Common 338                                  21       SAVE                                               
+ PARALLEL                   Common 361                                  8240                                                        
+ PROCESS                    Subr   452                                                            452                               
+ READCNTRL2                 Subr   441                                                            441                               
+ RTC                        Func   371      R(8)            8           scalar                    424,426                           
+
+Page 8           Source Listing                  ETAPOST
+2022-02-15 16:38 Symbol Table                    ETAPOST.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ TIMEF                      Func   385      R(4)            4           scalar                    385,476                           
+ TIME_INITPOST              Local  371      R(8)            8           scalar                    374,426,479                       
+ TIM_INFO                   Common 367                                  24                                                          
+ W3TAGB                     Subr   390                                                            390                               
+ W3TAGE                     Subr   486                                                            486                               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ CLDRAD_TIM                 R(4)            4     12             scalar   COM              382,473                            
+ DT                         R(4)            4     48             scalar   COM                                                 
+ ETA2P_TIM                  R(4)            4     4              scalar   COM              380,471                            
+ ETAFLD2_TIM                R(4)            4     0              scalar   COM              379,470                            
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIXED_TIM                  R(4)            4     20             scalar   COM              384,475                            
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ ITAG                       I(4)            4     0              scalar   COM              399,402,467                        
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM                                                 
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM                                                 
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM              417                                
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LRSTRT                     I(4)            4     4              scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM              411                                
+ LUNLL                      I(4)            4     12             scalar   COM              412                                
+ LUNOUT                     I(4)            4     16             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM              389,398,485                        
+ MISCLN_TIM                 I(4)            4     16             scalar   COM              383,474                            
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     20       1     4        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     4        1     4        COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+
+Page 9           Source Listing                  ETAPOST
+2022-02-15 16:38 Symbol Table                    ETAPOST.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RSTFIL                     CHAR            13    8              scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ STDOUT                     I(4)            4     0              scalar   COM              427,442,453,454,463,464,465        
+ SURFCE2_TIM                R(4)            4     8              scalar   COM              381,472                            
+ TIME_E2OUT                 R(8)            8     8              scalar   COM              373,478                            
+ TIME_OUTPUT                R(8)            8     0              scalar   COM              372,477                            
+
+Page 10          Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+    493 
+
+Page 11          Source Listing                  ETAPOST
+2022-02-15 16:38 Subprograms/Common Blocks       ETAPOST.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 354                                  96       SAVE                                               
+ ETAPOST                    Prog   1                                                                                                
+ IOUNIT                     Common 345                                  20       SAVE                                               
+ JJT                        Common 370                                  16                                                          
+ MPIPRIV                    Common 326                                  36       SAVE                                               
+ OUTFIL                     Common 338                                  21       SAVE                                               
+ PARALLEL                   Common 361                                  8240                                                        
+ TIM_INFO                   Common 367                                  24                                                          
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+
+Page 12          Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+
+Page 13          Source Listing                  ETAPOST
+2022-02-15 16:38                                 ETAPOST.f
+
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : ETAPOST.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

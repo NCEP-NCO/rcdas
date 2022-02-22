@@ -1,0 +1,877 @@
+Page 1           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 /tmp/ifortVhgWq5.i
+
+      1 # 1 "SETUP_SERVERS.F"
+      2       SUBROUTINE SETUP_SERVERS(NPES_MOD,
+      3      *                         MYPE,
+      4      *                         NPES,
+      5      *                         IQUILT_GROUP,
+      6      *                         INUMQ,
+      7      *                         MPI_COMM_COMP,
+      8      *                         MPI_COMM_INTER,
+      9      *                         MPI_COMM_INTER_ARRAY )
+     10 C
+     11 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+     12 C                .      .    .
+     13 C   SUBROUTINE:  SETUP_SERVERS   SETUP I/O SERVERS
+     14 C   PRGRMMR: TUCCILLO        ORG:  IBM       DATE: 00-03-20
+     15 C
+     16 C ABSTRACT:  SETUP I/O SERVERS
+     17 C
+     18 C PROGRAM HISTORY LOG:
+     19 C   00-03-11  TUCCILLO - ORIGINATOR
+     20 C
+     21 C USAGE:  CALL SETUP_SERVERS(NPES_MOD,
+     22 C    *                       MYPE,
+     23 C    *                       NPES,
+     24 C    *                       IQUILT_GROUP,
+     25 C    *                       INUMQ,
+     26 C    *                       MPI_COMM_COMP,
+     27 C    *                       MPI_COMM_INTER,
+     28 C    *                       MPI_COMM_INTER_ARRAY )
+     29 
+     30 C
+     31 C   INPUT ARGUMENT LIST:
+     32 C     NPES_MOD - NUMBER OF MPI TASKS FOR MODEL INTEGRATION FROM INPES AND JNPES
+     33 C                THIS IS THE NUMBER OF MPI TASKS THE EXECUTABLE HAS BEEN BUILT FOR.
+     34 C                NPES, RETURNED FROM MPI_COMM_SIZE, MUST BE AT LEAST THIS SIZE
+     35 C                OTHERWISE THE INTEGRATION CANNOT PROCEED. THE DIFFERENCE BETWEEN
+     36 C                NPES_MOD AND NPES IS THE NUMBER OF MPI TASKS THAT ARE AVAILABLE
+     37 C                FOR I/O SERVING. THIS CAN BE ZERO, IN WHICH CASE CHKOUT WILL
+     38 C                WRITE A DIRECT ACCESS FILE THAT CAN BE SEPARTELY "QUILTED".
+     39 C                IN ORDER TO SKIP THE SEPARATE QUILTING STEP, MAKE SURE THAT
+     40 C                THE NUMBER OF MPI TASKS THAT THE CODE IS INITIATED WITH IS AT
+     41 C                LEAST ONE GREATER THAN NPES_MOD.
+     42 C
+     43 C   OUTPUT ARGUMENT LIST:
+     44 C     NPES - NUMBER OF MPI TASKS FOR MODEL INTEGRATION
+     45 C     MYPE - MY RANK
+     46 C     IQUILT_GROUP - NUMBER OF I/O SERVER GROUPS
+     47 C     INUMQ - ARRAY THAT HOLDS THE NUMBER OF SERVERS IN EACH GROUP
+     48 C     NPES - NUMBER OF MPI TASKS FOR MODEL INTEGRATION
+     49 C     MPI_COMM_COMP - THE NEW INTRACOMMUNICATOR FOR ALL TASKS
+     50 C     MPI_COMM_INTER - THE INTERCOMMUNICATOR FOR THE I/O SERVERS
+     51 C     MPI_COMM_INTER_ARRAY - THE ARRAY OF INTERCOMMUNICATORS FOR THE INTEGRATION TASKS
+     52 C
+     53 C   INPUT FILES:  NONE
+     54 C
+     55 C   OUTPUT FILES:
+     56 C         NONE BUT THE CODE DOES ATTEMPT TO READ THE ENVIRONMENT VARIABLE "SERVER_GROUPS".
+     57 C          THIS IS THE NUMBER OF INDEPENDENT GROUPS OF SERVER TASKS. THE DEFAULT IS ONE
+
+Page 2           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+     58 C          AND SHOULD BE OK FOR MOST APPLICATIONS OF THE ETA CODE. IF ONE SET OF I/O
+     59 C          SERVERS CAN NOT COMPLETE BEFORE THE NEXT OUPUT TIME THEN ADDITIONAL I/O SERVER
+     60 C          GROUPS WOULD BE USEFUL.
+     61 C
+     62 C   SUBPROGRAMS CALLED:
+     63 C     UNIQUE:
+     64 C            PARA_RANGE
+     65 C            MPI_INIT
+     66 C            MPI_COMM_RANK
+     67 C            MPI_COMM_SIZE
+     68 C            MPI_COMM_DUP
+     69 C            MPI_COMM_SPLIT
+     70 C            MPI_COMM_GROUP
+     71 C            MPI_GROUP_EXCL
+     72 C            MPI_COMM_CREATE
+     73 C            MPI_GROUP_FREE
+     74 C            MPI_INTERCOMM_CREATE
+     75 C            MPI_BARRIER
+     76 C
+     77 C   EXIT STATES:
+     78 C     COND =   0 - NORMAL EXIT
+     79 C
+     80 C ATTRIBUTES:
+     81 C   LANGUAGE: FORTRAN 90
+     82 C   MACHINE : IBM SP
+     83 C
+     84 C$$$
+     85 
+     86       include 'mpif.h'
+    648       integer comdup
+    649       integer, allocatable :: irank ( : )
+    650       integer MPI_COMM_INTER_ARRAY(*), INUMQ(*)
+    651       logical yes
+    652       character*4 get
+    653 C-----------------------------------------------------------------------
+    654 C
+    655 C     INITIALIZE MPI
+    656 C     RETRIEVE THE NUMBER OF TOTAL MPI TASKS AND MY RANK
+    657 C
+    658       call mpi_init(ierr)
+    659       call mpi_comm_rank(MPI_COMM_WORLD,mype,ierr)
+    660       call mpi_comm_size(MPI_COMM_WORLD,npes,ierr)
+    661 C
+    662 C     AT THIS POINT NPES IS THE TOTAL NUMBER OF MPI TASKS. WE WILL
+    663 C     RESET THIS AT THE END OF THE SUBROUTINE TO THE NUMBER OF MPI
+    664 C     TASKS THAT ARE WORKING ON THE MODEL INTGRATION.
+    665 C
+    666 C     FIRST, HOWEVER, WE NEED TO MAKE SURE THAT A SUFFICIENT NUMBER
+    667 C     OF MPI TASKS HAVE BEEN INITIATED. IF NOT, WE WILL STOP.
+    668 C
+    669       IF ( NPES .LT. NPES_MOD ) THEN
+    670          PRINT *, ' ***********************************************'
+    671          PRINT *, ' ***********************************************'
+    672          PRINT *, ' *************MAJOR PROBLEM*********************'
+    673          PRINT *, ' *************MAJOR PROBLEM*********************'
+    674          PRINT *, ' *************MAJOR PROBLEM*********************'
+    675          PRINT *, ' *************MAJOR PROBLEM*********************'
+
+Page 3           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+    676          PRINT *
+    677          PRINT *, ' THERE ARE INSUFFICIENT MPI TASKS TO CONTINUE'
+    678          PRINT *, ' YOU MUST SPECIFY AT LEAST ',NPES_MOD,' TASKS'
+    679          PRINT *, ' STOPPING NOW'
+    680          PRINT *, ' HASTA LA VISTA BABY'
+    681          PRINT *
+    682          PRINT *, ' *************MAJOR PROBLEM*********************'
+    683          PRINT *, ' *************MAJOR PROBLEM*********************'
+    684          PRINT *, ' *************MAJOR PROBLEM*********************'
+    685          PRINT *, ' *************MAJOR PROBLEM*********************'
+    686          PRINT *, ' ***********************************************'
+    687          PRINT *, ' ***********************************************'
+    688          CALL MPI_ABORT(MPI_COMM_WORLD,1,IERR)
+    689       END IF
+    690 C
+    691 C     OK, WE HAVE A SUFFICIENT NUMBER OF MPI TASKS TO CONTINUE
+    692 C
+    693 C     HOW MANY GROUPS OF SERVERS ? THE DEFAULT IS 1 GROUP
+    694 C     THE ENVIRONMENT VARIABLE, SERVER_GROUPS, CAN BE USED TO
+    695 C     SPECIFY MORE SERVER GROUPS
+    696 C
+    697       get = '1'
+    698       call get_environment_variable('SERVER_GROUPS',get)
+    699       read(get,fmt='(i4)') iquilt_group
+    700       iquilt_group = max(iquilt_group,1)
+    701 C
+    702 C     ERROR CHECK NUMBER OF GROUPS - THE MAXIMUM IS 100 - THIS IS A LOT
+    703 C
+    704       if ( iquilt_group .gt. 100 ) then
+    705          print *, ' ***** IQUILT_GROUP IS GREATER THAN 100'
+    706          print *, ' ***** DO YOU REALLY WANT THIS ?'
+    707          print *, ' ***** IF SO THEN INCREASE SIZE IN mpp.h'
+    708          print *, ' ***** ALSO, CHANGE IF CHECK IN SETUP_SERVERS'
+    709          print *, ' ***** RESETTING THE NUMBER OF SERVER GROUPS TO 100'
+    710          print *, ' ***** WE ARE CONTINUING ....   '
+    711          iquilt_group = 100
+    712       end if
+    713       if ( mype .eq. 0 ) then
+    714       print *, ' we will try to run with ',iquilt_group,' server groups'
+    715       end if
+    716 C
+    717 C     COMPUTE THE NUMBER OF SERVERS PER GROUP
+    718 C     ALL MPI TASKS BEYOND NPES_MOD WILL BE SERVERS
+    719 C     IF THE NUMBER OF SERVERS IS NOT EQUALLY DIVISIBLE BY
+    720 C     THE NUMBER OF GROUPS OF SERVERS THEN SOME GROUPS MAY HAVE
+    721 C     MORE SERVERS THEN OTHERS - THIS IS FINE
+    722 C     NOTE THAT WE REQUIRE AT LEAST ONE SERVER PER GROUP
+    723 C     WE MAY NEED TO REDUCE THE NUMBER OF SERVER GROUPS IF
+    724 C     IT EXCEEDS THE NUMBER OF SERVERS
+    725 C
+    726       iqserver = NPES - NPES_MOD
+    727       if ( iqserver .eq. 0 ) then
+    728          if ( mype .eq. 0 ) then
+    729            print *, ' *** you specified 0 I/O servers '
+    730            print *, ' CHKOUT will write a file'
+    731          end if
+    732          iquilt_group = 0
+
+Page 4           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+    733       end if
+    734       if ( iquilt_group .gt. iqserver )  then
+    735           iquilt_group = iqserver
+    736           print *, ' ***** NOT ENOUGH SERVERS'
+    737           print *, ' ***** WE NEED TO REDUCE THE NUMB OF SERVER GROUPS'
+    738           print *, ' ***** NUMB OF SERVER GROUPS IS ', iquilt_group
+    739       end if
+    740       do i = 0, iquilt_group - 1
+    741          call para_range(1,iqserver,iquilt_group,i,istaq,iendq)
+    742          inumq(i+1) = iendq-istaq+1
+    743       if ( mype .eq. 0 ) print *, ' i, inumq = ',i+1,inumq(i+1)
+    744       end do
+    745 C
+    746 C     SETUP THE "COLOR" FOR MPI_COMM_SPLIT
+    747 C     THOSE TASKS WHICH WILL DO MODEL INTEGRATION WILL BE COLOR 0
+    748 C     THE SERVER TASKS WILL HAVE THE COLOR OF THE GROUP NUMBER THAT
+    749 C     THEY WILL BELONG
+    750 C
+    751       if ( mype .lt. NPES_MOD ) then
+    752          icolor = 0
+    753       else 
+    754          istaxx = NPES_MOD
+    755          do i = 1, iquilt_group
+    756             iendxx = istaxx + inumq(i) - 1
+    757             if ( mype .ge. istaxx .and. mype .le. iendxx ) then
+    758                icolor = i
+    759             end if
+    760             istaxx = iendxx + 1
+    761          end do
+    762       end if
+    763 C
+    764 C     SPLIT THE COMMUNICATOR - THE NEW INTRACOMMUNICATOR FOR ALL TASKS
+    765 C     IS MPI_COMM_COMP. MPI_COMM_WORLD IS STILL AVAILABLE BUT IT DOES
+    766 C     REFER TO ALL THE MPI TASKS ( MODEL INTEGRATION AND I/O SERVING )
+    767 C
+    768       call mpi_comm_dup(MPI_COMM_WORLD,comdup,ierr)
+    769       call mpi_comm_split(comdup,icolor,mype,mpi_comm_comp,ierr)
+    770 C
+    771 C     AT THIS POINT WE HAVE A NEW COMMUNICATOR, MPI_COMM_COMP,
+    772 C     THAT CAN BE USED BY THE FORECASTS TASKS AND THE I/O SERVER TASKS
+    773 C     FOR THEIR INTERNAL COMMUNICATIONS. ONTO THE INTERCOMMUNICATORS ...
+    774 C
+    775 C     NOW WE MUST CREATE THE INTERCOMMUNICATORS FOR USE BETWEEN THE MPI
+    776 C     TASKS DOING THE MODEL INTEGRATION AND THE MPI TASKS FOR EACH
+    777 C     SERVER GROUP. THE FIRST STEP IS TO EXCLUDE THE TASKS THAT DONT
+    778 C     BELONG. WE WILL DO THIS FOR EACH SERVER GROUP BY EXCLUDING THE TASKS
+    779 C     FROM ALL OF THE OTHER SERVER GROUPS.
+    780 C
+    781       allocate ( irank ( iqserver ) )
+    782       ixx = NPES_MOD
+    783       do i = 1, iquilt_group
+    784          yes = .true.
+    785          if ( mype .lt. NPES_MOD ) then
+    786             irlr = ixx
+    787          else
+    788             irlr = 0
+    789          end if
+
+Page 5           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+    790       icc = 0
+    791       iss = NPES_MOD
+    792 C     THIS IS THE FIRST POSSIBLE TASK ID THAT COULD BE EXCLUDED
+    793       do jj = 1, iquilt_group
+    794          if ( jj .ne. i ) then
+    795             issl = iss
+    796             do kk = 1, inumq(jj)
+    797                icc = icc + 1
+    798                irank(icc)= issl
+    799                if ( mype .eq. issl ) yes = .false.
+    800                issl = issl + 1
+    801             end do
+    802          end if
+    803          iss = iss + inumq(jj)
+    804       end do
+    805 C
+    806 C     AT THIS POINT WE HAVE AN ARRAY, IRANK, WITH TASK IDS TO EXCLUDE
+    807 C     THERE ARE ICC OF THEM.
+    808 C     CREATE A NEW GROUP WITH THE TASKS FROM THE OTHER SERVER GROUPS
+    809 C     EXCLUDED AND THEN CREATE A NEW COMMUNICATOR ( IWORLD_MINUS ) THAT
+    810 C     CONTAINS ONLY THE MPI TASKS DOING THE MODEL INTEGRATION AND THE
+    811 C     TASKS THAT BLONG TO THE SERVER GROUP WE ARE CONSIDERING.
+    812 C
+    813       iworld = MPI_COMM_WORLD
+    814       call mpi_comm_group(iworld,igroup,ierr)
+    815       call mpi_group_excl(igroup,icc,irank,igroup_x,ierr)
+    816       call mpi_comm_create(iworld,igroup_x,iworld_minus,ierr)
+    817       call mpi_group_free(igroup,ierr)
+    818       call mpi_group_free(igroup_x,ierr)
+    819 C
+    820 C     AT THIS POINT WE HAVE A COMMUNICATOR THAT EXCLUDES THE TASKS WE DONT WANT.
+    821 C     CREATE AN INTERCOMMUNICATOR FOR USE BETWEEN THE MPI TASKS DOING THE MODEL
+    822 C     INTEGRATION AND THE I/O SERVER GROUP WE ARE CONSIDERING. THIS PROCESS IS
+    823 C     A COLLECTIVE ROUTINE SO IT CAN ONLY BE DONE BY THE TASKS THAT HAVE NOT
+    824 C     BEEN EXCLUDED. SAVE THIS NEW COMMUNICATOR IN MPI_COMM_INTER FOR USE BY
+    825 C     THE TASKS THAT BELONG TO THE SERVER GROUP THAT WE ARE CONSIDERING. THE
+    826 C     TASKS THAT ARE PERFORMING THE MODEL INTEGRATION WILL REFERENCE
+    827 C     MPI_COMM_INTER_ARRAY() SINCE WE WILL NEED TO SELECT WHICH SERVER
+    828 C     GROUP WE WISH TO COMMUNICATE WITH.
+    829 c
+    830       if ( yes ) then
+    831       call mpi_intercomm_create(mpi_comm_comp,0,iworld_minus,irlr,0,
+    832      *   mpi_comm_inter_array(i),ierr)
+    833       mpi_comm_inter = mpi_comm_inter_array(i)
+    834       end if
+    835 C
+    836       call mpi_barrier(MPI_COMM_WORLD,ierr)
+    837 C
+    838       end do     ! end do for loop over the number of server groups
+    839 C
+    840 C***
+    841 C***  NPES IS REALLY THE NUMBER OF TASKS WORKING ON THE MODEL INTEGRATION
+    842 C***
+    843       NPES = NPES  - IQSERVER
+    844 C
+    845       IF(MYPE.EQ.0) THEN
+    846          print *, ' The Model integration is using ',npes,' MPI task'
+
+Page 6           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+    847          print *, ' There are ',iqserver,' I/O servers'
+    848       END IF
+    849 C***
+    850       deallocate ( irank )
+    851 C
+    852       END
+
+
+ENTRY POINTS
+
+  Name                      
+                            
+ setup_servers_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ COMDUP                     Local  648      I(4)            4           scalar                    768,769                           
+ GET                        Local  652      CHAR            4           scalar                    697,698,699                       
+ GET_ENVIRONMENT_VARIABLE   Intrin 698                                                            698                               
+ I                          Local  740      I(4)            4           scalar                    740,741,742,743,755,756,758,783,79
+                                                                                                  4,832,833                         
+ ICC                        Local  790      I(4)            4           scalar                    790,797,798,815                   
+ ICOLOR                     Local  752      I(4)            4           scalar                    752,758,769                       
+ IENDQ                      Local  741      I(4)            4           scalar                    741,742                           
+ IENDXX                     Local  756      I(4)            4           scalar                    756,757,760                       
+ IERR                       Local  658      I(4)            4           scalar                    658,659,660,688,768,769,814,815,81
+                                                                                                  6,817,818,832,836                 
+ IGROUP                     Local  814      I(4)            4           scalar                    814,815,817                       
+ IGROUP_X                   Local  815      I(4)            4           scalar                    815,816,818                       
+ INUMQ                      Dummy  6        I(4)            4     1     0        ARG,INOUT        742,743,756,796,803               
+ IQSERVER                   Local  726      I(4)            4           scalar                    726,727,734,735,741,781,843,847   
+ IQUILT_GROUP               Dummy  5        I(4)            4           scalar   ARG,INOUT        699,700,704,711,714,732,734,735,73
+                                                                                                  8,740,741,755,783,793             
+ IRANK                      Local  649      I(4)            4     1     1        ALC              781,798,815,850                   
+ IRLR                       Local  786      I(4)            4           scalar                    786,788,831                       
+ ISS                        Local  791      I(4)            4           scalar                    791,795,803                       
+ ISSL                       Local  795      I(4)            4           scalar                    795,798,799,800                   
+ ISTAQ                      Local  741      I(4)            4           scalar                    741,742                           
+ ISTAXX                     Local  754      I(4)            4           scalar                    754,756,757,760                   
+ IWORLD                     Local  813      I(4)            4           scalar                    813,814,816                       
+ IWORLD_MINUS               Local  816      I(4)            4           scalar                    816,831                           
+ IXX                        Local  782      I(4)            4           scalar                    782,786                           
+ JJ                         Local  793      I(4)            4           scalar                    793,794,796,803                   
+ KK                         Local  796      I(4)            4           scalar                    796                               
+ MAX                        Func   700                                  scalar                    700                               
+ MPIFCMB5                   Common 636                                  4        SAVE                                               
+ MPIFCMB9                   Common 637                                  4        SAVE                                               
+ MPIPRIV1                   Common 641                                  28       SAVE                                               
+ MPIPRIV2                   Common 643                                  24       SAVE                                               
+ MPIPRIVC                   Common 646                                  2        SAVE                                               
+ MPI_2DOUBLE_PRECISION      Param  382      I(4)            4           scalar                                                      
+ MPI_2INT                   Param  466      I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  380      I(4)            4           scalar                                                      
+ MPI_2REAL                  Param  384      I(4)            4           scalar                                                      
+
+Page 7           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ABORT                  Subr   688                                                            688                               
+ MPI_ADDRESS_KIND           Param  418      I(4)            4           scalar                                                      
+ MPI_AINT                   Param  496      I(4)            4           scalar                                                      
+ MPI_ANY_SOURCE             Param  348      I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  350      I(4)            4           scalar                                                      
+ MPI_APPNUM                 Param  312      I(4)            4           scalar                                                      
+ MPI_ASYNC_PROTECTS_NONBLOC                                                                                                         
+ KING                       Param  618      L(4)            4           scalar                                                      
+ MPI_BAND                   Param  256      I(4)            4           scalar                                                      
+ MPI_BARRIER                Subr   836                                                            836                               
+ MPI_BOR                    Param  260      I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  344      I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  264      I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  388      I(4)            4           scalar                                                      
+ MPI_CART                   Param  356      I(4)            4           scalar                                                      
+ MPI_CHAR                   Param  426      I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  386      I(4)            4           scalar                                                      
+ MPI_COMBINER_CONTIGUOUS    Param  514      I(4)            4           scalar                                                      
+ MPI_COMBINER_DARRAY        Param  536      I(4)            4           scalar                                                      
+ MPI_COMBINER_DUP           Param  512      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_COMPLEX   Param  540      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_INTEGER   Param  542      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_REAL      Param  538      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED      Param  526      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_BLOC                                                                                                         
+ K                          Param  546      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_INTE                                                                                                         
+ GER                        Param  524      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR       Param  520      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR_INTEG                                                                                                         
+ ER                         Param  518      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED       Param  522      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED_BLOCK Param  528      I(4)            4           scalar                                                      
+ MPI_COMBINER_NAMED         Param  510      I(4)            4           scalar                                                      
+ MPI_COMBINER_RESIZED       Param  544      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT        Param  532      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT_INTEGE                                                                                                         
+ R                          Param  530      I(4)            4           scalar                                                      
+ MPI_COMBINER_SUBARRAY      Param  534      I(4)            4           scalar                                                      
+ MPI_COMBINER_VECTOR        Param  516      I(4)            4           scalar                                                      
+ MPI_COMM_COMP              Dummy  7        I(4)            4           scalar   ARG,INOUT        769,831                           
+ MPI_COMM_CREATE            Subr   816                                                            816                               
+ MPI_COMM_DUP               Subr   768                                                            768                               
+ MPI_COMM_DUP_FN            Subr   625                                  scalar                                                      
+ MPI_COMM_GROUP             Subr   814                                                            814                               
+ MPI_COMM_INTER             Dummy  8        I(4)            4           scalar   ARG,INOUT        833                               
+ MPI_COMM_INTER_ARRAY       Dummy  9        I(4)            4     1     0        ARG,INOUT        832,833                           
+ MPI_COMM_NULL              Param  280      I(4)            4           scalar                                                      
+ MPI_COMM_NULL_COPY_FN      Subr   626                                  scalar                                                      
+ MPI_COMM_NULL_DELETE_FN    Subr   625                                  scalar                                                      
+ MPI_COMM_RANK              Subr   659                                                            659                               
+ MPI_COMM_SELF              Param  276      I(4)            4           scalar                                                      
+ MPI_COMM_SIZE              Subr   660                                                            660                               
+ MPI_COMM_SPLIT             Subr   769                                                            769                               
+ MPI_COMM_TYPE_SHARED       Param  564      I(4)            4           scalar                                                      
+
+Page 8           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_COMM_WORLD             Param  274      I(4)            4           scalar                    659,660,688,768,813,836           
+ MPI_COMPLEX                Param  368      I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  414      I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  416      I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  412      I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  228      I(4)            4           scalar                                                      
+ MPI_CONVERSION_FN_NULL     Subr   631                                  scalar                                                      
+ MPI_COUNT                  Param  500      I(4)            4           scalar                                                      
+ MPI_COUNT_KIND             Param  422      I(4)            4           scalar                                                      
+ MPI_CXX_BOOL               Param  502      I(4)            4           scalar                                                      
+ MPI_CXX_DOUBLE_COMPLEX     Param  506      I(4)            4           scalar                                                      
+ MPI_CXX_FLOAT_COMPLEX      Param  504      I(4)            4           scalar                                                      
+ MPI_CXX_LONG_DOUBLE_COMPLE                                                                                                         
+ X                          Param  508      I(4)            4           scalar                                                      
+ MPI_C_BOOL                 Param  486      I(4)            4           scalar                                                      
+ MPI_C_COMPLEX              Param  490      I(4)            4           scalar                                                      
+ MPI_C_DOUBLE_COMPLEX       Param  492      I(4)            4           scalar                                                      
+ MPI_C_FLOAT_COMPLEX        Param  488      I(4)            4           scalar                                                      
+ MPI_C_LONG_DOUBLE_COMPLEX  Param  494      I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  290      I(4)            4           scalar                    405,503,505,507,509               
+ MPI_DISPLACEMENT_CURRENT   Param  614      I(8)            8           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  606      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  608      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  612      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  610      I(4)            4           scalar                                                      
+ MPI_DIST_GRAPH             Param  358      I(4)            4           scalar                                                      
+ MPI_DOUBLE                 Param  448      I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  370      I(4)            4           scalar                                                      
+ MPI_DOUBLE_INT             Param  460      I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  376      I(4)            4           scalar                                                      
+ MPI_DUP_FN                 Subr   622                                  scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  294      I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  95       I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  222      I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  224      I(4)            4           scalar                                                      
+ MPI_ERR_ACCESS             Param  208      I(4)            4           scalar                                                      
+ MPI_ERR_AMODE              Param  174      I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  184      I(4)            4           scalar                                                      
+ MPI_ERR_ASSERT             Param  118      I(4)            4           scalar                                                      
+ MPI_ERR_BAD_FILE           Param  180      I(4)            4           scalar                                                      
+ MPI_ERR_BASE               Param  218      I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  136      I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  216      I(4)            4           scalar                                                      
+ MPI_ERR_CONVERSION         Param  198      I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  128      I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  106      I(4)            4           scalar                                                      
+ MPI_ERR_DISP               Param  164      I(4)            4           scalar                                                      
+ MPI_ERR_DUP_DATAREP        Param  194      I(4)            4           scalar                                                      
+ MPI_ERR_FILE               Param  154      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_EXISTS        Param  206      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_IN_USE        Param  200      I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  116      I(4)            4           scalar                                                      
+ MPI_ERR_INFO               Param  122      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_KEY           Param  152      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_NOKEY         Param  196      I(4)            4           scalar                                                      
+
+Page 9           Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_INFO_VALUE         Param  144      I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  172      I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  146      I(4)            4           scalar                                                      
+ MPI_ERR_IO                 Param  132      I(4)            4           scalar                                                      
+ MPI_ERR_KEYVAL             Param  176      I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  212      I(4)            4           scalar                                                      
+ MPI_ERR_LOCKTYPE           Param  192      I(4)            4           scalar                                                      
+ MPI_ERR_NAME               Param  112      I(4)            4           scalar                                                      
+ MPI_ERR_NOT_SAME           Param  130      I(4)            4           scalar                                                      
+ MPI_ERR_NO_MEM             Param  142      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SPACE           Param  134      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SUCH_FILE       Param  204      I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  108      I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  160      I(4)            4           scalar                                                      
+ MPI_ERR_PENDING            Param  148      I(4)            4           scalar                                                      
+ MPI_ERR_PORT               Param  138      I(4)            4           scalar                                                      
+ MPI_ERR_QUOTA              Param  110      I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  214      I(4)            4           scalar                                                      
+ MPI_ERR_READ_ONLY          Param  156      I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  158      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_ATTACH         Param  140      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_CONFLICT       Param  126      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_FLAVOR         Param  114      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_RANGE          Param  150      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SHARED         Param  210      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SYNC           Param  190      I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  178      I(4)            4           scalar                                                      
+ MPI_ERR_SERVICE            Param  202      I(4)            4           scalar                                                      
+ MPI_ERR_SIZE               Param  124      I(4)            4           scalar                                                      
+ MPI_ERR_SPAWN              Param  166      I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  186      I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  188      I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  162      I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  182      I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  170      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_DATARE                                                                                                         
+ P                          Param  120      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_OPERAT                                                                                                         
+ ION                        Param  168      I(4)            4           scalar                                                      
+ MPI_ERR_WIN                Param  220      I(4)            4           scalar                                                      
+ MPI_FILE_NULL              Param  284      I(4)            4           scalar                                                      
+ MPI_FLOAT                  Param  446      I(4)            4           scalar                                                      
+ MPI_FLOAT_INT              Param  458      I(4)            4           scalar                                                      
+ MPI_GRAPH                  Param  354      I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  278      I(4)            4           scalar                                                      
+ MPI_GROUP_EXCL             Subr   815                                                            815                               
+ MPI_GROUP_FREE             Subr   817                                                            817,818                           
+ MPI_GROUP_NULL             Param  286      I(4)            4           scalar                                                      
+ MPI_HOST                   Param  302      I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  226      I(4)            4           scalar                                                      
+ MPI_INFO_ENV               Param  298      I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  296      I(4)            4           scalar                                                      
+ MPI_INIT                   Subr   658                                                            658                               
+ MPI_INT                    Param  438      I(4)            4           scalar                                                      
+ MPI_INT16_T                Param  472      I(4)            4           scalar                                                      
+
+Page 10          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_INT32_T                Param  474      I(4)            4           scalar                                                      
+ MPI_INT64_T                Param  476      I(4)            4           scalar                                                      
+ MPI_INT8_T                 Param  470      I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  378      I(4)            4           scalar                                                      
+ MPI_INTEGER1               Param  396      I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  404      I(4)            4           scalar                                                      
+ MPI_INTEGER2               Param  398      I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  400      I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  402      I(4)            4           scalar                                                      
+ MPI_INTEGER_KIND           Param  424      I(4)            4           scalar                                                      
+ MPI_INTERCOMM_CREATE       Subr   831                                                            831                               
+ MPI_IO                     Param  304      I(4)            4           scalar                                                      
+ MPI_KEYVAL_INVALID         Param  342      I(4)            4           scalar                                                      
+ MPI_LAND                   Param  254      I(4)            4           scalar                                                      
+ MPI_LASTUSEDCODE           Param  310      I(4)            4           scalar                                                      
+ MPI_LB                     Param  392      I(4)            4           scalar                                                      
+ MPI_LOCK_EXCLUSIVE         Param  364      I(4)            4           scalar                                                      
+ MPI_LOCK_SHARED            Param  366      I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  372      I(4)            4           scalar                                                      
+ MPI_LONG                   Param  442      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE            Param  450      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE_INT        Param  468      I(4)            4           scalar                                                      
+ MPI_LONG_INT               Param  462      I(4)            4           scalar                                                      
+ MPI_LONG_LONG              Param  456      I(4)            4           scalar                                                      
+ MPI_LONG_LONG_INT          Param  452      I(4)            4           scalar                                                      
+ MPI_LOR                    Param  258      I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  262      I(4)            4           scalar                                                      
+ MPI_MAX                    Param  246      I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  268      I(4)            4           scalar                                                      
+ MPI_MAX_DATAREP_STRING     Param  336      I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  324      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  330      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  332      I(4)            4           scalar                                                      
+ MPI_MAX_LIBRARY_VERSION_ST                                                                                                         
+ RING                       Param  338      I(4)            4           scalar                                                      
+ MPI_MAX_OBJECT_NAME        Param  328      I(4)            4           scalar                                                      
+ MPI_MAX_PORT_NAME          Param  326      I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  334      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NO_PROC        Param  568      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NULL           Param  566      I(4)            4           scalar                                                      
+ MPI_MIN                    Param  248      I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  266      I(4)            4           scalar                                                      
+ MPI_MODE_APPEND            Param  592      I(4)            4           scalar                                                      
+ MPI_MODE_CREATE            Param  588      I(4)            4           scalar                                                      
+ MPI_MODE_DELETE_ON_CLOSE   Param  584      I(4)            4           scalar                                                      
+ MPI_MODE_EXCL              Param  590      I(4)            4           scalar                                                      
+ MPI_MODE_NOCHECK           Param  554      I(4)            4           scalar                                                      
+ MPI_MODE_NOPRECEDE         Param  560      I(4)            4           scalar                                                      
+ MPI_MODE_NOPUT             Param  558      I(4)            4           scalar                                                      
+ MPI_MODE_NOSTORE           Param  556      I(4)            4           scalar                                                      
+ MPI_MODE_NOSUCCEED         Param  562      I(4)            4           scalar                                                      
+ MPI_MODE_RDONLY            Param  578      I(4)            4           scalar                                                      
+ MPI_MODE_RDWR              Param  580      I(4)            4           scalar                                                      
+ MPI_MODE_SEQUENTIAL        Param  594      I(4)            4           scalar                                                      
+ MPI_MODE_UNIQUE_OPEN       Param  586      I(4)            4           scalar                                                      
+
+Page 11          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_MODE_WRONLY            Param  582      I(4)            4           scalar                                                      
+ MPI_NO_OP                  Param  272      I(4)            4           scalar                                                      
+ MPI_NULL_COPY_FN           Subr   622                                  scalar                                                      
+ MPI_NULL_DELETE_FN         Subr   622                                  scalar                                                      
+ MPI_OFFSET                 Param  498      I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  420      I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  288      I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  602      I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  604      I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  394      I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  346      I(4)            4           scalar                                                      
+ MPI_PROD                   Param  252      I(4)            4           scalar                                                      
+ MPI_REAL                   Param  374      I(4)            4           scalar                                                      
+ MPI_REAL16                 Param  410      I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  406      I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  408      I(4)            4           scalar                                                      
+ MPI_REPLACE                Param  270      I(4)            4           scalar                                                      
+ MPI_REQUEST_NULL           Param  292      I(4)            4           scalar                                                      
+ MPI_ROOT                   Param  352      I(4)            4           scalar                                                      
+ MPI_SEEK_CUR               Param  598      I(4)            4           scalar                                                      
+ MPI_SEEK_END               Param  600      I(4)            4           scalar                                                      
+ MPI_SEEK_SET               Param  596      I(4)            4           scalar                                                      
+ MPI_SHORT                  Param  434      I(4)            4           scalar                                                      
+ MPI_SHORT_INT              Param  464      I(4)            4           scalar                                                      
+ MPI_SIGNED_CHAR            Param  428      I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  230      I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  95       I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  97       I(4)            4           scalar                    99,100                            
+ MPI_SUBARRAYS_SUPPORTED    Param  616      L(4)            4           scalar                                                      
+ MPI_SUBVERSION             Param  362      I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  104      I(4)            4           scalar                                                      
+ MPI_SUM                    Param  250      I(4)            4           scalar                                                      
+ MPI_TAG                    Param  95       I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  300      I(4)            4           scalar                                                      
+ MPI_THREAD_FUNNELED        Param  572      I(4)            4           scalar                                                      
+ MPI_THREAD_MULTIPLE        Param  576      I(4)            4           scalar                                                      
+ MPI_THREAD_SERIALIZED      Param  574      I(4)            4           scalar                                                      
+ MPI_THREAD_SINGLE          Param  570      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_COMPLEX      Param  552      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_INTEGER      Param  550      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_REAL         Param  548      I(4)            4           scalar                                                      
+ MPI_TYPE_DUP_FN            Subr   629                                  scalar                                                      
+ MPI_TYPE_NULL_COPY_FN      Subr   630                                  scalar                                                      
+ MPI_TYPE_NULL_DELETE_FN    Subr   629                                  scalar                                                      
+ MPI_UB                     Param  390      I(4)            4           scalar                                                      
+ MPI_UINT16_T               Param  480      I(4)            4           scalar                                                      
+ MPI_UINT32_T               Param  482      I(4)            4           scalar                                                      
+ MPI_UINT64_T               Param  484      I(4)            4           scalar                                                      
+ MPI_UINT8_T                Param  478      I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  340      I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  232      I(4)            4           scalar                                                      
+ MPI_UNIVERSE_SIZE          Param  308      I(4)            4           scalar                                                      
+ MPI_UNSIGNED               Param  440      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_CHAR          Param  430      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG          Param  444      I(4)            4           scalar                                                      
+
+Page 12          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Symbol Table                    SETUP_SERVERS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_UNSIGNED_LONG_LONG     Param  454      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_SHORT         Param  436      I(4)            4           scalar                                                      
+ MPI_VERSION                Param  360      I(4)            4           scalar                                                      
+ MPI_WCHAR                  Param  432      I(4)            4           scalar                                                      
+ MPI_WIN_BASE               Param  314      I(4)            4           scalar                                                      
+ MPI_WIN_CREATE_FLAVOR      Param  320      I(4)            4           scalar                                                      
+ MPI_WIN_DISP_UNIT          Param  318      I(4)            4           scalar                                                      
+ MPI_WIN_DUP_FN             Subr   627                                  scalar                                                      
+ MPI_WIN_FLAVOR_ALLOCATE    Param  236      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_CREATE      Param  234      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_DYNAMIC     Param  238      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_SHARED      Param  240      I(4)            4           scalar                                                      
+ MPI_WIN_MODEL              Param  322      I(4)            4           scalar                                                      
+ MPI_WIN_NULL               Param  282      I(4)            4           scalar                                                      
+ MPI_WIN_NULL_COPY_FN       Subr   628                                  scalar                                                      
+ MPI_WIN_NULL_DELETE_FN     Subr   627                                  scalar                                                      
+ MPI_WIN_SEPARATE           Param  242      I(4)            4           scalar                                                      
+ MPI_WIN_SIZE               Param  316      I(4)            4           scalar                                                      
+ MPI_WIN_UNIFIED            Param  244      I(4)            4           scalar                                                      
+ MPI_WTICK                  Func   623      R(8)            8           scalar                                                      
+ MPI_WTIME                  Func   623      R(8)            8           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  306      I(4)            4           scalar                                                      
+ MYPE                       Dummy  3        I(4)            4           scalar   ARG,INOUT        659,713,728,743,751,757,769,785,79
+                                                                                                  9,845                             
+ NPES                       Dummy  4        I(4)            4           scalar   ARG,INOUT        660,669,726,843,846               
+ NPES_MOD                   Dummy  2        I(4)            4           scalar   ARG,INOUT        669,678,726,751,754,782,785,791   
+ PARA_RANGE                 Subr   741                                                            741                               
+ PMPI_WTICK                 Func   624      R(8)            8           scalar                                                      
+ PMPI_WTIME                 Func   624      R(8)            8           scalar                                                      
+ SETUP_SERVERS              Subr   2                                                                                                
+ YES                        Local  651      L(4)            4           scalar                    784,799,830                       
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MPI_ARGVS_NULL             CHAR            1     0        2     1        COM                                                 
+ MPI_ARGV_NULL              CHAR            1     1        1     1        COM                                                 
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_ERRCODES_IGNORE        I(4)            4     20       1     1        COM                                                 
+ MPI_IN_PLACE               I(4)            4     4              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     0        2     5        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     8        1     5        COM                                                 
+ MPI_UNWEIGHTED             I(4)            4     0              scalar   COM                                                 
+ MPI_WEIGHTS_EMPTY          I(4)            4     0              scalar   COM                                                 
+
+Page 13          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38 Subprograms/Common Blocks       SETUP_SERVERS.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPIFCMB5                   Common 636                                  4        SAVE                                               
+ MPIFCMB9                   Common 637                                  4        SAVE                                               
+ MPIPRIV1                   Common 641                                  28       SAVE                                               
+ MPIPRIV2                   Common 643                                  24       SAVE                                               
+ MPIPRIVC                   Common 646                                  2        SAVE                                               
+ SETUP_SERVERS              Subr   2                                                                                                
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+
+Page 14          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+
+Page 15          Source Listing                  SETUP_SERVERS
+2022-02-15 16:38                                 SETUP_SERVERS.F
+
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : SETUP_SERVERS.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

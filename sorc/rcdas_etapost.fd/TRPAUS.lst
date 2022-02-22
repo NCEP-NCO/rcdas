@@ -1,0 +1,691 @@
+Page 1           Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+      1       SUBROUTINE TRPAUS(PTROP,TTROP,ZTROP,UTROP,VTROP,SHTROP)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    TRPAUS      COMPUTE TROPOPAUSE DATA.
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-22       
+      6 C     
+      7 C ABSTRACT:  
+      8 C     THIS ROUTINE COMPUTES TROPOPAUSE DATA.  AT EACH MASS
+      9 C     POINT A SURFACE UP SEARCH IS MADE FOR THE FIRST 
+     10 C     OCCURRENCE OF A THREE LAYER MEAN LAPSE RATE LESS THAN
+     11 C     OR EQUAL TO A CRITICAL LAPSE RATE.  THIS CRITCAL LAPSE
+     12 C     RATE IS 2DEG/KM.  THIS IS IN ACCORD WITH THE WMO
+     13 C     DEFINITION OF A TROPOPAUSE.  A MAXIMUM TROPOPAUSE
+     14 C     PRESSURE OF 500MB IS ENFORCED.  ONC THE TROPOPAUSE
+     15 C     IS LOCATED IN A COLUMN, PRESSURE, TEMPERATURE, U
+     16 C     AND V WINDS, AND VERTICAL WIND SHEAR ARE COMPUTED.
+     17 C   .     
+     18 C     
+     19 C PROGRAM HISTORY LOG:
+     20 C   92-12-22  RUSS TREADON
+     21 C   97-03-06  GEOFF MANIKIN - CHANGED CRITERIA FOR DETERMINING
+     22 C                            THE TROPOPAUSE AND ADDED HEIGHT
+     23 C   98-06-15  T BLACK       - CONVERSION FROM 1-D TO 2-D
+     24 C   00-01-04  JIM TUCCILLO  - MPI VERSION
+     25 C     
+     26 C USAGE:    CALL TRPAUS(PTROP,TTROP,ZTROP,UTROP,VTROP,SHTROP)
+     27 C   INPUT ARGUMENT LIST:
+     28 C     NONE     
+     29 C
+     30 C   OUTPUT ARGUMENT LIST: 
+     31 C     PTROP    - TROPOPAUSE PRESSURE.
+     32 C     TTROP    - TROPOPAUSE TEMPERATURE.
+     33 C     ZTROP    - TROPOPAUSE HEIGHT
+     34 C     UTROP    - TROPOPAUSE U WIND COMPONENT.
+     35 C     VTROP    - TROPOPAUSE V WIND COMPONENT.
+     36 C     SHTROP   - VERTICAL WIND SHEAR AT TROPOPAUSE.
+     37 C     
+     38 C   OUTPUT FILES:
+     39 C     NONE
+     40 C     
+     41 C   SUBPROGRAMS CALLED:
+     42 C     UTILITIES:
+     43 C       H2V     
+     44 C
+     45 C     LIBRARY:
+     46 C       COMMON   - VRBLS
+     47 C                  LOOPS
+     48 C                  EXTRA
+     49 C                  OPTIONS
+     50 C                  MASKS
+     51 C                  INDX
+     52 C     
+     53 C   ATTRIBUTES:
+     54 C     LANGUAGE: FORTRAN
+     55 C     MACHINE : CRAY C-90
+     56 C$$$  
+     57 C     
+
+Page 2           Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+     58 C     
+     59 C     INCLUDE ETA GRID DIMENSIONS.  SET/DERIVE PARAMETERS.
+     60 C
+     61       INCLUDE "parmeta"
+     79       INCLUDE "params"
+     80 C
+     81 C     
+     82 C     PARAMTER CRTLAP SPECIFIES THE CRITICAL LAPSE RATE
+     83 C     (IN K/M) IDENTIFYING THE TROPOPAUSE.  WE START 
+     84 C     LOOKING FOR THE TROPOPAUSE ABOVE PRESSURE LEVEL
+     85 C     PSTART (IN PASALS).
+    127       PARAMETER (CRTLAP=0.002E0, PSTART=5.0E4)
+    128 C     
+    129 C     DECLARE VARIABLES.
+    130 C     
+    131       REAL PTROP(IM,JM),TTROP(IM,JM),ZTROP(IM,JM),UTROP(IM,JM)
+    132       REAL VTROP(IM,JM),SHTROP(IM,JM),EGRIDU(IM,JM),EGRIDV(IM,JM)
+    133       REAL TLAPSE(LM),DZ2(LM),DELT2(LM),TLAPSE2(LM)
+    134 C     
+    135 C     INCLUDE COMMON BLOCKS.
+    136       INCLUDE "VRBLS.comm"
+    143       INCLUDE "LOOPS.comm"
+    151       INCLUDE "EXTRA.comm"
+    163       INCLUDE "MASKS.comm"
+    171       INCLUDE "OPTIONS.comm"
+    175       INCLUDE "INDX.comm"
+    181       INCLUDE "CTLBLK.comm"
+    182 C     
+    183 C*****************************************************************************
+    184 C     START TRPAUS HERE.
+    185 C     
+    186 C     LOOP OVER THE HORIZONTAL GRID.
+    187 C    
+    202       DO J=JSTA,JEND
+    203       DO I=1,IM
+    204          PTROP(I,J)  = SPVAL
+    205          TTROP(I,J)  = SPVAL
+    206          ZTROP(I,J)  = SPVAL
+    207          UTROP(I,J)  = SPVAL
+    208          VTROP(I,J)  = SPVAL
+    209          SHTROP(I,J) = SPVAL
+    210          EGRIDU(I,J) = D00
+    211          EGRIDV(I,J) = D00
+    212       ENDDO
+    213       ENDDO
+    214 C
+    215 !$omp  parallel do
+    216 !$omp& private(delt,delt2,dz,dz2,ie,iw,l,llmh,pm,rsqdif,
+    217 !$omp&         tlapse,tlapse2,u0,u0l,uh,uh0,ul,
+    218 !$omp&         v0,v0l,vh,vh0)
+    219       DO 20 J=JSTA_M,JEND_M
+    220       DO 20 I=2,IM-1
+    221 C     
+    222 C        COMPUTE THE TEMPERATURE LAPSE RATE (-DT/DZ) BETWEEN ETA 
+    223 C        LAYERS MOVING UP FROM THE GROUND.  THE FIRST ETA LAYER
+    224 C        ABOVE PRESSURE "PSTART" IN WHICH THE LAPSE RATE IS LESS
+    225 C        THAN THE CRITCAL LAPSE RATE IS LABELED THE TROPOPAUSE.
+
+Page 3           Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+    226 C
+    227         LLMH=LMH(I,J)
+    228 C
+    229         DO 10 L=LLMH-1,2,-1
+    230         PM     = PINT(I,J,L)
+    231         DELT   = T(I,J,L-1)-T(I,J,L)
+    232         DZ     = D50*(ZINT(I,J,L-1)-ZINT(I,J,L+1))
+    233         TLAPSE(L) = -DELT/DZ
+    234 C
+    235         IF ((TLAPSE(L).LT.CRTLAP).AND.(PM.LT.PSTART)) THEN 
+    236           IF (L .EQ. 2 .AND. TLAPSE(L) .LT. CRTLAP) GOTO15
+    237           DZ2(L+1) = 0.
+    238 C
+    239           DO 17 LL=L,3,-1
+    240           DZ2(LL) = 0.
+    241           DELT2(LL) = 0.
+    242           TLAPSE2(LL) = 0.
+    243           DZ2(LL) = (2./3.)*(ZINT(I,J,LL-2)-ZINT(I,J,L+1))
+    244           IF ((DZ2(LL) .GT. 2000.) .AND.
+    245      1        (DZ2(LL+1) .GT. 2000.)) GO TO 15
+    246           DELT2(LL) = T(I,J,LL-2)-T(I,J,L)
+    247           TLAPSE2(LL) = -DELT2(LL)/DZ2(LL)
+    248 C
+    249           IF (TLAPSE2(LL) .GT. CRTLAP) THEN
+    250             GOTO 10
+    251           ENDIF
+    252 C
+    253    17     CONTINUE 
+    254         ELSE
+    255           GOTO 10 
+    256         ENDIF 
+    257 C
+    258    15   PTROP(I,J)  = D50*(PINT(I,J,L)+PINT(I,J,L+1))
+    259         TTROP(I,J)  = T(I,J,L)
+    260         ZTROP(I,J)= HTM(I,J,L+1)*T(I,J,L+1)*
+    261      X               (Q(I,J,L+1)*D608+H1)*ROG*
+    262      X               (LOG(PINT(I,J,L+1))-LOG(PTROP(I,J)))
+    263      X               +ZINT(I,J,L+1)
+    264 C
+    265         IE=I+IHE(J)
+    266         IW=I+IHW(J)
+    267         UH        = D25*(U(I,J-1,L-1)+U(IW,J,L-1)+
+    268      X                   U(IE,J,L-1) +U(I,J+1,L-1))
+    269         U0        = D25*(U(I,J-1,L  )+U(IW,J,L  )+
+    270      X                   U(IE,J,L  )+U(I,J+1,L  ))
+    271         UL        = D25*(U(I,J-1,L+1)+U(IW,J,L+1)+
+    272      X                   U(IE,J,L+1)+U(I,J+1,L+1))
+    273         UH0       = D50*(UH+U0)
+    274         U0L       = D50*(U0+UL)
+    275         VH        = D25*(V(I,J-1,L-1)+V(IW,J,L-1)+
+    276      X                   V(IE,J,L-1)+V(I,J+1,L-1))
+    277         V0        = D25*(V(I,J-1,L  )+V(IW,J,L  )+
+    278      X                   V(IE,J,L  )+V(I,J+1 ,L  ))
+    279         VL        = D25*(V(I,J-1,L+1)+V(IW,J,L+1)+
+    280      X                   V(IE,J,L+1)+V(I,J+1,L+1))
+    281         VH0       = D50*(VH+V0)
+    282         V0L       = D50*(V0+VL)
+
+Page 4           Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+    283         EGRIDU(I,J) = U0
+    284         EGRIDV(I,J) = V0
+    285         DZ        = ZINT(I,J,L)-ZINT(I,J,L+1)
+    286         RSQDIF    = SQRT((UH0-U0L)**2+(VH0-V0L)**2)
+    287         SHTROP(I,J) = RSQDIF/DZ
+    288         GOTO 20
+    289    10   CONTINUE
+    290 
+    291 CX         WRITE(88,*)'REACHED TOP FOR K,P,TLAPSE:  ',K,PM,TLAPSE
+    292 
+    293         DZ       = D50*(ZINT(I,J,1)-ZINT(I,J,3))
+    294         PTROP(I,J) = D50*(PINT(I,J,2)+PINT(I,J,3))
+    295         TTROP(I,J) = T(I,J,2)
+    296         ZTROP(I,J)= HTM(I,J,3)*T(I,J,3)*(Q(I,J,3)*D608+H1)*ROG*
+    297      X          (LOG(PINT(I,J,3))-LOG(PTROP(I,J)))+ZINT(I,J,3)
+    298         UH        = D25*(U(I,J-1,2)+U(IW,J,2)+
+    299      X                   U(IE,J,2)+U(I,J+1,2))
+    300         VH        = D25*(V(I,J-1,2)+V(IW,J,2)+
+    301      X                   V(IE,J,2)+V(I,J+1,2))
+    302         UL        = D25*(U(I,J-1,3  )+U(IW,J,3  )+
+    303      X                   U(IE,J,3  )+U(I,J+1,3  ))
+    304         VL        = D25*(V(I,J-1,3  )+V(IW,J,3  )+
+    305      X                   V(IE,J,3  )+V(I,J+1,3  ))
+    306         EGRIDU(I,J) = UH
+    307         EGRIDV(I,J) = VH
+    308         RSQDIF      = SQRT((UH-UL)**2+(VH-VL)**2)
+    309         SHTROP(I,J) = RSQDIF/DZ
+    310 
+    311 CX        WRITE(82,1010)I,J,L,PTROP(I,J)*D01,TTROP(I,J),
+    312 CX     X       EGRIDU(I,J),EGRIDV(I,J),SHTROP(I,J)
+    313 C     
+    314    20 CONTINUE
+    315 
+    316 C     CALCULATE U-V AT V POINTS.
+    317       CALL H2V(EGRIDU,EGRIDV,UTROP,VTROP)
+    318 
+    319 C     
+    320 C     END OF ROUTINE.
+    321 C     
+    322       RETURN
+    323       END
+
+Page 5           Source Listing                  TRPAUS
+2022-02-15 16:39 Entry Points                    TRPAUS.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ trpaus_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  289                                                            229,250,255                       
+ 15                         Label  258                                                            236,245                           
+ 17                         Label  253                                                            239                               
+ 20                         Label  314                                                            219,220,288                       
+ A2                         Param  126      R(4)            4           scalar                                                      
+ A3                         Param  126      R(4)            4           scalar                                                      
+ A4                         Param  126      R(4)            4           scalar                                                      
+ AD05                       Param  118      R(4)            4           scalar                                                      
+ BETA                       Param  122      R(4)            4           scalar                    122                               
+ BTG                        Param  122      R(4)            4           scalar                                                      
+ CAPA                       Param  113      R(4)            4           scalar                    120                               
+ CFT0                       Param  118      R(4)            4           scalar                                                      
+ CM1                        Param  108      R(4)            4           scalar                                                      
+ CM2                        Param  108      R(4)            4           scalar                                                      
+ CM3                        Param  108      R(4)            4           scalar                                                      
+ CP                         Param  119      R(4)            4           scalar                    121,125                           
+ CPDR                       Param  121      R(4)            4           scalar                                                      
+ CRTLAP                     Param  127      R(4)            4           scalar                    235,236,249                       
+ CTLBLK                     Common 189                                  96       SAVE                                               
+ D00                        Param  110      R(4)            4           scalar                    210,211                           
+ D001                       Param  110      R(4)            4           scalar                                                      
+ D0065                      Param  114      R(4)            4           scalar                                                      
+ D01                        Param  110      R(4)            4           scalar                                                      
+ D05                        Param  114      R(4)            4           scalar                    118                               
+ D1                         Param  110      R(4)            4           scalar                                                      
+ D115                       Param  114      R(4)            4           scalar                                                      
+ D125                       Param  112      R(4)            4           scalar                                                      
+ D25                        Param  112      R(4)            4           scalar                    267,269,271,275,277,279,298,300,30
+                                                                                                  2,304                             
+ D50                        Param  110      R(4)            4           scalar                    232,258,273,274,281,282,293,294   
+ D608                       Param  114      R(4)            4           scalar                    261,296                           
+ DELT                       Local  231      R(4)            4           scalar                    231,233                           
+ DELT2                      Local  133      R(4)            4     1     45                        241,246,247                       
+ DP10M                      Param  120      R(4)            4           scalar                                                      
+ DTR                        Param  119      R(4)            4           scalar                    119                               
+ DZ                         Local  232      R(4)            4           scalar                    232,233,285,287,293,309           
+ DZ2                        Local  133      R(4)            4     1     45                        237,240,243,244,245,247           
+ EGRIDU                     Local  132      R(4)            4     2     91719                     210,283,306,317                   
+ EGRIDV                     Local  132      R(4)            4     2     91719                     211,284,307,317                   
+ ELDR                       Param  121      R(4)            4           scalar                                                      
+ ELWV                       Param  121      R(4)            4           scalar                    121                               
+ EPS                        Param  124      R(4)            4           scalar                    124                               
+ EPSQ2                      Param  125      R(4)            4           scalar                                                      
+ ERAD                       Param  119      R(4)            4           scalar                                                      
+
+Page 6           Source Listing                  TRPAUS
+2022-02-15 16:39 Symbol Table                    TRPAUS.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EXTRA                      Common 154                                  71506268 SAVE                                               
+ FMD                        Param  124      R(4)            4           scalar                    124                               
+ FMW                        Param  124      R(4)            4           scalar                    124                               
+ G                          Param  117      R(4)            4           scalar                    117                               
+ GI                         Param  117      R(4)            4           scalar                    121                               
+ H1                         Param  111      R(4)            4           scalar                    118,261,296                       
+ H100                       Param  112      R(4)            4           scalar                                                      
+ H1000                      Param  112      R(4)            4           scalar                                                      
+ H10000                     Param  113      R(4)            4           scalar                                                      
+ H10E5                      Param  113      R(4)            4           scalar                                                      
+ H1E2                       Param  115      R(4)            4           scalar                                                      
+ H1E4                       Param  115      R(4)            4           scalar                                                      
+ H1M12                      Param  111      R(4)            4           scalar                                                      
+ H1M2                       Param  115      R(4)            4           scalar                                                      
+ H1M5                       Param  112      R(4)            4           scalar                                                      
+ H2                         Param  111      R(4)            4           scalar                                                      
+ H2V                        Subr   317                                                            317                               
+ H4                         Param  111      R(4)            4           scalar                                                      
+ H999                       Param  110      R(4)            4           scalar                                                      
+ H99999                     Param  111      R(4)            4           scalar                                                      
+ I                          Local  203      I(4)            4           scalar                    203,204,205,206,207,208,209,210,21
+                                                                                                  1,220,227,230,231,232,243,246,258,
+                                                                                                  259,260,261,262,263,265,266,267,26
+                                                                                                  8,269,270,271,272,275,276,277,278,
+                                                                                                  279,280,283,284,285,287,293,294,29
+                                                                                                  5,296,297,298,299,300,301,302,303,
+                                                                                                  304,305,306,307,309               
+ IDIM1                      Param  75       I(4)            4           scalar                                                      
+ IDIM2                      Param  75       I(4)            4           scalar                                                      
+ IE                         Local  265      I(4)            4           scalar                    265,268,270,272,276,278,280,299,30
+                                                                                                  1,303,305                         
+ IGSTL                      Param  70       I(4)            4           scalar                    75                                
+ IGSTR                      Param  70       I(4)            4           scalar                    75                                
+ IM                         Param  64       I(4)            4           scalar                    72,75,89,91,92,94,131,132,139,141,
+                                                                                                  148,153,155,156,157,158,159,160,16
+                                                                                                  6,168,203,220                     
+ IM1                        Param  91       I(4)            4           scalar                                                      
+ IMJM                       Param  153      I(4)            4           scalar                    156                               
+ IMT                        Param  89       I(4)            4           scalar                                                      
+ INDX                       Common 177                                  6192     SAVE                                               
+ INPES                      Param  67       I(4)            4           scalar                    72,75                             
+ ITAIL                      Param  72       I(4)            4           scalar                                                      
+ IW                         Local  266      I(4)            4           scalar                    266,267,269,271,275,277,279,298,30
+                                                                                                  0,302,304                         
+ J                          Local  202      I(4)            4           scalar                    202,204,205,206,207,208,209,210,21
+                                                                                                  1,219,227,230,231,232,243,246,258,
+                                                                                                  259,260,261,262,263,265,266,267,26
+                                                                                                  8,269,270,271,272,275,276,277,278,
+                                                                                                  279,280,283,284,285,287,293,294,29
+                                                                                                  5,296,297,298,299,300,301,302,303,
+                                                                                                  304,305,306,307,309               
+ JAM                        Param  91       I(4)            4           scalar                    146                               
+ JDIM1                      Param  76       I(4)            4           scalar                                                      
+ JDIM2                      Param  76       I(4)            4           scalar                                                      
+ JGSTL                      Param  71       I(4)            4           scalar                    76                                
+
+Page 7           Source Listing                  TRPAUS
+2022-02-15 16:39 Symbol Table                    TRPAUS.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ JGSTR                      Param  71       I(4)            4           scalar                    76                                
+ JM                         Param  64       I(4)            4           scalar                    73,76,89,91,94,131,132,139,141,148
+                                                                                                  ,153,155,156,157,158,159,160,166,1
+                                                                                                  68,178                            
+ JM2                        Param  91       I(4)            4           scalar                                                      
+ JMT                        Param  89       I(4)            4           scalar                                                      
+ JNPES                      Param  67       I(4)            4           scalar                    73,76                             
+ JTAIL                      Param  73       I(4)            4           scalar                                                      
+ KSAV                       Param  99       I(4)            4           scalar                                                      
+ KSFI                       Param  98       I(4)            4           scalar                                                      
+ KSLI                       Param  99       I(4)            4           scalar                                                      
+ KSLP                       Param  99       I(4)            4           scalar                                                      
+ KSLPD                      Param  98       I(4)            4           scalar                                                      
+ KSMUD                      Param  98       I(4)            4           scalar                                                      
+ KSRH                       Param  99       I(4)            4           scalar                                                      
+ KSSLP                      Param  98       I(4)            4           scalar                                                      
+ KST                        Param  98       I(4)            4           scalar                                                      
+ KSUV                       Param  99       I(4)            4           scalar                                                      
+ L                          Local  229      I(4)            4           scalar                    229,230,231,232,233,235,236,237,23
+                                                                                                  9,243,246,258,259,260,261,262,263,
+                                                                                                  267,268,269,270,271,272,275,276,27
+                                                                                                  7,278,279,280,285                 
+ LB                         Param  94       I(4)            4           scalar                                                      
+ LHEAT                      Param  125      I(4)            4           scalar                    125                               
+ LHTOCP                     Param  125      I(4)            4           scalar                                                      
+ LL                         Local  239      I(4)            4           scalar                    239,240,241,242,243,244,245,246,24
+                                                                                                  7,249                             
+ LLMH                       Local  227      I(4)            4           scalar                    227,229                           
+ LM                         Param  64       I(4)            4           scalar                    93,104,133,141,156,168            
+ LM1                        Param  93       I(4)            4           scalar                                                      
+ LOG                        Func   262                                  scalar                    262,297                           
+ LOOPS                      Common 145                                  748952   SAVE                                               
+ LP1                        Param  93       I(4)            4           scalar                    155                               
+ LSM                        Param  64       I(4)            4           scalar                                                      
+ MASKS                      Common 165                                  34853220 SAVE                                               
+ NINC                       Param  92       I(4)            4           scalar                                                      
+ NSTAT                      Param  104      I(4)            4           scalar                                                      
+ NSUMD                      Param  100      I(4)            4           scalar                                                      
+ NWORD                      Param  104      I(4)            4           scalar                    104                               
+ NWORD3                     Param  104      I(4)            4           scalar                                                      
+ NWORD6                     Param  104      I(4)            4           scalar                                                      
+ ONEPS                      Param  124      R(4)            4           scalar                                                      
+ OPTIONS                    Common 173                                  24       SAVE                                               
+ OVERRC                     Param  118      R(4)            4           scalar                    118                               
+ P1000                      Param  120      R(4)            4           scalar                                                      
+ PARALLEL                   Common 196                                  8240                                                        
+ PM                         Local  230      R(4)            4           scalar                    230,235                           
+ PQ0                        Param  126      R(4)            4           scalar                                                      
+ PSTART                     Param  127      R(4)            4           scalar                    235                               
+ PTROP                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        204,258,262,294,297               
+ RCAPA                      Param  120      R(4)            4           scalar                                                      
+ RD                         Param  117      R(4)            4           scalar                    117,121,125                       
+ RDOCP                      Param  125      R(4)            4           scalar                                                      
+ RG                         Param  121      R(4)            4           scalar                                                      
+ ROG                        Param  117      R(4)            4           scalar                    261,296                           
+
+Page 8           Source Listing                  TRPAUS
+2022-02-15 16:39 Symbol Table                    TRPAUS.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ RSQDIF                     Local  286      R(4)            4           scalar                    286,287,308,309                   
+ RTD                        Param  119      R(4)            4           scalar                                                      
+ SHTROP                     Dummy  1        R(4)            4     2     91719    ARG,INOUT        209,287,309                       
+ SMTHA                      Param  100      R(4)            4           scalar                                                      
+ SMTHB                      Param  100      R(4)            4           scalar                                                      
+ SQRT                       Func   286                                  scalar                    286,308                           
+ TFRZ                       Param  124      R(4)            4           scalar                                                      
+ TLAPSE                     Local  133      R(4)            4     1     45                        233,235,236                       
+ TLAPSE2                    Local  133      R(4)            4     1     45                        242,247,249                       
+ TRPAUS                     Subr   1                                                                                                
+ TTROP                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        205,259,295                       
+ U0                         Local  269      R(4)            4           scalar                    269,273,274,283                   
+ U0L                        Local  274      R(4)            4           scalar                    274,286                           
+ UH                         Local  267      R(4)            4           scalar                    267,273,298,306,308               
+ UH0                        Local  273      R(4)            4           scalar                    273,286                           
+ UL                         Local  271      R(4)            4           scalar                    271,274,302,308                   
+ UTROP                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        207,317                           
+ V0                         Local  277      R(4)            4           scalar                    277,281,282,284                   
+ V0L                        Local  282      R(4)            4           scalar                    282,286                           
+ VH                         Local  275      R(4)            4           scalar                    275,281,300,307,308               
+ VH0                        Local  281      R(4)            4           scalar                    281,286                           
+ VL                         Local  279      R(4)            4           scalar                    279,282,304,308                   
+ VRBLS                      Common 138                                  67138308                                                    
+ VTROP                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        208,317                           
+ ZTROP                      Dummy  1        R(4)            4     2     91719    ARG,INOUT        206,260,296                       
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM              260,296                            
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IHE                        I(4)            4     0        1     387      COM              265                                
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1548     1     387      COM              266                                
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVE                        I(4)            4     3096     1     387      COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+
+Page 9           Source Listing                  TRPAUS
+2022-02-15 16:39 Symbol Table                    TRPAUS.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IVW                        I(4)            4     4644     1     387      COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              202                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              219                                
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              202                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              219                                
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM              227                                
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM                                                 
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM              230,258,262,294,297                
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM              261,296                            
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM              204,205,206,207,208,209            
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              231,246,259,260,295,296            
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+
+Page 10          Source Listing                  TRPAUS
+2022-02-15 16:39 Symbol Table                    TRPAUS.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ U                          R(4)            4     1100628  3     4127355  COM              267,268,269,270,271,272,298,299,30 
+                                                                                           2,303                              
+ V                          R(4)            4     17610048 3     4127355  COM              275,276,277,278,279,280,300,301,30 
+                                                                                           4,305                              
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM              232,243,263,285,293,297            
+
+Page 11          Source Listing                  TRPAUS
+2022-02-15 16:39 Subprograms/Common Blocks       TRPAUS.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 189                                  96       SAVE                                               
+ EXTRA                      Common 154                                  71506268 SAVE                                               
+ INDX                       Common 177                                  6192     SAVE                                               
+ LOOPS                      Common 145                                  748952   SAVE                                               
+ MASKS                      Common 165                                  34853220 SAVE                                               
+ OPTIONS                    Common 173                                  24       SAVE                                               
+ PARALLEL                   Common 196                                  8240                                                        
+ TRPAUS                     Subr   1                                                                                                
+ VRBLS                      Common 138                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+
+Page 12          Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+
+Page 13          Source Listing                  TRPAUS
+2022-02-15 16:39                                 TRPAUS.f
+
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : TRPAUS.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

@@ -1,0 +1,1536 @@
+Page 1           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+      1       SUBROUTINE CLDRAD(IMOUT,JMOUT)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    CLDRAD       POST SNDING/CLOUD/RADTN FIELDS
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-08-30       
+      6 C     
+      7 C ABSTRACT:  THIS ROUTINE COMPUTES/POSTS SOUNDING, CLOUD 
+      8 C   RELATED, AND RADIATION FIELDS.  UNDER THE HEADING OF 
+      9 C   SOUNDING FIELDS FALL THE THREE ETA MODEL LIFTED INDICES,
+     10 C   CAPE, CIN, AND TOTAL COLUMN PRECIPITABLE WATER.
+     11 C
+     12 C   THE THREE ETA MODEL LIFTED INDICES DIFFER ONLY IN THE
+     13 C   DEFINITION OF THE PARCEL TO LIFT.  ONE LIFTS PARCELS FROM
+     14 C   THE LOWEST ABOVE GROUND ETA LAYER.  ANOTHER LIFTS MEAN 
+     15 C   PARCELS FROM ANY OF NBND BOUNDARY LAYERS (SEE SUBROUTINE
+     16 C   BNDLYR2).  THE FINAL TYPE OF LIFTED INDEX IS A BEST LIFTED
+     17 C   INDEX BASED ON THE NBND BOUNDARY LAYER LIFTED INDICES.
+     18 C
+     19 C   TWO TYPES OF CAPE/CIN ARE AVAILABLE.  ONE IS BASED ON PARCELS
+     20 C   IN THE LOWEST ETA LAYER ABOVE GROUND.  THE OTHER IS BASED 
+     21 C   ON A LAYER MEAN PARCEL IN THE N-TH BOUNDARY LAYER ABOVE 
+     22 C   THE GROUND.  SEE SUBROUTINE CALCAPE FOR DETAILS.
+     23 C
+     24 C   THE CLOUD FRACTION AND LIQUID CLOUD WATER FIELDS ARE DIRECTLY
+     25 C   FROM THE MODEL WITH MINIMAL POST PROCESSING.  THE LIQUID 
+     26 C   CLOUD WATER, 3-D CLOUD FRACTION, AND TEMPERATURE TENDENCIES
+     27 C   DUE TO PRECIPITATION ARE NOT POSTED IN THIS ROUTINE.  SEE
+     28 C   SUBROUTINE ETAFLD2 FOR THESE FIELDS.  LIFTING CONDENSATION
+     29 C   LEVEL HEIGHT AND PRESSURE ARE COMPUTED AND POSTED IN
+     30 C   SUBROUTINE MISCLN.  
+     31 C
+     32 C   THE RADIATION FIELDS POSTED BY THIS ROUTINE ARE THOSE COMPUTED
+     33 C   DIRECTLY IN THE MODEL.
+     34 C     
+     35 C PROGRAM HISTORY LOG:
+     36 C   93-08-30  RUSS TREADON
+     37 C   94-08-04  MICHAEL BALDWIN - ADDED OUTPUT OF INSTANTANEOUS SFC
+     38 C                               FLUXES OF NET SW AND LW DOWN RADIATION
+     39 C   97-04-25  MICHAEL BALDWIN - FIX PDS FOR PRECIPITABLE WATER
+     40 C   97-04-29  GEOFF MANIKIN - MOVED CLOUD TOP TEMPS CALCULATION
+     41 C                               TO THIS SUBROUTINE.  CHANGED METHOD
+     42 C                               OF DETERMINING WHERE CLOUD BASE AND
+     43 C                               TOP ARE FOUND AND ADDED HEIGHT OPTION
+     44 C                               FOR TOP AND BASE.
+     45 C   98-04-29  GEOFF MANIKIN - CHANGED VALUE FOR CLOUD BASE/TOP PRESSURES
+     46 C                               AND HEIGHTS FROM SPVAL TO -500
+     47 C   98-06-15  T BLACK       - CONVERSION FROM 1-D TO 2-D
+     48 C   98-07-17  MIKE BALDWIN  - REMOVED LABL84
+     49 C   00-01-04  JIM TUCCILLO  - MPI VERSION
+     50 C   00-02-22  GEOFF MANIKIN - CHANGED VALUE FOR CLOUD BASE/TOP PRESSURES
+     51 C                               AND HEIGHTS FROM SPVAL TO -500 (WAS NOT IN
+     52 C                               PREVIOUS IBM VERSION)
+     53 C
+     54 C
+     55 C     
+     56 C USAGE:    CALL CLDRAD(IMOUT,JMOUT)
+     57 C   INPUT ARGUMENT LIST:
+
+Page 2           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+     58 C     IMOUT    - FIRST DIMENSION OF OUTPUT GRID.
+     59 C     JMOUT    - SECOND DIMENSION OF OUTPUT GRID.
+     60 C
+     61 C   OUTPUT ARGUMENT LIST: 
+     62 C     NONE
+     63 C     
+     64 C   OUTPUT FILES:
+     65 C     NONE
+     66 C     
+     67 C   SUBPROGRAMS CALLED:
+     68 C     UTILITIES:
+     69 C       NONE
+     70 C     LIBRARY:
+     71 C       COMMON   - RQSTFLD
+     72 C                  EXTRA
+     73 C                  MAPOT
+     74 C                  PHYS
+     75 C                  LOOPS
+     76 C                  MASKS
+     77 C                  VRBLS
+     78 C                  CNVCLD
+     79 C                  CTLBLK
+     80 C                  ACMCLD
+     81 C                  ACMRDS
+     82 C                  ACMRDL
+     83 C                  OPTIONS
+     84 C                  CLDWTR
+     85 C     
+     86 C   ATTRIBUTES:
+     87 C     LANGUAGE: FORTRAN
+     88 C     MACHINE : CRAY C-90
+     89 C$$$  
+     90 C
+     91 C
+     92 C     INCLUDE GRID DIMENSIONS.  SET/DERIVE OTHER PARAMETERS.
+     93 C     
+     94       INCLUDE "parmeta"
+    112       INCLUDE "parmout"
+    116       INCLUDE "params"
+    158       INCLUDE "parm.tbl"
+    159 C     
+    160 C     SET CELSIUS TO KELVIN CONVERSION.
+    162       PARAMETER (C2K=273.15)
+    163 C     
+    164 C     DECLARE VARIABLES.
+    165 C     
+    166       LOGICAL RUN,FIRST,RESTRT,SIGMA,OLDRD,STDRD
+    167       LOGICAL NEED(IM,JM)
+    168       INTEGER L1D(IM,JM)
+    169       REAL EGRID1(IM,JM),EGRID2(IM,JM)
+    170       REAL GRID1(IMOUT,JMOUT),GRID2(IMOUT,JMOUT),CLDTP(IM,JM),
+    171      &        CLDTZ(IM,JM),CLDBP(IM,JM),CLDBZ(IM,JM),CLDTT(IM,JM)
+    172 C     
+    173 C     INCLUDE COMMON BLOCKS.
+    174       INCLUDE "RQSTFLD.comm"
+    187       INCLUDE "EXTRA.comm"
+    199       INCLUDE "MAPOT.comm"
+
+Page 3           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    212       INCLUDE "MASKS.comm"
+    220       INCLUDE "PHYS1.comm"
+    241       INCLUDE "CNVCLD.comm"
+    247       INCLUDE "LOOPS.comm"
+    255       INCLUDE "VRBLS.comm"
+    262       INCLUDE "CTLBLK.comm"
+    277       INCLUDE "ACMCLD.comm"
+    284       INCLUDE "ACMRDS.comm"
+    290       INCLUDE "ACMRDL.comm"
+    296       INCLUDE "OPTIONS.comm"
+    300       INCLUDE "CLDWTR.comm"
+    301 C     
+    302 C
+    303 C*************************************************************************
+    304 C     START CLDRAD HERE.
+    305 C     
+    306 C***  BLOCK 1.  SOUNDING DERIVED FIELDS.
+    307 C     
+    308 C     ETA SURFACE TO 500MB LIFTED INDEX.  TO BE CONSISTENT WITH THE
+    309 
+    310 C     LFM AND NGM POSTING WE ADD 273.15 TO THE LIFTED INDEX
+    311 C     NOTE:  25 JUNE 1993, RUSS TREADON.
+    312 C               ON THE LFM FORECAST GRID (026) WE POST
+    313 C               THE FIRST BOUNDARY LAYER LIFTED INDEX.
+    314 C               SEE SUBROUTINE MISCLN.
+    315 C
+    316 C     THE BEST (SIX LAYER) AND BOUNDARY LAYER LIFTED INDICES ARE
+    317 C     COMPUTED AND POSTED IN SUBROUTINE MISCLN.
+    323       print*,'Start of CLDRAD'
+    324 C
+    325       IF ( (IGET(030).GT.0).AND.(KGTYPE.NE.026) ) THEN
+    326          DO J=JSTA,JEND
+    327          DO I=1,IM
+    328            EGRID1(I,J) = SPVAL
+    329          ENDDO
+    330          ENDDO
+    331 C
+    332          CALL OTLIFT2(T500,EGRID1)
+    333 C
+    334          DO J=JSTA,JEND
+    335          DO I=1,IM
+    336            EGRID1(I,J) = EGRID1(I,J) + C2K
+    337          ENDDO
+    338          ENDDO
+    339 C
+    340          CALL E2OUT(030,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    341          ID(1:25)=0
+    342          ID(10)  =50
+    343          ID(11)  =100
+    344          CALL OUTPUT(IOUTYP,IGET(030),LVLS(1,IGET(030)),
+    345      X        GRID1,IMOUT,JMOUT)
+    346       ENDIF
+    347 C
+    348 C     SOUNDING DERIVED AREA INTEGRATED ENERGIES - CAPE AND CIN.
+    349       IF ((IGET(032).GT.0).OR.(IGET(107).GT.0)) THEN
+    350          IF ( (LVLS(1,IGET(032)).GT.0) .OR. 
+    351      X        (LVLS(1,IGET(107)).GT.0) ) THEN
+
+Page 4           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    352             ITYPE = 1
+    353             CALL CALCAPE(ITYPE,P1D,T1D,Q1D,L1D,EGRID1,EGRID2)
+    354 C
+    355 C           CONVECTIVE AVAILABLE POTENTIAL ENERGY.
+    356             IF (IGET(032).GT.0) THEN
+    357                CALL E2OUT(032,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    358                CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    359                ID(1:25)=0
+    360                CALL OUTPUT(IOUTYP,IGET(032),LVLS(1,IGET(032)),
+    361      X              GRID1,IMOUT,JMOUT)
+    362             ENDIF
+    363 C
+    364 C           CONVECTIVE INHIBITION.
+    365             IF (IGET(107).GT.0) THEN
+    366                CALL E2OUT(107,000,EGRID2,EGRID1,GRID1,GRID2,IMOUT,JMOUT)
+    367                DO J=JSTA,JEND
+    368                DO I=1,IMOUT
+    369                  GRID1(I,J) = -1.*GRID1(I,J)
+    370                ENDDO
+    371                ENDDO
+    372                CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    373                DO J=JSTA,JEND
+    374                DO I=1,IMOUT
+    375                  GRID1(I,J) = -1.*GRID1(I,J)
+    376                ENDDO
+    377                ENDDO
+    378                ID(1:25)=0
+    379                CALL OUTPUT(IOUTYP,IGET(107),LVLS(1,IGET(107)),
+    380      X              GRID1,IMOUT,JMOUT)
+    381             ENDIF
+    382          ENDIF
+    383       ENDIF
+    384 C
+    385 C     TOTAL COLUMN PRECIPITABLE WATER.
+    386       IF (IGET(080).GT.0) THEN
+    387          CALL CALPW(EGRID1)
+    388          CALL E2OUT(080,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    389          ID(1:25)=0
+    390          CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    391          CALL OUTPUT(IOUTYP,IGET(080),LVLS(1,IGET(080)),
+    392      X        GRID1,IMOUT,JMOUT)
+    393       ENDIF
+    394 C     
+    395 C   
+    396 C
+    397 C
+    398 C***  BLOCK 2.  2-D CLOUD FIELDS.
+    399 C
+    400 C     LOW CLOUD FRACTION.
+    401       IF (IGET(037).GT.0) THEN
+    402          CALL E2OUT(037,000,CFRACL,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    403          ID(1:25)=0
+    404          CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    405          CALL OUTPUT(IOUTYP,IGET(037),LVLS(1,IGET(037)),
+    406      X        GRID1,IMOUT,JMOUT)
+    407       ENDIF
+    408 C     
+
+Page 5           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    409 C     MIDDLE CLOUD FRACTION.
+    410       IF (IGET(038).GT.0) THEN
+    411          CALL E2OUT(038,000,CFRACM,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    412          ID(1:25)=0
+    413          CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    414          CALL OUTPUT(IOUTYP,IGET(038),LVLS(1,IGET(038)),
+    415      X        GRID1,IMOUT,JMOUT)
+    416       ENDIF
+    417 C     
+    418 C     HIGH CLOUD FRACTION.
+    419       IF (IGET(039).GT.0) THEN
+    420          CALL E2OUT(039,000,CFRACH,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    421          ID(1:25)=0
+    422          CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    423          CALL OUTPUT(IOUTYP,IGET(039),LVLS(1,IGET(039)),
+    424      X        GRID1,IMOUT,JMOUT)
+    425       ENDIF
+    426 C     
+    427 C     TOTAL CLOUD FRACTION (INSTANTANEOUS).
+    428       IF (IGET(161).GT.0) THEN
+    429          DO J=JSTA,JEND
+    430          DO I=1,IM
+    431            EGRID1(I,J)=AMAX1(CFRACL(I,J),
+    432      1                 AMAX1(CFRACM(I,J),CFRACH(I,J)))
+    433          ENDDO
+    434          ENDDO
+    435          CALL E2OUT(161,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    436          ID(1:25)=0
+    437          CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    438          CALL OUTPUT(IOUTYP,IGET(161),LVLS(1,IGET(161)),
+    439      X        GRID1,IMOUT,JMOUT)
+    440       ENDIF
+    441 C
+    442 C     TIME AVERAGED TOTAL CLOUD FRACTION.
+    443          IF (IGET(144).GT.0) THEN
+    444             DO 40 J=JSTA,JEND
+    445             DO 40 I=1,IM
+    446                ISUM = NCFRST(I,J)+NCFRCV(I,J)
+    447                IF (ISUM.GT.0) THEN
+    448                   EGRID1(I,J)=(ACFRST(I,J)+ACFRCV(I,J))/ISUM
+    449                ELSE
+    450                   EGRID1(I,J) = D00
+    451                ENDIF
+    452  40         CONTINUE
+    453 C
+    454             CALL E2OUT(144,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    455             ID(1:25)= 0
+    456             IFHR       = NTSD/TSPH+0.5
+    457             ITCLOD     = INT(TCLOD)
+    458             IFINCR     = MOD(IFHR,ITCLOD)
+    459             ID(19)  = IFHR
+    460             ID(20)  = 3
+    461             IF (IFINCR.EQ.0) THEN
+    462                ID(18)  = IFHR-ITCLOD
+    463             ELSE
+    464                ID(18)  = IFHR-IFINCR
+    465             ENDIF
+
+Page 6           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    466             IF (ID(18).LT.0) ID(18) = 0
+    467             CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    468             CALL OUTPUT(IOUTYP,IGET(144),LVLS(1,IGET(144)),
+    469      X           GRID1,IMOUT,JMOUT)
+    470          ENDIF
+    471 C
+    472 C     TIME AVERAGED STRATIFORM CLOUD FRACTION.
+    473          IF (IGET(139).GT.0) THEN
+    474             DO 50 J=JSTA,JEND
+    475             DO 50 I=1,IM
+    476                IF (NCFRST(I,J).GT.0) THEN
+    477                   EGRID1(I,J) = ACFRST(I,J)/NCFRST(I,J)
+    478                ELSE
+    479                   EGRID1(I,J) = D00
+    480                ENDIF
+    481  50         CONTINUE
+    482 C
+    483             CALL E2OUT(139,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    484             ID(1:25)=0
+    485             IFHR       = NTSD/TSPH+0.5
+    486             ITCLOD     = INT(TCLOD)
+    487             IFINCR     = MOD(IFHR,ITCLOD)
+    488             ID(19)  = IFHR
+    489             ID(20)  = 3
+    490             IF (IFINCR.EQ.0) THEN
+    491                ID(18)  = IFHR-ITCLOD
+    492             ELSE
+    493                ID(18)  = IFHR-IFINCR
+    494             ENDIF
+    495             IF (ID(18).LT.0) ID(18) = 0
+    496             CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    497             CALL OUTPUT(IOUTYP,IGET(139),LVLS(1,IGET(139)),
+    498      X           GRID1,IMOUT,JMOUT)
+    499          ENDIF
+    500 C    
+    501 C     TIME AVERAGED CONVECTIVE CLOUD FRACTION.
+    502          IF (IGET(143).GT.0) THEN
+    503             DO 60 J=JSTA,JEND
+    504             DO 60 I=1,IM
+    505                IF (NCFRCV(I,J).GT.0) THEN
+    506                   EGRID1(I,J) = ACFRCV(I,J)/NCFRCV(I,J)
+    507                ELSE
+    508                   EGRID1(I,J) = D00
+    509                ENDIF
+    510  60         CONTINUE
+    511 C
+    512             CALL E2OUT(143,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    513             ID(1:25)=0
+    514             IFHR       = NTSD/TSPH+0.5
+    515             ITCLOD     = INT(TCLOD)
+    516             IFINCR     = MOD(IFHR,ITCLOD)
+    517             ID(19)  = IFHR
+    518             ID(20)  = 3
+    519             IF (IFINCR.EQ.0) THEN
+    520                ID(18)  = IFHR-ITCLOD
+    521             ELSE
+    522                ID(18)  = IFHR-IFINCR
+
+Page 7           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    523             ENDIF
+    524             IF (ID(18).LT.0) ID(18) = 0
+    525             CALL SCLFLD(GRID1,100.,IMOUT,JMOUT)
+    526             CALL OUTPUT(IOUTYP,IGET(143),LVLS(1,IGET(143)),
+    527      X           GRID1,IMOUT,JMOUT)
+    528          ENDIF
+    529 C    
+    530 C     CLOUD BASE FIELDS 
+    531       IF ((IGET(148).GT.0) .OR. (IGET(178).GT.0)) THEN
+    532           CLIMIT =1.0E-06
+    533           DO J=JSTA,JEND
+    534           DO I=1,IM
+    535             NEED(I,J)=.TRUE.
+    536             CLDBP(I,J) = -50000.
+    537             CLDBZ(I,J) = -5000.
+    538           ENDDO
+    539           ENDDO
+    540 
+    541 !$omp  parallel do
+    542 !$omp& private(cbot,lev,llmh)
+    543           DO 70 J=JSTA,JEND
+    544           DO 70 I=1,IM
+    545             LLMH=LMH(I,J)
+    546             CBOT = 500
+    547             DO L=LLMH,1,-1
+    548 C GSM
+    549 C START AT THE FIRST LAYER ABOVE GROUND, AND FIND THE
+    550 C   FIRST LAYER WITH A VALUE OF CLOUD WATER GREATER THAN
+    551 C   THE SIGNIFICANT LIMIT (VALUE DESIGNATED BY Q. ZHAO).
+    552 C   THIS LAYER WILL BE THE CLOUD BOTTOM UNLESS THE BOTTOM
+    553 C   OF THE CONVECTIVE CLOUD (HBOT) IS FOUND BELOW IN WHICH
+    554 C   CASE HBOT BECOMES THE CLOUD BASE LAYER.
+    555               IF (CWM(I,J,L).GT.CLIMIT.AND.NEED(I,J)) THEN
+    556                 CBOT=L
+    557                 IF (HBOT(I,J).GT.CBOT) THEN
+    558                    CBOT = HBOT(I,J)
+    559                 ENDIF
+    560                 NEED(I,J)=.FALSE.
+    561                ENDIF
+    562             ENDDO
+    563 C
+    564               IF (CBOT.EQ.500.) THEN
+    565                  CLDBP(I,J) = -50000.
+    566                  CLDBZ(I,J) = -5000.
+    567               ELSE IF (CBOT.EQ.LM) THEN
+    568                  CLDBP(I,J) = AETA1(INT(CBOT))*PDSL(I,J)+PT1
+    569                  CLDBZ(I,J) = ZINT(I,J,LM) 
+    570               ELSE
+    571                  LEV = CBOT
+    572                  CLDBP(I,J) = AETA1(INT(LEV))*PDSL(I,J)+PT1
+    573                  CLDBZ(I,J) = HTM(I,J,LEV+1)*T(I,J,LEV+1)
+    574      1                       *(Q(I,J,LEV+1)*D608+H1)*ROG*
+    575      2                        (LOG(PINT(I,J,LEV+1))-LOG(CLDBP(I,J)))
+    576      3                       +ZINT(I,J,LEV+1)
+    577               ENDIF
+    578  70      CONTINUE
+    579 C   CLOUD BOTTOM PRESSURE
+
+Page 8           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    580          IF (IGET(148).GT.0) THEN
+    581           CALL E2OUT(148,000,CLDBP,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    582           ID(1:25)=0
+    583           CALL OUTPUT(IOUTYP,IGET(148),LVLS(1,IGET(148)),
+    584      X        GRID1,IMOUT,JMOUT)
+    585          ENDIF
+    586 
+    587 C    CLOUD BOTTOM HEIGHT    
+    588          IF (IGET(178).GT.0) THEN
+    589           CALL E2OUT(148,000,CLDBZ,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    590           ID(1:25)=0
+    591           CALL OUTPUT(IOUTYP,IGET(178),LVLS(1,IGET(178)),
+    592      X        GRID1,IMOUT,JMOUT)
+    593          ENDIF
+    594       ENDIF
+    595 C
+    596 C     CLOUD TOP FIELDS 
+    597       IF ((IGET(149).GT.0) .OR. (IGET(179).GT.0) .OR.
+    598      X    (IGET(168).GT.0)) THEN
+    599           CLIMIT =1.0E-06
+    600           DO J=JSTA,JEND
+    601           DO I=1,IM
+    602             NEED(I,J)=.TRUE.
+    603           ENDDO
+    604           ENDDO
+    605 C GSM
+    606 C   START AT THE TOP OF THE ATMOSPHERE.  FIND THE
+    607 C   FIRST LAYER WITH A VALUE OF CLOUD WATER GREATER THAN
+    608 C   THE SIGNIFICANT LIMIT (VALUE DESIGNATED BY Q. ZHAO).
+    609 C   THIS LAYER WILL BE THE CLOUD TOP UNLESS THE TOP 
+    610 C   OF THE CONVECTIVE CLOUD (HTOP) IS FOUND ABOVE IN WHICH
+    611 C   CASE HTOP BECOMES THE CLOUD TOP LAYER.
+    612 
+    613 !$omp  parallel do
+    614 !$omp& private(ctop,lev,lmhk)
+    615           DO 80 J=JSTA,JEND
+    616           DO 80 I=1,IM
+    617             CTOP = 0.
+    618             LMHK=LMH(I,J)
+    619             DO L=1,LMHK
+    620 !              print *, i,j,l,CWM(I,J,L),CLIMIT,"-----"
+    621               IF (CWM(I,J,L).GT.CLIMIT.AND.NEED(I,J)) THEN
+    622                 CTOP=L
+    623                 IF (HTOP(I,J).LT.CTOP) THEN
+    624                    CTOP = HTOP(I,J)
+    625                 ENDIF
+    626                 NEED(I,J)=.FALSE.
+    627               ENDIF
+    628             ENDDO
+    629 C
+    630             IF (CTOP.EQ.0.)THEN
+    631               CLDTP(I,J) = -50000.
+    632               CLDTZ(I,J) = -5000.
+    633               LMHK=LMH(I,J)
+    634               CLDTT(I,J) = T(I,J,LMHK)
+    635             ELSE IF (CTOP.EQ.LM) THEN
+    636               CLDTP(I,J) = AETA1(INT(LM))*PDSL(I,J)+PT1
+
+Page 9           Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    637               CLDTZ(I,J) = ZINT(I,J,LM)
+    638               CLDTT(I,J) = T(I,J,LM)
+    639             ELSE
+    640               LEV = CTOP
+    641               CLDTP(I,J) = AETA1(INT(LEV))*PDSL(I,J)+PT1
+    642               CLDTZ(I,J) = HTM(I,J,LEV+1)*T(I,J,LEV+1)
+    643      1                    *(Q(I,J,LEV+1)*D608+H1)*ROG*
+    644      2                     (LOG(PINT(I,J,LEV+1))-LOG(CLDTP(I,J)))
+    645      3                    +ZINT(I,J,LEV+1) 
+    646               CLDTT(I,J) = T(I,J,LEV)
+    647             ENDIF
+    648 !            print *, i,j,CLDTP(I,J), CTOP, NEED(I,J)
+    649  80      CONTINUE
+    650 C   CLOUD TOP PRESSURE
+    651          IF (IGET(149).GT.0) THEN
+    652            CALL E2OUT(149,000,CLDTP,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    653            ID(1:25)=0
+    654            CALL OUTPUT(IOUTYP,IGET(149),LVLS(1,IGET(149)),
+    655      X        GRID1,IMOUT,JMOUT)
+    656           ENDIF
+    657  
+    658 C   CLOUD TOP HEIGHT 
+    659           IF (IGET(179).GT.0) THEN
+    660            CALL E2OUT(179,000,CLDTZ,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    661            ID(1:25)=0
+    662            CALL OUTPUT(IOUTYP,IGET(179),LVLS(1,IGET(179)),
+    663      X        GRID1,IMOUT,JMOUT)
+    664           ENDIF
+    665 
+    666 C   CLOUD TOP TEMPS
+    667           IF (IGET(168).GT.0) THEN
+    668            CALL E2OUT(168,000,CLDTT,EGRID2,
+    669      X         GRID1,GRID2,IMOUT,JMOUT)
+    670            ID(1:25)=0
+    671            CALL OUTPUT(IOUTYP,IGET(168),LVLS(1,IGET(168)),
+    672      X         GRID1,IMOUT,JMOUT)
+    673           ENDIF
+    674       ENDIF
+    675 
+    676 C***  BLOCK 3.  RADIATION FIELDS.
+    677 C     
+    678 C
+    679 C     TIME AVERAGED SURFACE SHORT WAVE INCOMING RADIATION.
+    680          IF (IGET(126).GT.0) THEN
+    681            IF(ARDSW.GT.0.)THEN
+    682              RRNUM=1./ARDSW
+    683            ELSE
+    684              RRNUM=0.
+    685            ENDIF
+    686            DO J=JSTA,JEND
+    687            DO I=1,IM
+    688               EGRID1(I,J) = ASWIN(I,J)*RRNUM
+    689            ENDDO
+    690            ENDDO
+    691             CALL E2OUT(126,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    692             ID(1:25)=0
+    693             IFHR       = NTSD/TSPH+0.5
+
+Page 10          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    694             ITRDSW     = INT(TRDSW)
+    695             IFINCR     = MOD(IFHR,ITRDSW)
+    696             ID(19)  = IFHR
+    697             ID(20)  = 3
+    698             IF (IFINCR.EQ.0) THEN
+    699                ID(18)  = IFHR-ITRDSW
+    700             ELSE
+    701                ID(18)  = IFHR-IFINCR
+    702             ENDIF
+    703             IF (ID(18).LT.0) ID(18) = 0
+    704             CALL OUTPUT(IOUTYP,IGET(126),LVLS(1,IGET(126)),
+    705      X           GRID1,IMOUT,JMOUT)
+    706          ENDIF
+    707 C
+    708 C     TIME AVERAGED SURFACE LONG WAVE INCOMING RADIATION.
+    709          IF (IGET(127).GT.0) THEN
+    710            IF(ARDLW.GT.0.)THEN
+    711              RRNUM=1./ARDLW
+    712            ELSE
+    713              RRNUM=0.
+    714            ENDIF
+    715            DO J=JSTA,JEND
+    716            DO I=1,IM
+    717              EGRID1(I,J) = ALWIN(I,J)*RRNUM
+    718            ENDDO
+    719            ENDDO
+    720             CALL E2OUT(127,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    721             ID(1:25)=0
+    722             IFHR       = NTSD/TSPH+0.5
+    723             ITRDLW     = INT(TRDLW)
+    724             IFINCR     = MOD(IFHR,ITRDLW)
+    725             ID(19)  = IFHR
+    726             ID(20)  = 3
+    727             IF (IFINCR.EQ.0) THEN
+    728                ID(18)  = IFHR-ITRDLW
+    729             ELSE
+    730                ID(18)  = IFHR-IFINCR
+    731             ENDIF
+    732             IF (ID(18).LT.0) ID(18) = 0
+    733             CALL OUTPUT(IOUTYP,IGET(127),LVLS(1,IGET(127)),
+    734      X           GRID1,IMOUT,JMOUT)
+    735          ENDIF
+    736 C
+    737 C     TIME AVERAGED SURFACE SHORT WAVE OUTGOING RADIATION.
+    738          IF (IGET(128).GT.0) THEN
+    739            IF(ARDSW.GT.0.)THEN
+    740              RRNUM=1./ARDSW
+    741            ELSE
+    742              RRNUM=0.
+    743            ENDIF
+    744            DO J=JSTA,JEND
+    745            DO I=1,IM
+    746              EGRID1(I,J) = -1.0*ASWOUT(I,J)*RRNUM
+    747            ENDDO
+    748            ENDDO
+    749             CALL E2OUT(128,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    750             ID(1:25)=0
+
+Page 11          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    751             IFHR       = NTSD/TSPH+0.5
+    752             ITRDSW     = INT(TRDSW)
+    753             IFINCR     = MOD(IFHR,ITRDSW)
+    754             ID(19)  = IFHR
+    755             ID(20)  = 3
+    756             IF (IFINCR.EQ.0) THEN
+    757                ID(18)  = IFHR-ITRDSW
+    758             ELSE
+    759                ID(18)  = IFHR-IFINCR
+    760             ENDIF
+    761             IF (ID(18).LT.0) ID(18) = 0
+    762             CALL OUTPUT(IOUTYP,IGET(128),LVLS(1,IGET(128)),
+    763      X           GRID1,IMOUT,JMOUT)
+    764          ENDIF
+    765 C
+    766 C     TIME AVERAGED SURFACE LONG WAVE OUTGOING RADIATION.
+    767          IF (IGET(129).GT.0) THEN
+    768            IF(ARDLW.GT.0.)THEN
+    769              RRNUM=1./ARDLW
+    770            ELSE
+    771              RRNUM=0.
+    772            ENDIF
+    773            DO J=JSTA,JEND
+    774            DO I=1,IM
+    775              EGRID1(I,J) = -1.0*ALWOUT(I,J)*RRNUM
+    776            ENDDO
+    777            ENDDO
+    778             CALL E2OUT(129,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    779             ID(1:25)=0
+    780             IFHR       = NTSD/TSPH+0.5
+    781             ITRDLW     = INT(TRDLW)
+    782             IFINCR     = MOD(IFHR,ITRDLW)
+    783             ID(19)  = IFHR
+    784             ID(20)  = 3
+    785             IF (IFINCR.EQ.0) THEN
+    786                ID(18)  = IFHR-ITRDLW
+    787             ELSE
+    788                ID(18)  = IFHR-IFINCR
+    789             ENDIF
+    790             IF (ID(18).LT.0) ID(18) = 0
+    791             CALL OUTPUT(IOUTYP,IGET(129),LVLS(1,IGET(129)),
+    792      X           GRID1,IMOUT,JMOUT)
+    793          ENDIF
+    794 C
+    795 C     TIME AVERAGED TOP OF THE ATMOSPHERE SHORT WAVE RADIATION.
+    796          IF (IGET(130).GT.0) THEN
+    797            IF(ARDSW.GT.0.)THEN
+    798              RRNUM=1./ARDSW
+    799            ELSE
+    800              RRNUM=0.
+    801            ENDIF
+    802            DO J=JSTA,JEND
+    803            DO I=1,IM
+    804              EGRID1(I,J) = ASWTOA(I,J)*RRNUM
+    805            ENDDO
+    806            ENDDO
+    807             CALL E2OUT(130,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+
+Page 12          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    808             ID(1:25)=0
+    809             IFHR       = NTSD/TSPH+0.5
+    810             ITRDSW     = INT(TRDSW)
+    811             IFINCR     = MOD(IFHR,ITRDSW)
+    812             ID(19)  = IFHR
+    813             ID(20)  = 3
+    814             IF (IFINCR.EQ.0) THEN
+    815                ID(18)  = IFHR-ITRDSW
+    816             ELSE
+    817                ID(18)  = IFHR-IFINCR
+    818             ENDIF
+    819             IF (ID(18).LT.0) ID(18) = 0
+    820             CALL OUTPUT(IOUTYP,IGET(130),LVLS(1,IGET(130)),
+    821      X           GRID1,IMOUT,JMOUT)
+    822          ENDIF
+    823 C
+    824 C     TIME AVERAGED TOP OF THE ATMOSPHERE LONG WAVE RADIATION.
+    825          IF (IGET(131).GT.0) THEN
+    826            IF(ARDLW.GT.0.)THEN
+    827              RRNUM=1./ARDLW
+    828            ELSE
+    829              RRNUM=0.
+    830            ENDIF
+    831            DO J=JSTA,JEND
+    832            DO I=1,IM
+    833              EGRID1(I,J) = ALWTOA(I,J)*RRNUM
+    834            ENDDO
+    835            ENDDO
+    836             CALL E2OUT(131,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    837             ID(1:25)=0
+    838             IFHR       = NTSD/TSPH+0.5
+    839             ITRDLW     = INT(TRDLW)
+    840             IFINCR     = MOD(IFHR,ITRDLW)
+    841             ID(19)  = IFHR
+    842             ID(20)  = 3
+    843             IF (IFINCR.EQ.0) THEN
+    844                ID(18)  = IFHR-ITRDLW
+    845             ELSE
+    846                ID(18)  = IFHR-IFINCR
+    847             ENDIF
+    848             IF (ID(18).LT.0) ID(18) = 0
+    849             CALL OUTPUT(IOUTYP,IGET(131),LVLS(1,IGET(131)),
+    850      X           GRID1,IMOUT,JMOUT)
+    851          ENDIF
+    852 C     
+    853 C     CURRENT INCOMING SW RADIATION AT THE SURFACE.
+    854       IF (IGET(156).GT.0) THEN
+    855          DO J=JSTA,JEND
+    856          DO I=1,IM
+    857            IF(CZMEAN(I,J).GT.1.E-6) THEN
+    858              FACTRS=CZEN(I,J)/CZMEAN(I,J)
+    859            ELSE
+    860              FACTRS=0.0
+    861            ENDIF
+    862            EGRID1(I,J)=HBM2(I,J)*RSWIN(I,J)*FACTRS
+    863          ENDDO
+    864          ENDDO
+
+Page 13          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    865 C
+    866          CALL E2OUT(156,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    867          ID(1:25)=0
+    868          CALL OUTPUT(IOUTYP,IGET(156),LVLS(1,IGET(156)),
+    869      X        GRID1,IMOUT,JMOUT)
+    870       ENDIF
+    871 C     
+    872 C     CURRENT INCOMING LW RADIATION AT THE SURFACE.
+    873       IF (IGET(157).GT.0) THEN
+    874          DO J=JSTA,JEND
+    875          DO I=1,IM
+    876            IF(SIGT4(I,J).GT.0.0) THEN
+    877              LLMH=LMH(I,J)
+    878              TLMH=T(I,J,LLMH)
+    879              FACTRL=5.67E-8*TLMH*TLMH*TLMH*TLMH/SIGT4(I,J)
+    880            ELSE
+    881              FACTRL=0.0
+    882            ENDIF
+    883            EGRID1(I,J)=HBM2(I,J)*RLWIN(I,J)*FACTRL
+    884          ENDDO
+    885          ENDDO
+    886 C
+    887          CALL E2OUT(157,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    888          ID(1:25)=0
+    889          CALL OUTPUT(IOUTYP,IGET(157),LVLS(1,IGET(157)),
+    890      X        GRID1,IMOUT,JMOUT)
+    891       ENDIF
+    892 C     
+    893 C     CURRENT OUTGOING SW RADIATION AT THE SURFACE.
+    894       IF (IGET(141).GT.0) THEN
+    895          DO J=JSTA,JEND
+    896          DO I=1,IM
+    897            IF(CZMEAN(I,J).GT.1.E-6) THEN
+    898              FACTRS=CZEN(I,J)/CZMEAN(I,J)
+    899            ELSE
+    900              FACTRS=0.0
+    901            ENDIF
+    902            EGRID1(I,J)=HBM2(I,J)*RSWOUT(I,J)*FACTRS
+    903          ENDDO
+    904          ENDDO
+    905 C
+    906          CALL E2OUT(141,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    907          ID(1:25)=0
+    908          CALL OUTPUT(IOUTYP,IGET(141),LVLS(1,IGET(141)),
+    909      X        GRID1,IMOUT,JMOUT)
+    910       ENDIF
+    911 C     
+    912 C     CURRENT OUTGOING LW RADIATION AT THE SURFACE.
+    913       IF (IGET(142).GT.0) THEN
+    914          CALL E2OUT(142,000,RADOT,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    915          ID(1:25)=0
+    916          CALL OUTPUT(IOUTYP,IGET(142),LVLS(1,IGET(142)),
+    917      X        GRID1,IMOUT,JMOUT)
+    918       ENDIF
+    919 C
+    920 C     END OF ROUTINE.
+    921       print*,'End of CLDRAD'
+
+Page 14          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+    922 C
+    923       RETURN
+    924       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ cldrad_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 40                         Label  452                                                            444,445                           
+ 50                         Label  481                                                            474,475                           
+ 60                         Label  510                                                            503,504                           
+ 70                         Label  578                                                            543,544                           
+ 80                         Label  649                                                            615,616                           
+ A2                         Param  157      R(4)            4           scalar                                                      
+ A3                         Param  157      R(4)            4           scalar                                                      
+ A4                         Param  157      R(4)            4           scalar                                                      
+ ACMCLD                     Common 279                                  1467512  SAVE                                               
+ ACMRDL                     Common 292                                  2201268  SAVE                                               
+ ACMRDS                     Common 286                                  2201268  SAVE                                               
+ AD05                       Param  149      R(4)            4           scalar                                                      
+ AMAX1                      Func   431                                  scalar                    431,432                           
+ BETA                       Param  153      R(4)            4           scalar                    153                               
+ BOUND                      Subr   358                                                            358,372,390                       
+ BTG                        Param  153      R(4)            4           scalar                                                      
+ C2K                        Param  162      R(4)            4           scalar                    336                               
+ CALCAPE                    Subr   353                                                            353                               
+ CALPW                      Subr   387                                                            387                               
+ CAPA                       Param  144      R(4)            4           scalar                    151                               
+ CBOT                       Local  546      R(4)            4           scalar                    546,556,557,558,564,567,568,571   
+ CFT0                       Param  149      R(4)            4           scalar                                                      
+ CLDBP                      Local  171      R(4)            4     2     91719                     536,565,568,572,575,581           
+ CLDBZ                      Local  171      R(4)            4     2     91719                     537,566,569,573,589               
+ CLDRAD                     Subr   1                                                                                                
+ CLDTP                      Local  170      R(4)            4     2     91719                     631,636,641,644,652               
+ CLDTT                      Local  171      R(4)            4     2     91719                     634,638,646,668                   
+ CLDTZ                      Local  171      R(4)            4     2     91719                     632,637,642,660                   
+ CLDWTR                     Common 319                                  17610408 SAVE                                               
+ CLIMIT                     Local  532      R(4)            4           scalar                    532,555,599,621                   
+ CM1                        Param  139      R(4)            4           scalar                                                      
+ CM2                        Param  139      R(4)            4           scalar                                                      
+ CM3                        Param  139      R(4)            4           scalar                                                      
+ CNVCLD                     Common 243                                  1467504  SAVE                                               
+ CP                         Param  150      R(4)            4           scalar                    152,156                           
+ CPDR                       Param  152      R(4)            4           scalar                                                      
+ CTLBLK                     Common 264                                  96       SAVE                                               
+ CTOP                       Local  617      R(4)            4           scalar                    617,622,623,624,630,635,640       
+ D00                        Param  141      R(4)            4           scalar                    358,372,390,450,479,508           
+ D001                       Param  141      R(4)            4           scalar                                                      
+ D0065                      Param  145      R(4)            4           scalar                                                      
+
+Page 15          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ D01                        Param  141      R(4)            4           scalar                                                      
+ D05                        Param  145      R(4)            4           scalar                    149                               
+ D1                         Param  141      R(4)            4           scalar                                                      
+ D115                       Param  145      R(4)            4           scalar                                                      
+ D125                       Param  143      R(4)            4           scalar                                                      
+ D25                        Param  143      R(4)            4           scalar                                                      
+ D50                        Param  141      R(4)            4           scalar                                                      
+ D608                       Param  145      R(4)            4           scalar                    574,643                           
+ DP10M                      Param  151      R(4)            4           scalar                                                      
+ DTR                        Param  150      R(4)            4           scalar                    150                               
+ E2OUT                      Subr   340                                                            340,357,366,388,402,411,420,435,45
+                                                                                                  4,483,512,581,589,652,660,668,691,
+                                                                                                  720,749,778,807,836,866,887,906,91
+                                                                                                  4                                 
+ EGRID1                     Local  169      R(4)            4     2     91719                     328,332,336,340,353,357,366,387,38
+                                                                                                  8,431,435,448,450,454,477,479,483,
+                                                                                                  506,508,512,688,691,717,720,746,74
+                                                                                                  9,775,778,804,807,833,836,862,866,
+                                                                                                  883,887,902,906                   
+ EGRID2                     Local  169      R(4)            4     2     91719                     340,353,357,366,388,402,411,420,43
+                                                                                                  5,454,483,512,581,589,652,660,668,
+                                                                                                  691,720,749,778,807,836,866,887,90
+                                                                                                  6,914                             
+ ELDR                       Param  152      R(4)            4           scalar                                                      
+ ELWV                       Param  152      R(4)            4           scalar                    152                               
+ EPS                        Param  155      R(4)            4           scalar                    155                               
+ EPSQ2                      Param  156      R(4)            4           scalar                                                      
+ ERAD                       Param  150      R(4)            4           scalar                                                      
+ EXTRA                      Common 190                                  71506268 SAVE                                               
+ FACTRL                     Local  879      R(4)            4           scalar                    879,881,883                       
+ FACTRS                     Local  858      R(4)            4           scalar                    858,860,862,898,900,902           
+ FMD                        Param  155      R(4)            4           scalar                    155                               
+ FMW                        Param  155      R(4)            4           scalar                    155                               
+ G                          Param  148      R(4)            4           scalar                    148                               
+ GI                         Param  148      R(4)            4           scalar                    152                               
+ GRID1                      Local  170      R(4)            4     2     0                         340,345,357,358,361,366,369,372,37
+                                                                                                  5,380,388,390,392,402,404,406,411,
+                                                                                                  413,415,420,422,424,435,437,439,45
+                                                                                                  4,467,469,483,496,498,512,525,527,
+                                                                                                  581,584,589,592,652,655,660,663,66
+                                                                                                  9,672,691,705,720,734,749,763,778,
+                                                                                                  792,807,821,836,850,866,869,887,89
+                                                                                                  0,906,909,914,917                 
+ GRID2                      Local  170      R(4)            4     2     0                         340,357,366,388,402,411,420,435,45
+                                                                                                  4,483,512,581,589,652,660,669,691,
+                                                                                                  720,749,778,807,836,866,887,906,91
+                                                                                                  4                                 
+ H1                         Param  142      R(4)            4           scalar                    149,574,643                       
+ H100                       Param  143      R(4)            4           scalar                                                      
+ H1000                      Param  143      R(4)            4           scalar                                                      
+ H10000                     Param  144      R(4)            4           scalar                                                      
+ H10E5                      Param  144      R(4)            4           scalar                                                      
+ H1E2                       Param  146      R(4)            4           scalar                                                      
+ H1E4                       Param  146      R(4)            4           scalar                                                      
+ H1M12                      Param  142      R(4)            4           scalar                                                      
+
+Page 16          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ H1M2                       Param  146      R(4)            4           scalar                                                      
+ H1M5                       Param  143      R(4)            4           scalar                                                      
+ H2                         Param  142      R(4)            4           scalar                                                      
+ H4                         Param  142      R(4)            4           scalar                                                      
+ H999                       Param  141      R(4)            4           scalar                                                      
+ H99999                     Param  142      R(4)            4           scalar                    358,372,390                       
+ I                          Local  327      I(4)            4           scalar                    327,328,335,336,368,369,374,375,43
+                                                                                                  0,431,432,445,446,448,450,475,476,
+                                                                                                  477,479,504,505,506,508,534,535,53
+                                                                                                  6,537,544,545,555,557,558,560,565,
+                                                                                                  566,568,569,572,573,574,575,576,60
+                                                                                                  1,602,616,618,621,623,624,626,631,
+                                                                                                  632,633,634,636,637,638,641,642,64
+                                                                                                  3,644,645,646,687,688,716,717,745,
+                                                                                                  746,774,775,803,804,832,833,856,85
+                                                                                                  7,858,862,875,876,877,878,879,883,
+                                                                                                  896,897,898,902                   
+ IDIM1                      Param  108      I(4)            4           scalar                                                      
+ IDIM2                      Param  108      I(4)            4           scalar                                                      
+ IFHR                       Local  456      I(4)            4           scalar                    456,458,459,462,464,485,487,488,49
+                                                                                                  1,493,514,516,517,520,522,693,695,
+                                                                                                  696,699,701,722,724,725,728,730,75
+                                                                                                  1,753,754,757,759,780,782,783,786,
+                                                                                                  788,809,811,812,815,817,838,840,84
+                                                                                                  1,844,846                         
+ IFINCR                     Local  458      I(4)            4           scalar                    458,461,464,487,490,493,516,519,52
+                                                                                                  2,695,698,701,724,727,730,753,756,
+                                                                                                  759,782,785,788,811,814,817,840,84
+                                                                                                  3,846                             
+ IGSTL                      Param  103      I(4)            4           scalar                    108                               
+ IGSTR                      Param  103      I(4)            4           scalar                    108                               
+ IM                         Param  97       I(4)            4           scalar                    105,108,115,120,122,123,125,167,16
+                                                                                                  8,169,170,171,189,191,192,193,194,
+                                                                                                  195,196,215,217,231,232,233,234,23
+                                                                                                  5,236,244,252,258,260,280,281,287,
+                                                                                                  288,293,294,320,327,335,430,445,47
+                                                                                                  5,504,534,544,601,616,687,716,745,
+                                                                                                  774,803,832,856,875,896           
+ IM1                        Param  122      I(4)            4           scalar                                                      
+ IMJM                       Param  189      I(4)            4           scalar                    192                               
+ IMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        170,340,345,357,358,361,366,368,37
+                                                                                                  2,374,380,388,390,392,402,404,406,
+                                                                                                  411,413,415,420,422,424,435,437,43
+                                                                                                  9,454,467,469,483,496,498,512,525,
+                                                                                                  527,581,584,589,592,652,655,660,66
+                                                                                                  3,669,672,691,705,720,734,749,763,
+                                                                                                  778,792,807,821,836,850,866,869,88
+                                                                                                  7,890,906,909,914,917             
+ IMT                        Param  120      I(4)            4           scalar                                                      
+ IMX                        Param  115      I(4)            4           scalar                                                      
+ INPES                      Param  100      I(4)            4           scalar                    105,108                           
+ INT                        Func   457                                  scalar                    457,486,515,568,572,636,641,694,72
+                                                                                                  3,752,781,810,839                 
+ ISUM                       Local  446      I(4)            4           scalar                    446,447,448                       
+ ITAIL                      Param  105      I(4)            4           scalar                                                      
+
+Page 17          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ITB                        Param  161      I(4)            4           scalar                    228,238                           
+ ITBQ                       Param  161      I(4)            4           scalar                    229,238                           
+ ITCLOD                     Local  457      I(4)            4           scalar                    457,458,462,486,487,491,515,516,52
+                                                                                                  0                                 
+ ITRDLW                     Local  723      I(4)            4           scalar                    723,724,728,781,782,786,839,840,84
+                                                                                                  4                                 
+ ITRDSW                     Local  694      I(4)            4           scalar                    694,695,699,752,753,757,810,811,81
+                                                                                                  5                                 
+ ITYPE                      Local  352      I(4)            4           scalar                    352,353                           
+ J                          Local  326      I(4)            4           scalar                    326,328,334,336,367,369,373,375,42
+                                                                                                  9,431,432,444,446,448,450,474,476,
+                                                                                                  477,479,503,505,506,508,533,535,53
+                                                                                                  6,537,543,545,555,557,558,560,565,
+                                                                                                  566,568,569,572,573,574,575,576,60
+                                                                                                  0,602,615,618,621,623,624,626,631,
+                                                                                                  632,633,634,636,637,638,641,642,64
+                                                                                                  3,644,645,646,686,688,715,717,744,
+                                                                                                  746,773,775,802,804,831,833,855,85
+                                                                                                  7,858,862,874,876,877,878,879,883,
+                                                                                                  895,897,898,902                   
+ JAM                        Param  122      I(4)            4           scalar                    250                               
+ JDIM1                      Param  109      I(4)            4           scalar                                                      
+ JDIM2                      Param  109      I(4)            4           scalar                                                      
+ JGSTL                      Param  104      I(4)            4           scalar                    109                               
+ JGSTR                      Param  104      I(4)            4           scalar                    109                               
+ JM                         Param  97       I(4)            4           scalar                    106,109,115,120,122,125,167,168,16
+                                                                                                  9,170,171,189,191,192,193,194,195,
+                                                                                                  196,215,217,231,232,233,234,235,23
+                                                                                                  6,244,252,258,260,280,281,287,288,
+                                                                                                  293,294,320                       
+ JM2                        Param  122      I(4)            4           scalar                                                      
+ JMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        170,340,345,357,358,361,366,372,38
+                                                                                                  0,388,390,392,402,404,406,411,413,
+                                                                                                  415,420,422,424,435,437,439,454,46
+                                                                                                  7,469,483,496,498,512,525,527,581,
+                                                                                                  584,589,592,652,655,660,663,669,67
+                                                                                                  2,691,705,720,734,749,763,778,792,
+                                                                                                  807,821,836,850,866,869,887,890,90
+                                                                                                  6,909,914,917                     
+ JMT                        Param  120      I(4)            4           scalar                                                      
+ JMX                        Param  115      I(4)            4           scalar                                                      
+ JNPES                      Param  100      I(4)            4           scalar                    106,109                           
+ JTAIL                      Param  106      I(4)            4           scalar                                                      
+ JTB                        Param  161      I(4)            4           scalar                    228,238                           
+ JTBQ                       Param  161      I(4)            4           scalar                    238                               
+ KSAV                       Param  130      I(4)            4           scalar                                                      
+ KSFI                       Param  129      I(4)            4           scalar                                                      
+ KSLI                       Param  130      I(4)            4           scalar                                                      
+ KSLP                       Param  130      I(4)            4           scalar                                                      
+ KSLPD                      Param  129      I(4)            4           scalar                                                      
+ KSMUD                      Param  129      I(4)            4           scalar                                                      
+ KSRH                       Param  130      I(4)            4           scalar                                                      
+ KSSLP                      Param  129      I(4)            4           scalar                                                      
+ KST                        Param  129      I(4)            4           scalar                                                      
+ KSUV                       Param  130      I(4)            4           scalar                                                      
+
+Page 18          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ L                          Local  547      I(4)            4           scalar                    547,555,556,619,621,622           
+ L1D                        Local  168      I(4)            4     2     91719                     353                               
+ LB                         Param  125      I(4)            4           scalar                                                      
+ LEV                        Local  571      I(4)            4           scalar                    571,572,573,574,575,576,640,641,64
+                                                                                                  2,643,644,645,646                 
+ LHEAT                      Param  156      I(4)            4           scalar                    156                               
+ LHTOCP                     Param  156      I(4)            4           scalar                                                      
+ LLMH                       Local  545      I(4)            4           scalar                    545,547,877,878                   
+ LM                         Param  97       I(4)            4           scalar                    115,124,135,192,207,217,227,260,32
+                                                                                                  0,567,569,635,636,637,638         
+ LM1                        Param  124      I(4)            4           scalar                                                      
+ LMHK                       Local  618      I(4)            4           scalar                    618,619,633,634                   
+ LOG                        Func   575                                  scalar                    575,644                           
+ LOOPS                      Common 249                                  748952   SAVE                                               
+ LP1                        Param  124      I(4)            4           scalar                    191,207,227                       
+ LSM                        Param  97       I(4)            4           scalar                    206                               
+ MAPOT                      Common 201                                  1448     SAVE                                               
+ MASKS                      Common 214                                  34853220 SAVE                                               
+ MOD                        Func   458                                  scalar                    458,487,516,695,724,753,782,811,84
+                                                                                                  0                                 
+ MXFLD                      Param  115      I(4)            4           scalar                    176,182,183,184,185               
+ MXLVL                      Param  115      I(4)            4           scalar                    184                               
+ NEED                       Local  167      L(4)            4     2     91719                     535,555,560,602,621,626           
+ NINC                       Param  123      I(4)            4           scalar                                                      
+ NSTAT                      Param  135      I(4)            4           scalar                                                      
+ NSUMD                      Param  131      I(4)            4           scalar                                                      
+ NWORD                      Param  135      I(4)            4           scalar                    135                               
+ NWORD3                     Param  135      I(4)            4           scalar                                                      
+ NWORD6                     Param  135      I(4)            4           scalar                                                      
+ ONEPS                      Param  155      R(4)            4           scalar                                                      
+ OPTIONS                    Common 298                                  24       SAVE                                               
+ OTLIFT2                    Subr   332                                                            332                               
+ OUTPUT                     Subr   344                                                            344,360,379,391,405,414,423,438,46
+                                                                                                  8,497,526,583,591,654,662,671,704,
+                                                                                                  733,762,791,820,849,868,889,908,91
+                                                                                                  6                                 
+ OVERRC                     Param  149      R(4)            4           scalar                    149                               
+ P1000                      Param  151      R(4)            4           scalar                                                      
+ P1D                        Local  353      R(4)            4           scalar                    353                               
+ PARALLEL                   Common 271                                  8240                                                        
+ PHYS                       Common 222                                  7690036  SAVE                                               
+ PQ0                        Param  157      R(4)            4           scalar                                                      
+ Q1D                        Local  353      R(4)            4           scalar                    353                               
+ RCAPA                      Param  151      R(4)            4           scalar                                                      
+ RD                         Param  148      R(4)            4           scalar                    148,152,156                       
+ RDOCP                      Param  156      R(4)            4           scalar                                                      
+ RG                         Param  152      R(4)            4           scalar                                                      
+ ROG                        Param  148      R(4)            4           scalar                    574,643                           
+ RQSTFLD                    Common 181                                  64130                                                       
+ RRNUM                      Local  682      R(4)            4           scalar                    682,684,688,711,713,717,740,742,74
+                                                                                                  6,769,771,775,798,800,804,827,829,
+                                                                                                  833                               
+ RTD                        Param  150      R(4)            4           scalar                                                      
+ SCLFLD                     Subr   404                                                            404,413,422,437,467,496,525       
+ SMTHA                      Param  131      R(4)            4           scalar                                                      
+
+Page 19          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ SMTHB                      Param  131      R(4)            4           scalar                                                      
+ T1D                        Local  353      R(4)            4           scalar                    353                               
+ TFRZ                       Param  155      R(4)            4           scalar                                                      
+ TLMH                       Local  878      R(4)            4           scalar                    878,879                           
+ VRBLS                      Common 257                                  67138308                                                    
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACFRCV                     R(4)            4     8        2     91719    COM              448,506                            
+ ACFRST                     R(4)            4     733760   2     91719    COM              448,477                            
+ AETA                       R(4)            4     808      1     45       COM                                                 
+ AETA1                      R(4)            4     264      1     45       COM              568,572,636,641                    
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ ALSL                       R(4)            4     472      1     39       COM                                                 
+ ALWIN                      R(4)            4     1100640  2     91719    COM              717                                
+ ALWOUT                     R(4)            4     1467516  2     91719    COM              775                                
+ ALWTOA                     R(4)            4     1834392  2     91719    COM              833                                
+ ARDLW                      R(4)            4     8              scalar   COM              710,711,768,769,826,827            
+ ARDSW                      R(4)            4     8              scalar   COM              681,682,739,740,797,798            
+ ASWIN                      R(4)            4     1100640  2     91719    COM              688                                
+ ASWOUT                     R(4)            4     1467516  2     91719    COM              746                                
+ ASWTOA                     R(4)            4     1834392  2     91719    COM              804                                
+ AVBL                       CHAR            20    59130    1     250      COM                                                 
+ CFRACH                     R(4)            4     1100628  2     91719    COM              420,432                            
+ CFRACL                     R(4)            4     366876   2     91719    COM              402,431                            
+ CFRACM                     R(4)            4     733752   2     91719    COM              411,432                            
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CMLD                       R(4)            4     292            scalar   COM                                                 
+ CPHI0                      R(4)            4     1420           scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CUPPT                      R(4)            4     0        2     91719    COM                                                 
+ CWM                        R(4)            4     0        3     4127355  COM              555,621                            
+ CZEN                       R(4)            4     2204780  2     91719    COM              858,898                            
+ CZMEAN                     R(4)            4     6607292  2     91719    COM              857,858,897,898                    
+ DATSET                     CHAR            6     54124          scalar   COM                                                 
+ DEC                        R(4)            4     1016     1     250      COM                                                 
+ DETA                       R(4)            4     628      1     45       COM                                                 
+ DETA1                      R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DISLP                      R(4)            4     308            scalar   COM                                                 
+ DLMD                       R(4)            4     284            scalar   COM                                                 
+ DP30                       R(4)            4     296            scalar   COM                                                 
+ DPHD                       R(4)            4     288            scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+
+Page 20          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ERLAM0                     R(4)            4     1416           scalar   COM                                                 
+ ETA                        R(4)            4     988      1     46       COM                                                 
+ FIELD                      CHAR            20    54130    1     250      COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM                                                 
+ GLON                       R(4)            4     1837904  2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM              862,883,902                        
+ HBOT                       R(4)            4     3672284  2     91719    COM              557,558                            
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM              573,642                            
+ HTOP                       R(4)            4     3305408  2     91719    COM              623,624                            
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ ID                         I(4)            4     54016    1     25       COM              341,342,343,359,378,389,403,412,42 
+                                                                                           1,436,455,459,460,462,464,466,484, 
+                                                                                           488,489,491,493,495,513,517,518,52 
+                                                                                           0,522,524,582,590,653,661,670,692, 
+                                                                                           696,697,699,701,703,721,725,726,72 
+                                                                                           8,730,732,750,754,755,757,759,761, 
+                                                                                           779,783,784,786,788,790,808,812,81 
+                                                                                           3,815,817,819,837,841,842,844,846, 
+                                                                                           848,867,888,907,915                
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDENT                      I(4)            4     52016    1     250      COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFILV                      I(4)            4     53016    1     250      COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IGET                       I(4)            4     16       1     250      COM              325,344,349,350,351,356,360,365,37 
+                                                                                           9,386,391,401,405,410,414,419,423, 
+                                                                                           428,438,443,468,473,497,502,526,53 
+                                                                                           1,580,583,588,591,597,598,651,654, 
+                                                                                           659,662,667,671,680,704,709,733,73 
+                                                                                           8,762,767,791,796,820,825,849,854, 
+                                                                                           868,873,889,894,908,913,916        
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IOUTYP                     I(4)            4     4              scalar   COM              344,360,379,391,405,414,423,438,46 
+                                                                                           8,497,526,583,591,654,662,671,704, 
+                                                                                           733,762,791,820,849,868,889,908,91 
+                                                                                           6                                  
+ IQ                         I(4)            4     2016     1     250      COM                                                 
+ IS                         I(4)            4     3016     1     250      COM                                                 
+ ISHDE                      I(4)            4     12       1     61       COM                                                 
+ ISMFUL                     I(4)            4     5016     1     250      COM                                                 
+ ISMOUT                     I(4)            4     6016     1     250      COM                                                 
+ ISMSTG                     I(4)            4     4016     1     250      COM                                                 
+
+Page 21          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IUNIT                      I(4)            4     1440           scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IXM                        I(4)            4     4              scalar   COM                                                 
+ IYM                        I(4)            4     8              scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              326,334,367,373,429,444,474,503,53 
+                                                                                           3,543,600,615,686,715,744,773,802, 
+                                                                                           831,855,874,895                    
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              326,334,367,373,429,444,474,503,53 
+                                                                                           3,543,600,615,686,715,744,773,802, 
+                                                                                           831,855,874,895                    
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KGTYPE                     I(4)            4     0              scalar   COM              325                                
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ KUNIT                      I(4)            4     1428           scalar   COM                                                 
+ LC                         I(4)            4     16876656 2     91719    COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM              545,618,633,877                    
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ LSL                        I(4)            4     0              scalar   COM                                                 
+ LUNIT                      I(4)            4     1432           scalar   COM                                                 
+ LVLS                       I(4)            4     7016     2     11250    COM              344,350,351,360,379,391,405,414,42 
+                                                                                           3,438,468,497,526,583,591,654,662, 
+                                                                                           671,704,733,762,791,820,849,868,88 
+                                                                                           9,908,916                          
+ ME                         I(4)            4     4              scalar   COM                                                 
+ MUNIT                      I(4)            4     1436           scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCFRCV                     I(4)            4     366884   2     91719    COM              446,505,506                        
+ NCFRST                     I(4)            4     1100636  2     91719    COM              446,476,477                        
+ NCLOD                      I(4)            4     4              scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NFLD                       I(4)            4     12             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NRDLW                      I(4)            4     4              scalar   COM                                                 
+ NRDSW                      I(4)            4     4              scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM              456,485,514,693,722,751,780,809,83 
+                                                                                           8                                  
+
+Page 22          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ NUNIT                      I(4)            4     1444           scalar   COM                                                 
+ OLDRD                      L(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM                                                 
+ PDSL                       R(4)            4     67837500 2     91719    COM              568,572,636,641                    
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM              575,644                            
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     260            scalar   COM                                                 
+ PT1                        R(4)            4     4              scalar   COM              568,572,636,641                    
+ PTBL                       R(4)            4     7341044  2     10184    COM                                                 
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM              574,643                            
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ R                          R(4)            4     256            scalar   COM                                                 
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM              914                                
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RITE2                      L(4)            4     54120          scalar   COM                                                 
+ RITEHD                     L(4)            4     54116          scalar   COM                                                 
+ RLWIN                      R(4)            4     12       2     91719    COM              883                                
+ RLWOUT                     R(4)            4     366888   2     91719    COM                                                 
+ RLWTOA                     R(4)            4     733764   2     91719    COM                                                 
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RSWIN                      R(4)            4     12       2     91719    COM              862                                
+ RSWOUT                     R(4)            4     366888   2     91719    COM              902                                
+ RSWTOA                     R(4)            4     733764   2     91719    COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SBD                        R(4)            4     272            scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM              876,879                            
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPHI0                      R(4)            4     1424           scalar   COM                                                 
+ SPL                        R(4)            4     316      1     39       COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM              328                                
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SR                         R(4)            4     17243532 2     91719    COM                                                 
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+
+Page 23          Source Listing                  CLDRAD
+2022-02-15 16:38 Symbol Table                    CLDRAD.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ STDRD                      L(4)            4     71506264       scalar   COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SVALUE                     R(4)            4     8              scalar   COM                                                 
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              573,634,638,642,646,878            
+ T500                       R(4)            4     67470624 2     91719    COM              332                                
+ TCLOD                      R(4)            4     0              scalar   COM              457,486,515                        
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ TLM0D                      R(4)            4     276            scalar   COM                                                 
+ TPH0D                      R(4)            4     280            scalar   COM                                                 
+ TRDLW                      R(4)            4     0              scalar   COM              723,781,839                        
+ TRDSW                      R(4)            4     0              scalar   COM              694,752,810                        
+ TSHDE                      R(4)            4     1172     1     61       COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TSPH                       R(4)            4     264            scalar   COM              456,485,514,693,722,751,780,809,83 
+                                                                                           8                                  
+ TTBL                       R(4)            4     7381780  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     7422516  2     66880    COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM                                                 
+ U00                        R(4)            4     16509420 2     91719    COM                                                 
+ UL                         R(4)            4     16876296 1     90       COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ WBD                        R(4)            4     268            scalar   COM                                                 
+ X1P                        R(4)            4     300            scalar   COM                                                 
+ Y1P                        R(4)            4     304            scalar   COM                                                 
+ Z0SLP                      R(4)            4     312            scalar   COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM              569,576,637,645                    
+
+Page 24          Source Listing                  CLDRAD
+2022-02-15 16:38 Subprograms/Common Blocks       CLDRAD.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ACMCLD                     Common 279                                  1467512  SAVE                                               
+ ACMRDL                     Common 292                                  2201268  SAVE                                               
+ ACMRDS                     Common 286                                  2201268  SAVE                                               
+ CLDRAD                     Subr   1                                                                                                
+ CLDWTR                     Common 319                                  17610408 SAVE                                               
+ CNVCLD                     Common 243                                  1467504  SAVE                                               
+ CTLBLK                     Common 264                                  96       SAVE                                               
+ EXTRA                      Common 190                                  71506268 SAVE                                               
+ LOOPS                      Common 249                                  748952   SAVE                                               
+ MAPOT                      Common 201                                  1448     SAVE                                               
+ MASKS                      Common 214                                  34853220 SAVE                                               
+ OPTIONS                    Common 298                                  24       SAVE                                               
+ PARALLEL                   Common 271                                  8240                                                        
+ PHYS                       Common 222                                  7690036  SAVE                                               
+ RQSTFLD                    Common 181                                  64130                                                       
+ VRBLS                      Common 257                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+
+Page 25          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+
+Page 26          Source Listing                  CLDRAD
+2022-02-15 16:38                                 CLDRAD.f
+
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CLDRAD.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

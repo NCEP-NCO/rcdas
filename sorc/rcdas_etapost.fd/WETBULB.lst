@@ -1,0 +1,607 @@
+Page 1           Source Listing                  WETBULB
+2022-02-15 16:39                                 WETBULB.f
+
+      1       SUBROUTINE WETBULB(T,Q,PDSL,HTM,KARR,TWET)
+      2 C
+      3 C     FILE: WETBULB.f
+      4 C     WRITTEN: 10 SEPTEMBER 1993, MICHAEL BALDWIN
+      5 C     REVISIONS: 
+      6 C     CONVERSION TO 2-D: 12 JUNE 1998 (T BLACK)
+      7 C     MPI VERSION: 04 Jan 2000 ( JIM TUCCILLO )
+      8 C
+      9 C-----------------------------------------------------------------------
+     10 C     ROUTINE TO COMPUTE WET BULB TEMPERATURES USING THE LOOK UP TABLE
+     11 C     APPROACH THAT IS USED IN CUCNVC
+     12 C  
+     13 C     FOR A GIVEN POINT K AND LAYER L:
+     14 C      THETA E IS COMPUTED FROM THETA AND Q BY LIFTING THE PARCEL TO
+     15 C      ITS SATURATION POINT.
+     16 C      THEN THE WET BULB TEMPERATURE IS FOUND BY FOLLOWING THE THETA E
+     17 C      DOWN TO THE ORIGINAL PRESSURE LEVEL (USING SUBROUTINE TTBLEX).     
+     18 C
+     19 C   
+     20 C
+     21       LOGICAL   UNIS,UNIL,OCT90
+     22       INCLUDE "parmeta"
+     40       INCLUDE "parm.tbl"
+     42       PARAMETER(IMJM=IM*JM-JM/2,LP1=LM+1)
+     43       INCLUDE "cuparm"
+    132       INCLUDE "PHYS.comm"
+    153       INCLUDE "CTLBLK.comm"
+    154 C-----------------------------------------------------------------------
+    155 C  LIST OF VARIABLES NEEDED
+    156 C    PARAMETERS:
+    157 C      INCLUDED IN "cuparm" AND "parm.tbl"
+    158 C    INPUT:
+    159 C      T,Q,HTM (3-D),PDSL,KARR (2-D),KNUM
+    160 C    OUTPUT: 
+    161 C      TWET (3-D)
+    162 C    INTERNAL:
+    163 C      THESP,KLRES,KHRES,QQ,PP,IPTB,ITHTB
+    164 C      PLUS SOME INCLUDED IN COMMON BLOCK "PHYS"
+    165 C    SUBROUTINES CALLED:
+    166 C      TTBLEX
+    167 C
+    182       DIMENSION THESP(IM,JM),TWET(IM,JM,LM),T(IM,JM,LM),Q(IM,JM,LM)
+    183       DIMENSION PDSL(IM,JM),HTM(IM,JM,LM),KARR(IM,JM)
+    184                              D I M E N S I O N
+    185      1 KLRES(IM,JM),KHRES(IM,JM)
+    186      2,QQ(IM,JM),PP(IM,JM)
+    187      3,IPTB(IM,JM),ITHTB(IM,JM)
+    188 C
+    189 C--------------COMPUTE WET BULB TEMPERATURES----------------------------
+    190 !$omp  parallel do
+    191 !$omp& private(apebtk,apespk,bqk,bqs00k,bqs10k,iq,iqtbk,it,ittb1,ittbk,
+    192 !$omp&         karr,khres,klres,knumh,knuml,p00k,p01k,p10k,p11k,ppk,
+    193 !$omp&         presk,qbtk,qqk,sqk,sqs00k,sqs10k,tbtk,thesp,tpspk,
+    194 !$omp&         tqk,tthbtk,tthk)
+    195 C-----------------------------------------------------------------------
+    196                              DO 300 L=1,LM
+    197       DO 125 J=JSTA,JEND
+
+Page 2           Source Listing                  WETBULB
+2022-02-15 16:39                                 WETBULB.f
+
+    198       DO 125 I=1,IM
+    199       IF(KARR(I,J).GT.0)THEN
+    200         IF (HTM(I,J,L).LT.1.0) THEN
+    201           THESP(I,J)=273.15
+    202           GOTO 125
+    203         ENDIF
+    204         TBTK  =T(I,J,L)
+    205         QBTK  =Q(I,J,L)
+    206         PRESK=PDSL(I,J)*AETA(L)+PT
+    207         APEBTK=(H10E5/PRESK)**CAPA
+    208         IF(QBTK.LT.EPSQ) QBTK=HTM(I,J,L)*EPSQ
+    209 C--------------SCALING POTENTIAL TEMPERATURE & TABLE INDEX--------------
+    210         TTHBTK  =TBTK*APEBTK
+    211         TTHK    =(TTHBTK-THL)*RDTH
+    212         QQK     =TTHK-AINT(TTHK)
+    213         ITTB1   =INT(TTHK)+1
+    214 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    215         IF(ITTB1.LT.1) THEN
+    216           ITTB1  =1
+    217           QQK    =D00
+    218         ENDIF
+    219 C
+    220         IF(ITTB1.GE.JTB) THEN
+    221         ITTB1  =JTB-1
+    222         QQK    =D00
+    223         ENDIF
+    224 C--------------BASE AND SCALING FACTOR FOR SPEC. HUMIDITY---------------
+    225         ITTBK=ITTB1
+    226         BQS00K=QS0(ITTBK)
+    227         SQS00K=SQS(ITTBK)
+    228         BQS10K=QS0(ITTBK+1)
+    229         SQS10K=SQS(ITTBK+1)
+    230 C--------------SCALING SPEC. HUMIDITY & TABLE INDEX---------------------
+    231         BQK=(BQS10K-BQS00K)*QQK+BQS00K
+    232         SQK=(SQS10K-SQS00K)*QQK+SQS00K
+    233         TQK=(QBTK-BQK)/SQK*RDQ
+    234         PPK=TQK-AINT(TQK)
+    235         IQTBK=INT(TQK)+1
+    236 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    237         IF(IQTBK.LT.1) THEN
+    238           IQTBK =1
+    239           PPK   =D00
+    240         ENDIF
+    241 C
+    242         IF(IQTBK.GE.ITB) THEN
+    243           IQTBK=ITB-1
+    244           PPK  =D00
+    245         ENDIF
+    246 C--------------SATURATION PRESSURE AT FOUR SURROUNDING TABLE PTS.-------
+    247         IQ=IQTBK
+    248         IT=ITTB1
+    249         P00K=PTBL(IQ  ,IT  )
+    250         P10K=PTBL(IQ+1,IT  )
+    251         P01K=PTBL(IQ  ,IT+1)
+    252         P11K=PTBL(IQ+1,IT+1)
+    253 C--------------SATURATION POINT VARIABLES AT THE BOTTOM-----------------
+    254         TPSPK=P00K+(P10K-P00K)*PPK+(P01K-P00K)*QQK
+
+Page 3           Source Listing                  WETBULB
+2022-02-15 16:39                                 WETBULB.f
+
+    255      1          +(P00K-P10K-P01K+P11K)*PPK*QQK
+    256         APESPK=(H10E5/TPSPK)**CAPA
+    257         THESP(I,J)=TTHBTK*EXP(ELOCP*QBTK*APESPK/TTHBTK)
+    258       ENDIF
+    259   125 CONTINUE
+    260 C--------------SCALING PRESSURE & TT TABLE INDEX------------------------
+    261       KNUML=0
+    262       KNUMH=0
+    263 C
+    264       DO 280 J=JSTA,JEND
+    265       DO 280 I=1,IM
+    266       KLRES(I,J)=0
+    267       KHRES(I,J)=0
+    268 C
+    269       IF(KARR(I,J).GT.0)THEN
+    270         PRESK=PDSL(I,J)*AETA(L)+PT
+    271 C
+    272         IF(PRESK.LT.PLQ)THEN
+    273           KNUML=KNUML+1
+    274           KLRES(I,J)=1
+    275         ELSE
+    276           KNUMH=KNUMH+1
+    277           KHRES(I,J)=1
+    278         ENDIF
+    279       ENDIF
+    280  280  CONTINUE
+    281 C***
+    282 C***  COMPUTE PARCEL TEMPERATURE ALONG MOIST ADIABAT FOR PRESSURE<PL
+    283 C**
+    284       IF(KNUML.GT.0)THEN
+    285         CALL TTBLEX(TWET(1,1,L),TTBL,ITB,JTB,KLRES,PDSL,AETA(L)
+    286      1,             HTM(1,1,L),PT,PL,QQ,PP,RDP,THE0,STHE,RDTHE,THESP
+    287      2,             IPTB,ITHTB)
+    288       ENDIF
+    289 C***
+    290 C***  COMPUTE PARCEL TEMPERATURE ALONG MOIST ADIABAT FOR PRESSURE>PL
+    291 C**
+    292       IF(KNUMH.GT.0)THEN
+    293         CALL TTBLEX(TWET(1,1,L),TTBLQ,ITBQ,JTBQ,KHRES,PDSL,AETA(L)
+    294      1,             HTM(1,1,L),PT,PLQ,QQ,PP,RDPQ,THE0Q,STHEQ,RDTHEQ
+    295      2,             THESP,IPTB,ITHTB)
+    296       ENDIF
+    297 C-----------------------------------------------------------------------
+    298 C-----------------------------------------------------------------------
+    299   300 CONTINUE
+    300       RETURN
+    301       END
+
+Page 4           Source Listing                  WETBULB
+2022-02-15 16:39 Entry Points                    WETBULB.f
+
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ wetbulb_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 125                        Label  259                                                            197,198,202                       
+ 280                        Label  280                                                            264,265                           
+ 300                        Label  299                                                            196                               
+ A2                         Param  49       R(4)            4           scalar                    130                               
+ A23M4L                     Param  130      R(4)            4           scalar                                                      
+ A3                         Param  49       R(4)            4           scalar                    130                               
+ A4                         Param  49       R(4)            4           scalar                    130                               
+ AINT                       Func   212                                  scalar                    212,234                           
+ APEBTK                     Local  207      R(4)            4           scalar                    207,210                           
+ APESPK                     Local  256      R(4)            4           scalar                    256,257                           
+ AVGEFI                     Param  117      R(4)            4           scalar                                                      
+ BQK                        Local  231      R(4)            4           scalar                    231,233                           
+ BQS00K                     Local  226      R(4)            4           scalar                    226,231                           
+ BQS10K                     Local  228      R(4)            4           scalar                    228,231                           
+ CAPA                       Param  47       R(4)            4           scalar                    207,256                           
+ CP                         Param  47       R(4)            4           scalar                    131                               
+ CPRLG                      Param  131      R(4)            4           scalar                                                      
+ CTLBLK                     Common 169                                  96       SAVE                                               
+ D00                        Param  46       R(4)            4           scalar                    217,222,239,244                   
+ D125                       Param  46       R(4)            4           scalar                                                      
+ D50                        Param  46       R(4)            4           scalar                                                      
+ D608                       Param  46       R(4)            4           scalar                                                      
+ DSP0FL                     Param  98       R(4)            4           scalar                    103,123                           
+ DSP0FS                     Param  102      R(4)            4           scalar                    104,126                           
+ DSP0SL                     Param  103      R(4)            4           scalar                    123                               
+ DSP0SS                     Param  104      R(4)            4           scalar                    126                               
+ DSPBFL                     Param  98       R(4)            4           scalar                    103,122                           
+ DSPBFS                     Param  102      R(4)            4           scalar                    104,125                           
+ DSPBSL                     Param  103      R(4)            4           scalar                    122                               
+ DSPBSS                     Param  104      R(4)            4           scalar                    125                               
+ DSPC                       Param  117      R(4)            4           scalar                                                      
+ DSPTFL                     Param  98       R(4)            4           scalar                    103,124                           
+ DSPTFS                     Param  102      R(4)            4           scalar                    104,127                           
+ DSPTSL                     Param  103      R(4)            4           scalar                    124                               
+ DSPTSS                     Param  104      R(4)            4           scalar                    127                               
+ DTTOP                      Param  51       R(4)            4           scalar                                                      
+ EFIFC                      Param  116      R(4)            4           scalar                                                      
+ EFIMN                      Param  88       R(4)            4           scalar                    117,122,123,124,125,126,127,128   
+ EFMNT                      Param  88       R(4)            4           scalar                    128                               
+ ELIVW                      Param  48       R(4)            4           scalar                    131                               
+ ELOCP                      Param  131      R(4)            4           scalar                    257                               
+ ELWV                       Param  48       R(4)            4           scalar                    130,131                           
+ EPSDN                      Param  53       R(4)            4           scalar                                                      
+ EPSNTP                     Param  116      R(4)            4           scalar                                                      
+
+Page 5           Source Listing                  WETBULB
+2022-02-15 16:39 Symbol Table                    WETBULB.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EPSP                       Param  117      R(4)            4           scalar                                                      
+ EPSQ                       Param  48       R(4)            4           scalar                    208                               
+ EPSTH                      Param  53       R(4)            4           scalar                                                      
+ EPSUP                      Param  53       R(4)            4           scalar                                                      
+ EXP                        Func   257                                  scalar                    257                               
+ FCC                        Param  88       R(4)            4           scalar                    88                                
+ FCP                        Param  88       R(4)            4           scalar                                                      
+ FSL                        Param  98       R(4)            4           scalar                    103                               
+ FSS                        Param  88       R(4)            4           scalar                    104                               
+ G                          Param  47       R(4)            4           scalar                    131                               
+ H1                         Param  45       R(4)            4           scalar                    88,122,123,124,125,126,127,128,131
+ H10E5                      Param  45       R(4)            4           scalar                    207,256                           
+ H1D5                       Param  45       R(4)            4           scalar                                                      
+ H2D5                       Param  45       R(4)            4           scalar                                                      
+ H3000                      Param  45       R(4)            4           scalar                                                      
+ HTM                        Dummy  1        R(4)            4     3     4127355  ARG,INOUT        200,208,286,294                   
+ I                          Local  198      I(4)            4           scalar                    198,199,200,201,204,205,206,208,25
+                                                                                                  7,265,266,267,269,270,274,277     
+ IDIM1                      Param  36       I(4)            4           scalar                                                      
+ IDIM2                      Param  36       I(4)            4           scalar                                                      
+ IGSTL                      Param  31       I(4)            4           scalar                    36                                
+ IGSTR                      Param  31       I(4)            4           scalar                    36                                
+ IM                         Param  25       I(4)            4           scalar                    33,36,42,143,144,145,146,147,148,1
+                                                                                                  82,183,185,186,187,198,265        
+ IMJM                       Param  42       I(4)            4           scalar                                                      
+ INPES                      Param  28       I(4)            4           scalar                    33,36                             
+ INT                        Func   213                                  scalar                    213,235                           
+ IPTB                       Local  187      I(4)            4     2     91719                     287,295                           
+ IQ                         Local  247      I(4)            4           scalar                    247,249,250,251,252               
+ IQTBK                      Local  235      I(4)            4           scalar                    235,237,238,242,243,247           
+ IT                         Local  248      I(4)            4           scalar                    248,249,250,251,252               
+ ITAIL                      Param  33       I(4)            4           scalar                                                      
+ ITB                        Param  41       I(4)            4           scalar                    140,150,242,243,285               
+ ITBQ                       Param  41       I(4)            4           scalar                    141,150,293                       
+ ITHTB                      Local  187      I(4)            4     2     91719                     287,295                           
+ ITTB1                      Local  213      I(4)            4           scalar                    213,215,216,220,221,225,248       
+ ITTBK                      Local  225      I(4)            4           scalar                    225,226,227,228,229               
+ J                          Local  197      I(4)            4           scalar                    197,199,200,201,204,205,206,208,25
+                                                                                                  7,264,266,267,269,270,274,277     
+ JDIM1                      Param  37       I(4)            4           scalar                                                      
+ JDIM2                      Param  37       I(4)            4           scalar                                                      
+ JGSTL                      Param  32       I(4)            4           scalar                    37                                
+ JGSTR                      Param  32       I(4)            4           scalar                    37                                
+ JM                         Param  25       I(4)            4           scalar                    34,37,42,143,144,145,146,147,148,1
+                                                                                                  82,183,185,186,187                
+ JNPES                      Param  28       I(4)            4           scalar                    34,37                             
+ JTAIL                      Param  34       I(4)            4           scalar                                                      
+ JTB                        Param  41       I(4)            4           scalar                    140,150,220,221,285               
+ JTBQ                       Param  41       I(4)            4           scalar                    150,293                           
+ KARR                       Dummy  1        I(4)            4     2     91719    ARG,INOUT        199,269                           
+ KHRES                      Local  185      I(4)            4     2     91719                     267,277,293                       
+ KLRES                      Local  185      I(4)            4     2     91719                     266,274,285                       
+ KNUMH                      Local  262      I(4)            4           scalar                    262,276,292                       
+ KNUML                      Local  261      I(4)            4           scalar                    261,273,284                       
+ L                          Local  196      I(4)            4           scalar                    196,200,204,205,206,208,270,285,28
+
+Page 6           Source Listing                  WETBULB
+2022-02-15 16:39 Symbol Table                    WETBULB.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  6,293,294                         
+ LM                         Param  25       I(4)            4           scalar                    42,139,182,183,196                
+ LP1                        Param  42       I(4)            4           scalar                    139                               
+ LSM                        Param  25       I(4)            4           scalar                                                      
+ OCT90                      Param  21       L(4)            4           scalar                                                      
+ P00K                       Local  249      R(4)            4           scalar                    249,254,255                       
+ P01K                       Local  251      R(4)            4           scalar                    251,254,255                       
+ P10K                       Local  250      R(4)            4           scalar                    250,254,255                       
+ P11K                       Local  252      R(4)            4           scalar                    252,255                           
+ PARALLEL                   Common 176                                  8240                                                        
+ PBM                        Param  54       R(4)            4           scalar                                                      
+ PDSL                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        206,270,285,293                   
+ PFRZ                       Param  55       R(4)            4           scalar                                                      
+ PHYS                       Common 134                                  7690036  SAVE                                               
+ PNO                        Param  54       R(4)            4           scalar                                                      
+ PONE                       Param  54       R(4)            4           scalar                                                      
+ PP                         Local  186      R(4)            4     2     91719                     286,294                           
+ PPK                        Local  234      R(4)            4           scalar                    234,239,244,254,255               
+ PQ0                        Param  50       R(4)            4           scalar                                                      
+ PQM                        Param  54       R(4)            4           scalar                                                      
+ PRESK                      Local  206      R(4)            4           scalar                    206,207,270,272                   
+ PSHU                       Param  55       R(4)            4           scalar                                                      
+ Q                          Dummy  1        R(4)            4     3     4127355  ARG,INOUT        205                               
+ QBTK                       Local  205      R(4)            4           scalar                    205,208,233,257                   
+ QQ                         Local  186      R(4)            4     2     91719                     286,294                           
+ QQK                        Local  212      R(4)            4           scalar                    212,217,222,231,232,254,255       
+ RCP                        Param  131      R(4)            4           scalar                                                      
+ RHF                        Param  53       R(4)            4           scalar                                                      
+ ROG                        Param  47       R(4)            4           scalar                                                      
+ ROW                        Param  48       R(4)            4           scalar                    131                               
+ SLOP0L                     Param  123      R(4)            4           scalar                                                      
+ SLOP0S                     Param  126      R(4)            4           scalar                                                      
+ SLOPBL                     Param  122      R(4)            4           scalar                                                      
+ SLOPBS                     Param  125      R(4)            4           scalar                                                      
+ SLOPE                      Param  128      R(4)            4           scalar                                                      
+ SLOPTL                     Param  124      R(4)            4           scalar                                                      
+ SLOPTS                     Param  127      R(4)            4           scalar                                                      
+ SQK                        Local  232      R(4)            4           scalar                    232,233                           
+ SQS00K                     Local  227      R(4)            4           scalar                    227,232                           
+ SQS10K                     Local  229      R(4)            4           scalar                    229,232                           
+ STABD                      Param  51       R(4)            4           scalar                                                      
+ STABFC                     Param  51       R(4)            4           scalar                                                      
+ STABS                      Param  51       R(4)            4           scalar                                                      
+ STEFI                      Param  118      R(4)            4           scalar                                                      
+ STRESH                     Param  50       R(4)            4           scalar                                                      
+ T                          Dummy  1        R(4)            4     3     4127355  ARG,INOUT        204                               
+ T0                         Param  50       R(4)            4           scalar                                                      
+ T1                         Param  50       R(4)            4           scalar                                                      
+ TBTK                       Local  204      R(4)            4           scalar                    204,210                           
+ THESP                      Local  182      R(4)            4     2     91719                     201,257,286,295                   
+ TPSPK                      Local  254      R(4)            4           scalar                    254,256                           
+ TQK                        Local  233      R(4)            4           scalar                    233,234,235                       
+ TREL                       Param  116      R(4)            4           scalar                                                      
+ TTBLEX                     Subr   285                                                            285,293                           
+ TTHBTK                     Local  210      R(4)            4           scalar                    210,211,257                       
+
+Page 7           Source Listing                  WETBULB
+2022-02-15 16:39 Symbol Table                    WETBULB.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ TTHK                       Local  211      R(4)            4           scalar                    211,212,213                       
+ TWET                       Dummy  1        R(4)            4     3     4127355  ARG,INOUT        285,293                           
+ UNIL                       Param  21       L(4)            4           scalar                                                      
+ UNIS                       Param  21       L(4)            4           scalar                                                      
+ WETBULB                    Subr   1                                                                                                
+ ZSH                        Param  54       R(4)            4           scalar                                                      
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     264      1     45       COM              206,270,285,293                    
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     2204780  2     91719    COM                                                 
+ CZMEAN                     R(4)            4     6607292  2     91719    COM                                                 
+ DETA                       R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM                                                 
+ GLON                       R(4)            4     1837904  2     91719    COM                                                 
+ HBOT                       R(4)            4     3672284  2     91719    COM                                                 
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTOP                       R(4)            4     3305408  2     91719    COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              197,264                            
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              197,264                            
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+
+Page 8           Source Listing                  WETBULB
+2022-02-15 16:39 Symbol Table                    WETBULB.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ PL                         R(4)            4     48             scalar   COM              286                                
+ PLQ                        R(4)            4     72             scalar   COM              272,294                            
+ PT                         R(4)            4     4              scalar   COM              206,270,286,294                    
+ PTBL                       R(4)            4     7341044  2     10184    COM              249,250,251,252                    
+ QS0                        R(4)            4     628      1     134      COM              226,228                            
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM              286                                
+ RDPQ                       R(4)            4     76             scalar   COM              294                                
+ RDQ                        R(4)            4     56             scalar   COM              233                                
+ RDTH                       R(4)            4     60             scalar   COM              211                                
+ RDTHE                      R(4)            4     68             scalar   COM              286                                
+ RDTHEQ                     R(4)            4     80             scalar   COM              294                                
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM              227,229                            
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM              286                                
+ STHEQ                      R(4)            4     2916     1     152      COM              294                                
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM              286                                
+ THE0Q                      R(4)            4     2308     1     152      COM              294                                
+ THL                        R(4)            4     52             scalar   COM              211                                
+ TTBL                       R(4)            4     7381780  2     10184    COM              285                                
+ TTBLQ                      R(4)            4     7422516  2     66880    COM              293                                
+
+Page 9           Source Listing                  WETBULB
+2022-02-15 16:39 Subprograms/Common Blocks       WETBULB.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 169                                  96       SAVE                                               
+ PARALLEL                   Common 176                                  8240                                                        
+ PHYS                       Common 134                                  7690036  SAVE                                               
+ WETBULB                    Subr   1                                                                                                
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+
+Page 10          Source Listing                  WETBULB
+2022-02-15 16:39                                 WETBULB.f
+
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+
+Page 11          Source Listing                  WETBULB
+2022-02-15 16:39                                 WETBULB.f
+
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : WETBULB.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

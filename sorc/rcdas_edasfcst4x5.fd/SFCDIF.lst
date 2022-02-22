@@ -1,0 +1,1208 @@
+Page 1           Source Listing                  SFCDIF
+2022-02-15 16:38                                 /tmp/ifortj2cwjt.i
+
+      1 # 1 "SFCDIF.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3       SUBROUTINE SFCDIF(LMHK,SM,THS,QS,UZ0,VZ0,THZ0,QZ0
+      4      &,                 USTAR,WSTAR,Z0,ZEFF,AKMS,AKHS,HPBL,CT
+      5      &,                 U10,V10,TH02,TH10,Q02,Q10
+      6      &,                 TH30,Q30,U30,V30
+      7      &,                 ULM,VLM,T,Q,APE,Z,PD,PT,TLM)
+      8 C     ******************************************************************
+      9 C     *                                                                *
+     10 C     *                        SURFACE LAYER                           *
+     11 C     *                                                                *
+     12 C     ******************************************************************
+     13 C     Ammended to use the "Effective roughness" of Mason (1986, see
+     14 C     Georgelin et al., MWR July 1994), by FM, RW, June 1995
+     15 C-----------------------------------------------------------------------
+     16       INCLUDE "parmeta"
+     40       INCLUDE "mpp.h"
+     41 # 1 "./sp.h" 1 
+     42 # 4
+     43 
+     44 # 18 "SFCDIF.F" 2 
+     45 C-----------------------------------------------------------------------
+    104                              P A R A M E T E R
+    105      &(LP1=LM+1)
+    106 C-----------------------------------------------------------------------
+    107                              P A R A M E T E R
+    108      &(WWST=1.2,WWST2=WWST*WWST,G=9.8,USTFC=0.018/G
+    109      &,VKRM=0.40,RIC=0.183,RFC=0.191,FHNEU=0.8
+    110      &,RRIC=1.0/RIC,RFAC=RIC/(FHNEU*RFC*RFC),EXCM=0.001
+    111      &,BETA=1./270.,BTG=BETA*G
+    112      &,ELFC=VKRM*BTG,CNV=0.608*G/BTG
+    113      &,WOLD=.15,WNEW=1.-WOLD,ITRMX=05
+    114      &,PIHF=3.14159265/2.,PIFR=3.14159265/4.
+    115 C-----------------------------------------------------------------------
+    116      &,EPSU2=1.E-4,EPSUST=0.07,EPSIT=1.E-4,EPSA=1.E-8
+    117      &,ZTMIN=-5.,ZTMAX=1.
+    118 C-----------------------------------------------------------------------
+    119      &,SMALL=0.35, GLKBS=30.0,GLKBR=10.0,GRRS=GLKBR/GLKBS
+    120      &,CZIV=SMALL*GLKBS
+    121      &,VISC=1.5E-5, TVISC=2.1E-5, QVISC=2.1E-5
+    122      &,RVISC=1./VISC,RTVISC=1./TVISC,RQVISC=1./QVISC
+    123      &,SQPR=0.84,SQSC=0.84,ZQRZT=SQSC/SQPR
+    124      &,USTR=0.225,USTC=0.7
+    125      &,FZU1=CZIV*VISC,FZT1=RVISC *TVISC*SQPR,   FZQ1=RTVISC*QVISC*ZQRZT
+    126      &,               FZT2=CZIV*GRRS*TVISC*SQPR,FZQ2=RTVISC*QVISC*ZQRZT
+    127 C-----------------------------------------------------------------------
+    128      &,ZTFC=1.0
+    129 c     &,CZIL=.1000,SQVISC=258.2,ZILFC=-CZIL*VKRM*SQVISC
+    130      &,CZIL=.2000,SQVISC=258.2,ZILFC=-CZIL*VKRM*SQVISC
+    131      &,PQ0=379.90516,A2=17.2693882,A3=273.16,A4=35.86
+    132      &,CAPA=0.28589641E0,H1M5=1.E-5)
+    133 C-----------------------------------------------------------------------
+    134                              D I M E N S I O N
+    135      & T     (LM),Q     (LM)
+    136                              D I M E N S I O N
+    137      & APE   (LM)
+    138      &,Z     (LP1)
+
+Page 2           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    139 C-ZEFF-ZEFF-ZEFF-ZEFF
+    140      &,ZEFF  (4)
+    141 C-ZEFF-ZEFF-ZEFF-ZEFF
+    142 C-----------------------------------------------------------------------
+    143       PSLMU(ZZ)=-0.96*ALOG(1.0-4.5*ZZ)
+    144       PSLMS(ZZ)=ZZ*RRIC-2.076*(1.-1./(ZZ+1.))
+    145       PSLHU(ZZ)=-0.96*ALOG(1.0-4.5*ZZ)
+    146       PSLHS(ZZ)=ZZ*RFAC-2.076*(1.-1./(ZZ+1.))
+    147 C
+    148       PSPMU(XX)=-2.*ALOG((XX+1.)*0.5)-ALOG((XX*XX+1.)*0.5)+2.*ATAN(XX)
+    149      &          -PIHF
+    150       PSPMS(YY)=5.*YY
+    151       PSPHU(XX)=-2.*ALOG((XX*XX+1.)*0.5)
+    152       PSPHS(YY)=5.*YY
+    153 C***********************************************************************
+    154       LMHP=LMHK+1
+    155 C
+    156       THLM=T(LMHK)*APE(LMHK)
+    157       QLM=Q(LMHK)
+    158 C-----------------------------------------------------------------------
+    159       Z0=(1.-SM)*Z0+SM*AMAX1(USTFC*USTAR*USTAR,1.59E-5)
+    160 C--------------VISCOUS SUBLAYER-----------------------------------------
+    161       IF(SM.GT.0.5.AND.USTAR.LT.USTC)THEN
+    162 C-----------------------------------------------------------------------
+    163         IF(USTAR.LT.USTR)THEN
+    164 C
+    165           ZU=FZU1*SQRT(SQRT(Z0*USTAR*RVISC))/USTAR
+    166           WGHT=AKMS*ZU*RVISC
+    167           RWGH=WGHT/(WGHT+1.)
+    168           UZ0=(ULM*RWGH+UZ0)*0.5
+    169           VZ0=(VLM*RWGH+VZ0)*0.5
+    170 C
+    171           ZT=FZT1*ZU
+    172           WGHT=AKHS*ZT*RTVISC
+    173           THZ0=((WGHT*THLM+THS)/(WGHT+1.)+THZ0)*0.5
+    174 C
+    175           ZQ=FZQ1*ZT
+    176           WGHT=AKHS*ZQ*RQVISC
+    177           QZ0 =((WGHT*QLM+QS)/(WGHT+1.)+QZ0)*0.5
+    178 C
+    179         ENDIF
+    180         IF(USTAR.GE.USTR.AND.USTAR.LT.USTC)THEN
+    181 C
+    182           ZU=Z0
+    183           UZ0=0.
+    184           VZ0=0.
+    185 C
+    186           ZT=FZT2*SQRT(SQRT(Z0*USTAR*RVISC))/USTAR
+    187           WGHT=AKHS*ZT*RTVISC
+    188           THZ0=((WGHT*THLM+THS)/(WGHT+1.)+THZ0)*0.5
+    189 C
+    190           ZQ=FZQ2*ZT
+    191           WGHT=AKHS*ZQ*RQVISC
+    192           QZ0 =((WGHT*QLM+QS)/(WGHT+1.)+QZ0)*0.5
+    193         ENDIF
+    194 C-----------------------------------------------------------------------
+    195       ELSE
+
+Page 3           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    196 C-----------------------------------------------------------------------
+    197         ZU=Z0
+    198 C-ZEFF-ZEFF-ZEFF-ZEFF
+    199               IF(SM.LE.0.5)THEN
+    200          IF(ULM.EQ.0.) ULM=EPSU2
+    201          ALPHA=ABS(ATAN(VLM/ULM)+PIHF-EPSA)
+    202          X=ALPHA/PIFR
+    203          ML=1+X
+    204 C 2012-11 WNE
+    205          if (ml.lt.1.or.ml.gt.4) then
+    206              write (*,*)'>>ml problem ml,ulm,vlm=',ml,ulm,vlm
+    207              ml = 1
+    208          endif
+    209          MH=1+MOD(ML,4)
+    210 
+    211          WLOW=X-ML+1
+    212          ZU=WLOW*ZEFF(ML)+(1.-WLOW)*ZEFF(MH)
+    213               ENDIF
+    214 C-ZEFF-ZEFF-ZEFF-ZEFF
+    215         UZ0=0.
+    216         VZ0=0.
+    217 C
+    218         ZT=Z0
+    219         THZ0=THS
+    220 C
+    221         ZQ=Z0
+    222         QZ0=QS
+    223 C-----------------------------------------------------------------------
+    224       ENDIF
+    225 C-----------------------------------------------------------------------
+    226       ZSL=(Z(LMHK)-Z(LMHP))*0.5
+    227 C-ZEFF-ZEFF-ZEFF-ZEFF
+    228             ZU=AMIN1(ZU,0.5*ZSL)
+    229 C-ZEFF-ZEFF-ZEFF-ZEFF
+    230       RDZ=1./ZSL
+    231       CXCH=EXCM*RDZ
+    232 C-----------------------------------------------------------------------
+    233       IF(SM.GT.0.5)THEN
+    234         DTHV=(0.608*QLM+1.)*THLM-(0.608*QZ0+1.)*THZ0
+    235       ELSE
+    236         DTHV=(QLM-QZ0)*CNV+THLM-THZ0
+    237         ZT=Z0*ZTFC
+    238       ENDIF
+    239 C
+    240       DU2=AMAX1((ULM-UZ0)**2+(VLM-VZ0)**2,EPSU2)
+    241 C-----------------------------------------------------------------------
+    242       RIB=BTG*DTHV*ZSL/DU2
+    243 C--------------BELJARS CORRECTION OF USTAR------------------------------
+    244       BTGH=BTG*HPBL
+    245       WSTAR2=WWST2*ABS(BTGH*AKHS*DTHV)**(2./3.)
+    246       USTAR=AMAX1(SQRT(AKMS*SQRT(DU2+WSTAR2)),EPSUST)
+    247 C--------------ZILITINKEVITCH FIX FOR ZT--------------------------------
+    248       IF(SM.LT.0.5)ZT=EXP(ZILFC*SQRT(USTAR*Z0))*Z0
+    249 C-----------------------------------------------------------------------
+    250       IF(SM.GT.0.5.AND.RIB.GE.RIC)THEN
+    251 C-----------------------------------------------------------------------
+    252         AKMS=AMAX1( VISC*RDZ,CXCH)
+
+Page 4           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    253         AKHS=AMAX1(TVISC*RDZ,CXCH)
+    254 C-----------------------------------------------------------------------
+    255       ELSE
+    256 C-----------------------------------------------------------------------
+    257         ZSLU=ZSL+ZU
+    258         ZSLT=ZSL+ZT
+    259 C
+    260         RLOGU=ALOG(ZSLU/ZU)
+    261         RLOGT=ALOG(ZSLT/ZT)
+    262 C
+    263         RLMO=ELFC*AKHS*DTHV/USTAR**3
+    264 C--------------SEA POINTS FIRST ... ------------------------------------
+    265         IF(SM.GT.0.5)THEN
+    266               DO 100 ITR=1,ITRMX
+    267 C--------------1./MONIN-OBUKKHOV LENGTH-SCALE---------------------------
+    268           ZETALT=AMAX1(ZSLT*RLMO,ZTMIN)
+    269           RLMO=ZETALT/ZSLT
+    270           ZETALU=ZSLU*RLMO
+    271 C
+    272           ZETAU=ZU*RLMO
+    273           ZETAT=ZT*RLMO
+    274 C--------------LL FUNCTIONS OVER SEA------------------------------------
+    275           IF(RLMO.LT.0.)THEN
+    276             PSMZ=PSLMU(ZETAU)
+    277             SIMM=       PSLMU(ZETALU)-PSMZ+RLOGU
+    278             PSHZ=PSLHU(ZETAT)
+    279             SIMH=FHNEU*(PSLHU(ZETALT)-PSHZ+RLOGT)
+    280           ELSE
+    281             PSMZ=PSLMS(ZETAU)
+    282             SIMM=       PSLMS(ZETALU)-PSMZ+RLOGU
+    283             PSHZ=PSLHS(ZETAT)
+    284             SIMH=FHNEU*(PSLHS(ZETALT)-PSHZ+RLOGT)
+    285           ENDIF
+    286 C--------------BELJAARS CORRECTION FOR USTAR----------------------------
+    287           USTAR=AMAX1(SQRT(AKMS*SQRT(DU2+WSTAR2)),EPSUST)
+    288 C-----------------------------------------------------------------------
+    289           USTARK=USTAR*VKRM
+    290           AKMS=AMAX1(USTARK/SIMM,CXCH)
+    291           AKHS=AMAX1(USTARK/SIMH,CXCH)
+    292 C-----------------------------------------------------------------------
+    293           WSTAR2=WWST2*ABS(BTGH*AKHS*DTHV)**(2./3.)
+    294           RLMN=ELFC*AKHS*DTHV/USTAR**3
+    295 C-----------------------------------------------------------------------
+    296           RLMP=RLMO
+    297           RLMA=RLMO*WOLD+RLMN*WNEW
+    298 C-----------------------------------------------------------------------
+    299 C          IF(ABS((RLMN-RLMO)/RLMA).LT.EPSIT)    GO TO 110
+    300 C-----------------------------------------------------------------------
+    301           RLMO=RLMA
+    302 C-----------------------------------------------------------------------
+    303   100     CONTINUE
+    304 C-----------------------------------------------------------------------
+    305   110     CONTINUE
+    306 C--------------END OF SEA POINT PROCESSING------------------------------
+    307         ELSE
+    308 C--------------NOW LAND POINTS ...--------------------------------------
+    309               DO 200 ITR=1,ITRMX
+
+Page 5           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    310 C--------------1./MONIN-OBUKKHOV LENGTH-SCALE---------------------------
+    311           ZETALT=AMAX1(ZSLT*RLMO,ZTMIN)
+    312           RLMO=ZETALT/ZSLT
+    313           ZETALU=ZSLU*RLMO
+    314 C
+    315           ZETAU=ZU*RLMO
+    316           ZETAT=ZT*RLMO
+    317 C--------------PAULSON 1970 FUNCTIONS OVER LAND W RAD. SKIN T-----------
+    318           IF(RLMO.LT.0.)THEN
+    319             XLU4=1.-16.*ZETALU
+    320             XLT4=1.-16.*ZETALT
+    321             XU4 =1.-16.*ZETAU
+    322             XT4 =1.-16.*ZETAT
+    323 C
+    324             XLU=SQRT(SQRT(XLU4))
+    325             XLT=SQRT(SQRT(XLT4))
+    326             XU =SQRT(SQRT(XU4))
+    327             XT =SQRT(SQRT(XT4))
+    328 C
+    329             PSMZ=PSPMU(XU)
+    330             SIMM=PSPMU(XLU)-PSMZ+RLOGU
+    331             PSHZ=PSPHU(XT)
+    332             SIMH=PSPHU(XLT)-PSHZ+RLOGT
+    333           ELSE
+    334             ZETAU=AMIN1(ZETAU,ZTMAX)
+    335             ZETAT=AMIN1(ZETAT,ZTMAX)
+    336             ZETALU=AMIN1(ZETALU,ZTMAX)
+    337             ZETALT=AMIN1(ZETALT,ZTMAX)
+    338             PSMZ=PSPMS(ZETAU)
+    339             SIMM=PSPMS(ZETALU)-PSMZ+RLOGU
+    340             PSHZ=PSPHS(ZETAT)
+    341             SIMH=PSPHS(ZETALT)-PSHZ+RLOGT
+    342           ENDIF
+    343 C--------------BELJAARS CORRECTION FOR USTAR----------------------------
+    344           USTAR=AMAX1(SQRT(AKMS*SQRT(DU2+WSTAR2)),EPSUST)
+    345 C--------------ZILITINKEVITCH FIX FOR ZT--------------------------------
+    346           ZT=EXP(ZILFC*SQRT(USTAR*Z0))*Z0
+    347           ZSLT=ZSL+ZT
+    348           RLOGT=ALOG(ZSLT/ZT)
+    349 C-----------------------------------------------------------------------
+    350           USTARK=USTAR*VKRM
+    351           AKMS=AMAX1(USTARK/SIMM,CXCH)
+    352           AKHS=AMAX1(USTARK/SIMH,CXCH)
+    353 C-----------------------------------------------------------------------
+    354           WSTAR2=WWST2*ABS(BTGH*AKHS*DTHV)**(2./3.)
+    355           RLMN=ELFC*AKHS*DTHV/USTAR**3
+    356 C-----------------------------------------------------------------------
+    357           RLMP=RLMO
+    358           RLMA=RLMO*WOLD+RLMN*WNEW
+    359 C-----------------------------------------------------------------------
+    360 C          IF(ABS((RLMN-RLMO)/RLMA).LT.EPSIT)    GO TO 210
+    361 C-----------------------------------------------------------------------
+    362           RLMO=RLMA
+    363 C-----------------------------------------------------------------------
+    364   200     CONTINUE
+    365 C-----------------------------------------------------------------------
+    366   210     CONTINUE
+
+Page 6           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    367 C--------------END OF LAND POINT PROCESSING AND SEA-LAND BRANCHING------
+    368         ENDIF
+    369 C--------------END OF TURBULENCE-NO TURBULENCE BRANCHING----------------
+    370       ENDIF
+    371 C--------------COUNTERGRADIENT FIX--------------------------------------
+    372 C      HV=-AKHS*DTHV
+    373 C      IF(HV.GT.0.)THEN
+    374 C        FCT=-10.*(BTG)**(-1./3.)
+    375 C        CT=FCT*(HV/(HPBL*HPBL))**(2./3.)
+    376 C      ELSE
+    377         CT=0.
+    378 C      ENDIF
+    379 C--------------DIAGNOSTIC BLOCK-----------------------------------------
+    380       WSTAR=SQRT(WSTAR2)/WWST
+    381 C
+    382       UMFLX=AKMS*(ULM -UZ0 )
+    383       VMFLX=AKMS*(VLM -VZ0 )
+    384       HSFLX=AKHS*(THLM-THZ0)
+    385       HLFLX=AKHS*(QLM -QZ0 )
+    386 C-----------------------------------------------------------------------
+    387       IF(SM.GT.0.5.AND.RIB.GE.RIC)THEN
+    388 C-----------------------------------------------------------------------
+    389         AKMS10=AMAX1( VISC/10.,CXCH)
+    390         AKMS30=AMAX1( VISC/30.,CXCH)
+    391         AKHS02=AMAX1(TVISC/02.,CXCH)
+    392         AKHS10=AMAX1(TVISC/10.,CXCH)
+    393         AKHS30=AMAX1(TVISC/30.,CXCH)
+    394 C-----------------------------------------------------------------------
+    395       ELSE
+    396 C-----------------------------------------------------------------------
+    397         ZU10=ZU+10.
+    398         ZU30=ZU+30.
+    399         ZT02=ZT+02.
+    400         ZT10=ZT+10.
+    401         ZT30=ZT+30.
+    402 C
+    403         RLNU10=ALOG(ZU10/ZU)
+    404         RLNU30=ALOG(ZU30/ZU)
+    405         RLNT02=ALOG(ZT02/ZT)
+    406         RLNT10=ALOG(ZT10/ZT)
+    407         RLNT30=ALOG(ZT30/ZT)
+    408 C
+    409         ZTAU10=ZU10*RLMP
+    410         ZTAU30=ZU30*RLMP
+    411         ZTAT02=ZT02*RLMP
+    412         ZTAT10=ZT10*RLMP
+    413         ZTAT30=ZT30*RLMP
+    414 C--------------LL FUNCTIONS OVER SEA------------------------------------
+    415         IF(SM.GT.0.5)THEN
+    416 C-----------------------------------------------------------------------
+    417           IF(RLMP.LT.0.)THEN
+    418             SIMM10=       PSLMU(ZTAU10)-PSMZ+RLNU10
+    419             SIMM30=       PSLMU(ZTAU30)-PSMZ+RLNU30
+    420             SIMH02=FHNEU*(PSLHU(ZTAT02)-PSHZ+RLNT02)
+    421             SIMH10=FHNEU*(PSLHU(ZTAT10)-PSHZ+RLNT10)
+    422             SIMH30=FHNEU*(PSLHU(ZTAT30)-PSHZ+RLNT30)
+    423           ELSE
+
+Page 7           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    424             SIMM10=       PSLMS(ZTAU10)-PSMZ+RLNU10
+    425             SIMM30=       PSLMS(ZTAU30)-PSMZ+RLNU30
+    426             SIMH02=FHNEU*(PSLHS(ZTAT02)-PSHZ+RLNT02)
+    427             SIMH10=FHNEU*(PSLHS(ZTAT10)-PSHZ+RLNT10)
+    428             SIMH30=FHNEU*(PSLHS(ZTAT30)-PSHZ+RLNT30)
+    429           ENDIF
+    430 C--------------PAULSON 1970 FUNCTIONS OVER LAND W RAD. SKIN T-----------
+    431         ELSE
+    432 C-----------------------------------------------------------------------
+    433           IF(RLMP.LT.0.)THEN
+    434             XLU104=1.-16.*ZTAU10
+    435             XLU304=1.-16.*ZTAU30
+    436             XLT024=1.-16.*ZTAT02
+    437             XLT104=1.-16.*ZTAT10
+    438             XLT304=1.-16.*ZTAT30
+    439 C
+    440             XLU10=SQRT(SQRT(XLU104))
+    441             XLU30=SQRT(SQRT(XLU304))
+    442             XLT02=SQRT(SQRT(XLT024))
+    443             XLT10=SQRT(SQRT(XLT104))
+    444             XLT30=SQRT(SQRT(XLT304))
+    445 C
+    446             SIMM10=PSPMU(XLU10)-PSMZ+RLNU10
+    447             SIMM30=PSPMU(XLU30)-PSMZ+RLNU30
+    448             SIMH02=PSPHU(XLT02)-PSHZ+RLNT02
+    449             SIMH10=PSPHU(XLT10)-PSHZ+RLNT10
+    450             SIMH30=PSPHU(XLT30)-PSHZ+RLNT30
+    451           ELSE
+    452             ZTAU10=AMIN1(ZTAU10,ZTMAX)
+    453             ZTAU30=AMIN1(ZTAU30,ZTMAX)
+    454             ZTAT02=AMIN1(ZTAT02,ZTMAX)
+    455             ZTAT10=AMIN1(ZTAT10,ZTMAX)
+    456             ZTAT30=AMIN1(ZTAT30,ZTMAX)
+    457 C
+    458             SIMM10=PSPMS(ZTAU10)-PSMZ+RLNU10
+    459             SIMM30=PSPMS(ZTAU30)-PSMZ+RLNU30
+    460             SIMH02=PSPHS(ZTAT02)-PSHZ+RLNT02
+    461             SIMH10=PSPHS(ZTAT10)-PSHZ+RLNT10
+    462             SIMH30=PSPHS(ZTAT30)-PSHZ+RLNT30
+    463           ENDIF
+    464 C-----------------------------------------------------------------------
+    465         ENDIF
+    466 C-----------------------------------------------------------------------
+    467         AKMS10=AMAX1(USTARK/SIMM10,CXCH)
+    468         AKMS30=AMAX1(USTARK/SIMM30,CXCH)
+    469         AKHS02=AMAX1(USTARK/SIMH02,CXCH)
+    470         AKHS10=AMAX1(USTARK/SIMH10,CXCH)
+    471         AKHS30=AMAX1(USTARK/SIMH30,CXCH)
+    472 C-----------------------------------------------------------------------
+    473       ENDIF
+    474 C-----------------------------------------------------------------------
+    475       U10 =UMFLX/AKMS10+UZ0
+    476       V10 =VMFLX/AKMS10+VZ0
+    477       U30 =UMFLX/AKMS30+UZ0
+    478       V30 =VMFLX/AKMS30+VZ0
+    479       TH02=HSFLX/AKHS02+THZ0
+    480       TH10=HSFLX/AKHS10+THZ0
+
+Page 8           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    481       TH30=HSFLX/AKHS30+THZ0
+    482 
+    483 C GSM  changed this section in response to problem with 2-m
+    484 C     dew point occasionally being greater than 2-m temperature
+    485 C     and similar problem at 10-m.   Now, a saturation Q is
+    486 C     calculated at each level, and the Q is constrained to
+    487 C     be no higher than the saturation value.
+    488 
+    489       PDS=PD+PT
+    490       TERM1=-0.068283/TLM
+    491       PSHLTR=PDS*EXP(TERM1)
+    492       T02=TH02*(PSHLTR*H1M5)**CAPA
+    493       QSAT2 = PQ0/PSHLTR*EXP(A2*(T02-A3)/(T02-A4))
+    494       Q02 =HLFLX/AKHS02+QZ0
+    495       IF (Q02.LT.0.) THEN
+    496         IF (QLM .GT. 0.) THEN
+    497           Q02=QLM
+    498         ELSE
+    499           Q02=0.0001
+    500         ENDIF
+    501       ENDIF
+    502       IF (Q02.GT.QSAT2)THEN
+    503         Q02 = QSAT2
+    504       ENDIF
+    505 
+    506       T10=TH10*(PSHLTR*H1M5)**CAPA
+    507       QSAT10 = PQ0/PSHLTR*EXP(A2*(T10-A3)/(T10-A4))
+    508 C Corrected to use pressure at 10m. (DJ)
+    509       P10=PDS*EXP(-10.0*G/(287.04*TLM))
+    510       T10=TH10*(P10*H1M5)**CAPA
+    511       QSAT10 = PQ0/P10*EXP(A2*(T10-A3)/(T10-A4))
+    512 C
+    513       Q10 =HLFLX/AKHS10+QZ0
+    514       IF (Q10.LT.0.) THEN
+    515         IF (QLM .GT. 0.) THEN
+    516           Q10=QLM
+    517         ELSE
+    518           Q10=0.0001
+    519         ENDIF
+    520       ENDIF
+    521       IF (Q10.GT.QSAT10)THEN
+    522         Q10 = QSAT10
+    523       ENDIF
+    524 
+    525       P30=PDS*EXP(-30.0*G/(287.04*TLM))
+    526       T30=TH30*(P30*H1M5)**CAPA
+    527       QSAT30 = PQ0/P30*EXP(A2*(T30-A3)/(T30-A4))
+    528       Q30 =HLFLX/AKHS30+QZ0
+    529       IF (Q30.LT.0.) THEN
+    530         IF (QLM .GT. 0.) THEN
+    531           Q30=QLM
+    532         ELSE
+    533           Q30=0.0001
+    534         ENDIF
+    535       ENDIF
+    536       IF (Q30.GT.QSAT30)THEN
+    537         Q30 = QSAT30
+
+Page 9           Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+    538       ENDIF
+    539 
+    540 c new calculation of 10-m winds
+    541 C-----------------------------------------------------
+    542       U10E=U10
+    543       V10E=V10
+    544       U30E=U30
+    545       V30E=V30
+    546 C-----------------------------------------------------
+    547       IF(SM.LT.0.5)  THEN
+    548 c choose the equivalent z0 here:
+    549 czj        ZU=0.01
+    550 ckm     zu=zu*0.1
+    551 C
+    552         zuuz=amin1(zu*0.50,0.10)
+    553         zu=amax1(zu*0.10,zuuz)
+    554         ZU10=ZU+10.
+    555         ZU30=ZU+30.
+    556         RLNU10=ALOG(ZU10/ZU)
+    557         RLNU30=ALOG(ZU30/ZU)
+    558         ZTAU=ZU*RLMP
+    559         ZTAU10=ZU10*RLMP
+    560         ZTAU30=ZU30*RLMP
+    561 c--------------------------------------------------------
+    562         IF(RLMP.LT.0)THEN
+    563           XLU104=1.-16.*ZTAU10
+    564           XLU304=1.-16.*ZTAU30
+    565           XU104 =1.-16.*ZTAU
+    566           XLU10=SQRT(SQRT(XLU104))
+    567           XLU30=SQRT(SQRT(XLU304))
+    568           XU10 =SQRT(SQRT(XU104))
+    569           SIMM10=PSPMU(XLU10)-PSPMU(XU10)+RLNU10
+    570           SIMM30=PSPMU(XLU30)-PSPMU(XU10)+RLNU30
+    571         ELSE
+    572           ZTAU10=AMIN1(ZTAU10,ZTMAX)
+    573           ZTAU30=AMIN1(ZTAU30,ZTMAX)
+    574           SIMM10=PSPMS(ZTAU10)-PSPMS(ZTAU)+RLNU10
+    575           SIMM30=PSPMS(ZTAU30)-PSPMS(ZTAU)+RLNU30
+    576         ENDIF
+    577 c-----------------------------------------------------
+    578         EKMS10=AMAX1(USTARK/SIMM10,CXCH)
+    579         EKMS30=AMAX1(USTARK/SIMM30,CXCH)
+    580         U10E=UMFLX/EKMS10+UZ0
+    581         V10E=VMFLX/EKMS10+VZ0
+    582         U30E=UMFLX/EKMS30+UZ0
+    583         V30E=VMFLX/EKMS30+VZ0
+    584       ENDIF
+    585 c----------------------------------------------------------------
+    586       U10=U10E
+    587       V10=V10E
+    588       U30=U30E
+    589       V30=V30E
+    590 C
+    591 C-----------------------------------------------------------------------
+    592                            RETURN
+    593                            END
+
+Page 10          Source Listing                  SFCDIF
+2022-02-15 16:38 Entry Points                    SFCDIF.F
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ sfcdif_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 100                        Label  303                                                            266                               
+ 110                        Label  305                                                                                              
+ 200                        Label  364                                                            309                               
+ 210                        Label  366                                                                                              
+ A2                         Param  131      R(4)            4           scalar                    493,507,511,527                   
+ A3                         Param  131      R(4)            4           scalar                    493,507,511,527                   
+ A4                         Param  131      R(4)            4           scalar                    493,507,511,527                   
+ ABS                        Func   201                                  scalar                    201,245,293,354                   
+ AKHS                       Dummy  4        R(4)            4           scalar   ARG,INOUT        172,176,187,191,245,253,263,291,29
+                                                                                                  3,294,352,354,355,384,385         
+ AKHS02                     Local  391      R(4)            4           scalar                    391,469,479,494                   
+ AKHS10                     Local  392      R(4)            4           scalar                    392,470,480,513                   
+ AKHS30                     Local  393      R(4)            4           scalar                    393,471,481,528                   
+ AKMS                       Dummy  4        R(4)            4           scalar   ARG,INOUT        166,246,252,287,290,344,351,382,38
+                                                                                                  3                                 
+ AKMS10                     Local  389      R(4)            4           scalar                    389,467,475,476                   
+ AKMS30                     Local  390      R(4)            4           scalar                    390,468,477,478                   
+ ALOG                       Func   143                                  scalar                    143,145,148,151,260,261,348,403,40
+                                                                                                  4,405,406,407,556,557             
+ ALPHA                      Local  201      R(4)            4           scalar                    201,202                           
+ AMAX1                      Func   159                                  scalar                    159,240,246,252,253,268,287,290,29
+                                                                                                  1,311,344,351,352,389,390,391,392,
+                                                                                                  393,467,468,469,470,471,553,578,57
+                                                                                                  9                                 
+ AMIN1                      Func   228                                  scalar                    228,334,335,336,337,452,453,454,45
+                                                                                                  5,456,552,572,573                 
+ APE                        Dummy  7        R(4)            4     1     45       ARG,INOUT        156                               
+ ATAN                       Func   148                                  scalar                    148,201                           
+ BETA                       Param  111      R(4)            4           scalar                    111                               
+ BTG                        Param  111      R(4)            4           scalar                    112,242,244                       
+ BTGH                       Local  244      R(4)            4           scalar                    244,245,293,354                   
+ CAPA                       Param  132      R(4)            4           scalar                    492,506,510,526                   
+ CNV                        Param  112      R(4)            4           scalar                    236                               
+ CT                         Dummy  4        R(4)            4           scalar   ARG,INOUT        377                               
+ CXCH                       Local  231      R(4)            4           scalar                    231,252,253,290,291,351,352,389,39
+                                                                                                  0,391,392,393,467,468,469,470,471,
+                                                                                                  578,579                           
+ CZIL                       Param  130      R(4)            4           scalar                    130                               
+ CZIV                       Param  120      R(4)            4           scalar                    125,126                           
+ DTHV                       Local  234      R(4)            4           scalar                    234,236,242,245,263,293,294,354,35
+                                                                                                  5                                 
+ DU2                        Local  240      R(4)            4           scalar                    240,242,246,287,344               
+ EKMS10                     Local  578      R(4)            4           scalar                    578,580,581                       
+ EKMS30                     Local  579      R(4)            4           scalar                    579,582,583                       
+
+Page 11          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ELFC                       Param  112      R(4)            4           scalar                    263,294,355                       
+ EPSA                       Param  116      R(4)            4           scalar                    201                               
+ EPSIT                      Param  116      R(4)            4           scalar                                                      
+ EPSU2                      Param  116      R(4)            4           scalar                    200,240                           
+ EPSUST                     Param  116      R(4)            4           scalar                    246,287,344                       
+ EXCM                       Param  110      R(4)            4           scalar                    231                               
+ EXP                        Func   248                                  scalar                    248,346,491,493,507,509,511,525,52
+                                                                                                  7                                 
+ FHNEU                      Param  109      R(4)            4           scalar                    110,279,284,420,421,422,426,427,42
+                                                                                                  8                                 
+ FZQ1                       Param  125      R(4)            4           scalar                    175                               
+ FZQ2                       Param  126      R(4)            4           scalar                    190                               
+ FZT1                       Param  125      R(4)            4           scalar                    171                               
+ FZT2                       Param  126      R(4)            4           scalar                    186                               
+ FZU1                       Param  125      R(4)            4           scalar                    165                               
+ G                          Param  108      R(4)            4           scalar                    108,111,112,509,525               
+ GLB_TABLE                  Common 82                                   336      SAVE                                               
+ GLKBR                      Param  119      R(4)            4           scalar                    119                               
+ GLKBS                      Param  119      R(4)            4           scalar                    119,120                           
+ GRRS                       Param  119      R(4)            4           scalar                    126                               
+ H1M5                       Param  132      R(4)            4           scalar                    492,506,510,526                   
+ HLFLX                      Local  385      R(4)            4           scalar                    385,494,513,528                   
+ HPBL                       Dummy  4        R(4)            4           scalar   ARG,INOUT        244                               
+ HSFLX                      Local  384      R(4)            4           scalar                    384,479,480,481                   
+ IDIM1                      Param  36       I(4)            4           scalar                                                      
+ IDIM2                      Param  36       I(4)            4           scalar                                                      
+ IGSTL                      Param  31       I(4)            4           scalar                    36                                
+ IGSTR                      Param  31       I(4)            4           scalar                    36                                
+ IM                         Param  19       I(4)            4           scalar                    33,36,88,89,90,91,92,96,97,102    
+ INPES                      Param  28       I(4)            4           scalar                    33,36,72,73,74,83,84              
+ ITAIL                      Param  33       I(4)            4           scalar                                                      
+ ITR                        Local  266      I(4)            4           scalar                    266,309                           
+ ITRMX                      Param  113      I(4)            4           scalar                    266,309                           
+ JDIM1                      Param  37       I(4)            4           scalar                                                      
+ JDIM2                      Param  37       I(4)            4           scalar                                                      
+ JGSTL                      Param  32       I(4)            4           scalar                    37                                
+ JGSTR                      Param  32       I(4)            4           scalar                    37                                
+ JM                         Param  19       I(4)            4           scalar                    34,37,88,89,90,91,92,96,97,102    
+ JNPES                      Param  28       I(4)            4           scalar                    34,37,72,73,74,83,84              
+ JTAIL                      Param  34       I(4)            4           scalar                                                      
+ LM                         Param  19       I(4)            4           scalar                    97,105,135,137                    
+ LMHK                       Dummy  3        I(4)            4           scalar   ARG,INOUT        154,156,157,226                   
+ LMHP                       Local  154      I(4)            4           scalar                    154,226                           
+ LP1                        Param  105      I(4)            4           scalar                    138                               
+ LSM                        Param  19       I(4)            4           scalar                                                      
+ MAPPINGS                   Common 101                                  5024     SAVE                                               
+ MH                         Local  209      I(4)            4           scalar                    209,212                           
+ ML                         Local  203      I(4)            4           scalar                    203,205,206,207,209,211,212       
+ MOD                        Func   209                                  scalar                    209                               
+ MPPCOM                     Common 46                                   1724     SAVE                                               
+ P10                        Local  509      R(4)            4           scalar                    509,510,511                       
+ P30                        Local  525      R(4)            4           scalar                    525,526,527                       
+ PD                         Dummy  7        R(4)            4           scalar   ARG,INOUT        489                               
+ PDS                        Local  489      R(4)            4           scalar                    489,491,509,525                   
+ PIFR                       Param  114      R(4)            4           scalar                    202                               
+
+Page 12          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ PIHF                       Param  114      R(4)            4           scalar                    149,201                           
+ PQ0                        Param  131      R(4)            4           scalar                    493,507,511,527                   
+ PSHLTR                     Local  491      R(4)            4           scalar                    491,492,493,506,507               
+ PSHZ                       Local  278      R(4)            4           scalar                    278,279,283,284,331,332,340,341,42
+                                                                                                  0,421,422,426,427,428,448,449,450,
+                                                                                                  460,461,462                       
+ PSLHS                      Local  146      R(4)            4           scalar                    283,284,426,427,428               
+ PSLHU                      Local  145      R(4)            4           scalar                    278,279,420,421,422               
+ PSLMS                      Local  144      R(4)            4           scalar                    281,282,424,425                   
+ PSLMU                      Local  143      R(4)            4           scalar                    276,277,418,419                   
+ PSMZ                       Local  276      R(4)            4           scalar                    276,277,281,282,329,330,338,339,41
+                                                                                                  8,419,424,425,446,447,458,459     
+ PSPHS                      Local  152      R(4)            4           scalar                    340,341,460,461,462               
+ PSPHU                      Local  151      R(4)            4           scalar                    331,332,448,449,450               
+ PSPMS                      Local  150      R(4)            4           scalar                    338,339,458,459,574,575           
+ PSPMU                      Local  148      R(4)            4           scalar                    329,330,446,447,569,570           
+ PT                         Dummy  7        R(4)            4           scalar   ARG,INOUT        489                               
+ Q                          Dummy  7        R(4)            4     1     45       ARG,INOUT        157                               
+ Q02                        Dummy  5        R(4)            4           scalar   ARG,INOUT        494,495,497,499,502,503           
+ Q10                        Dummy  5        R(4)            4           scalar   ARG,INOUT        513,514,516,518,521,522           
+ Q30                        Dummy  6        R(4)            4           scalar   ARG,INOUT        528,529,531,533,536,537           
+ QLM                        Local  157      R(4)            4           scalar                    157,177,192,234,236,385,496,497,51
+                                                                                                  5,516,530,531                     
+ QS                         Dummy  3        R(4)            4           scalar   ARG,INOUT        177,192,222                       
+ QSAT10                     Local  507      R(4)            4           scalar                    507,511,521,522                   
+ QSAT2                      Local  493      R(4)            4           scalar                    493,502,503                       
+ QSAT30                     Local  527      R(4)            4           scalar                    527,536,537                       
+ QVISC                      Param  121      R(4)            4           scalar                    122,125,126                       
+ QZ0                        Dummy  3        R(4)            4           scalar   ARG,INOUT        177,192,222,234,236,385,494,513,52
+                                                                                                  8                                 
+ RDZ                        Local  230      R(4)            4           scalar                    230,231,252,253                   
+ RFAC                       Param  110      R(4)            4           scalar                    146                               
+ RFC                        Param  109      R(4)            4           scalar                    110                               
+ RIB                        Local  242      R(4)            4           scalar                    242,250,387                       
+ RIC                        Param  109      R(4)            4           scalar                    110,250,387                       
+ RLMA                       Local  297      R(4)            4           scalar                    297,301,358,362                   
+ RLMN                       Local  294      R(4)            4           scalar                    294,297,355,358                   
+ RLMO                       Local  263      R(4)            4           scalar                    263,268,269,270,272,273,275,296,29
+                                                                                                  7,301,311,312,313,315,316,318,357,
+                                                                                                  358,362                           
+ RLMP                       Local  296      R(4)            4           scalar                    296,357,409,410,411,412,413,417,43
+                                                                                                  3,558,559,560,562                 
+ RLNT02                     Local  405      R(4)            4           scalar                    405,420,426,448,460               
+ RLNT10                     Local  406      R(4)            4           scalar                    406,421,427,449,461               
+ RLNT30                     Local  407      R(4)            4           scalar                    407,422,428,450,462               
+ RLNU10                     Local  403      R(4)            4           scalar                    403,418,424,446,458,556,569,574   
+ RLNU30                     Local  404      R(4)            4           scalar                    404,419,425,447,459,557,570,575   
+ RLOGT                      Local  261      R(4)            4           scalar                    261,279,284,332,341,348           
+ RLOGU                      Local  260      R(4)            4           scalar                    260,277,282,330,339               
+ RQVISC                     Param  122      R(4)            4           scalar                    176,191                           
+ RRIC                       Param  110      R(4)            4           scalar                    144                               
+ RTVISC                     Param  122      R(4)            4           scalar                    125,126,172,187                   
+ RVISC                      Param  122      R(4)            4           scalar                    125,165,166,186                   
+ RWGH                       Local  167      R(4)            4           scalar                    167,168,169                       
+ SFCDIF                     Subr   3                                                                                                
+
+Page 13          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ SIMH                       Local  279      R(4)            4           scalar                    279,284,291,332,341,352           
+ SIMH02                     Local  420      R(4)            4           scalar                    420,426,448,460,469               
+ SIMH10                     Local  421      R(4)            4           scalar                    421,427,449,461,470               
+ SIMH30                     Local  422      R(4)            4           scalar                    422,428,450,462,471               
+ SIMM                       Local  277      R(4)            4           scalar                    277,282,290,330,339,351           
+ SIMM10                     Local  418      R(4)            4           scalar                    418,424,446,458,467,569,574,578   
+ SIMM30                     Local  419      R(4)            4           scalar                    419,425,447,459,468,570,575,579   
+ SM                         Dummy  3        R(4)            4           scalar   ARG,INOUT        159,161,199,233,248,250,265,387,41
+                                                                                                  5,547                             
+ SMALL                      Param  119      R(4)            4           scalar                    120                               
+ SQPR                       Param  123      R(4)            4           scalar                    123,125,126                       
+ SQRT                       Func   165                                  scalar                    165,186,246,248,287,324,325,326,32
+                                                                                                  7,344,346,380,440,441,442,443,444,
+                                                                                                  566,567,568                       
+ SQSC                       Param  123      R(4)            4           scalar                    123                               
+ SQVISC                     Param  130      R(4)            4           scalar                    130                               
+ T                          Dummy  7        R(4)            4     1     45       ARG,INOUT        156                               
+ T02                        Local  492      R(4)            4           scalar                    492,493                           
+ T10                        Local  506      R(4)            4           scalar                    506,507,510,511                   
+ T30                        Local  526      R(4)            4           scalar                    526,527                           
+ TEMPCOM                    Common 87                                   6603768  SAVE                                               
+ TERM1                      Local  490      R(4)            4           scalar                    490,491                           
+ TH02                       Dummy  5        R(4)            4           scalar   ARG,INOUT        479,492                           
+ TH10                       Dummy  5        R(4)            4           scalar   ARG,INOUT        480,506,510                       
+ TH30                       Dummy  6        R(4)            4           scalar   ARG,INOUT        481,526                           
+ THLM                       Local  156      R(4)            4           scalar                    156,173,188,234,236,384           
+ THS                        Dummy  3        R(4)            4           scalar   ARG,INOUT        173,188,219                       
+ THZ0                       Dummy  3        R(4)            4           scalar   ARG,INOUT        173,188,219,234,236,384,479,480,48
+                                                                                                  1                                 
+ TLM                        Dummy  7        R(4)            4           scalar   ARG,INOUT        490,509,525                       
+ TOPO                       Common 95                                   17478548 SAVE                                               
+ TVISC                      Param  121      R(4)            4           scalar                    122,125,126,253,391,392,393       
+ U10                        Dummy  5        R(4)            4           scalar   ARG,INOUT        475,542,586                       
+ U10E                       Local  542      R(4)            4           scalar                    542,580,586                       
+ U30                        Dummy  6        R(4)            4           scalar   ARG,INOUT        477,544,588                       
+ U30E                       Local  544      R(4)            4           scalar                    544,582,588                       
+ ULM                        Dummy  7        R(4)            4           scalar   ARG,INOUT        168,200,201,206,240,382           
+ UMFLX                      Local  382      R(4)            4           scalar                    382,475,477,580,582               
+ USTAR                      Dummy  4        R(4)            4           scalar   ARG,INOUT        159,161,163,165,180,186,246,248,26
+                                                                                                  3,287,289,294,344,346,350,355     
+ USTARK                     Local  289      R(4)            4           scalar                    289,290,291,350,351,352,467,468,46
+                                                                                                  9,470,471,578,579                 
+ USTC                       Param  124      R(4)            4           scalar                    161,180                           
+ USTFC                      Param  108      R(4)            4           scalar                    159                               
+ USTR                       Param  124      R(4)            4           scalar                    163,180                           
+ UZ0                        Dummy  3        R(4)            4           scalar   ARG,INOUT        168,183,215,240,382,475,477,580,58
+                                                                                                  2                                 
+ V10                        Dummy  5        R(4)            4           scalar   ARG,INOUT        476,543,587                       
+ V10E                       Local  543      R(4)            4           scalar                    543,581,587                       
+ V30                        Dummy  6        R(4)            4           scalar   ARG,INOUT        478,545,589                       
+ V30E                       Local  545      R(4)            4           scalar                    545,583,589                       
+ VISC                       Param  121      R(4)            4           scalar                    122,125,252,389,390               
+ VKRM                       Param  109      R(4)            4           scalar                    112,130,289,350                   
+ VLM                        Dummy  7        R(4)            4           scalar   ARG,INOUT        169,201,206,240,383               
+ VMFLX                      Local  383      R(4)            4           scalar                    383,476,478,581,583               
+
+Page 14          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ VZ0                        Dummy  3        R(4)            4           scalar   ARG,INOUT        169,184,216,240,383,476,478,581,58
+                                                                                                  3                                 
+ WGHT                       Local  166      R(4)            4           scalar                    166,167,172,173,176,177,187,188,19
+                                                                                                  1,192                             
+ WLOW                       Local  211      R(4)            4           scalar                    211,212                           
+ WNEW                       Param  113      R(4)            4           scalar                    297,358                           
+ WOLD                       Param  113      R(4)            4           scalar                    113,297,358                       
+ WSTAR                      Dummy  4        R(4)            4           scalar   ARG,INOUT        380                               
+ WSTAR2                     Local  245      R(4)            4           scalar                    245,246,287,293,344,354,380       
+ WWST                       Param  108      R(4)            4           scalar                    108,380                           
+ WWST2                      Param  108      R(4)            4           scalar                    245,293,354                       
+ X                          Local  202      R(4)            4           scalar                    202,203,211                       
+ XLT                        Local  325      R(4)            4           scalar                    325,332                           
+ XLT02                      Local  442      R(4)            4           scalar                    442,448                           
+ XLT024                     Local  436      R(4)            4           scalar                    436,442                           
+ XLT10                      Local  443      R(4)            4           scalar                    443,449                           
+ XLT104                     Local  437      R(4)            4           scalar                    437,443                           
+ XLT30                      Local  444      R(4)            4           scalar                    444,450                           
+ XLT304                     Local  438      R(4)            4           scalar                    438,444                           
+ XLT4                       Local  320      R(4)            4           scalar                    320,325                           
+ XLU                        Local  324      R(4)            4           scalar                    324,330                           
+ XLU10                      Local  440      R(4)            4           scalar                    440,446,566,569                   
+ XLU104                     Local  434      R(4)            4           scalar                    434,440,563,566                   
+ XLU30                      Local  441      R(4)            4           scalar                    441,447,567,570                   
+ XLU304                     Local  435      R(4)            4           scalar                    435,441,564,567                   
+ XLU4                       Local  319      R(4)            4           scalar                    319,324                           
+ XT                         Local  327      R(4)            4           scalar                    327,331                           
+ XT4                        Local  322      R(4)            4           scalar                    322,327                           
+ XU                         Local  326      R(4)            4           scalar                    326,329                           
+ XU10                       Local  568      R(4)            4           scalar                    568,569,570                       
+ XU104                      Local  565      R(4)            4           scalar                    565,568                           
+ XU4                        Local  321      R(4)            4           scalar                    321,326                           
+ Z                          Dummy  7        R(4)            4     1     46       ARG,INOUT        226                               
+ Z0                         Dummy  4        R(4)            4           scalar   ARG,INOUT        159,165,182,186,197,218,221,237,24
+                                                                                                  8,346                             
+ ZEFF                       Dummy  4        R(4)            4     1     4        ARG,INOUT        212                               
+ ZETALT                     Local  268      R(4)            4           scalar                    268,269,279,284,311,312,320,337,34
+                                                                                                  1                                 
+ ZETALU                     Local  270      R(4)            4           scalar                    270,277,282,313,319,336,339       
+ ZETAT                      Local  273      R(4)            4           scalar                    273,278,283,316,322,335,340       
+ ZETAU                      Local  272      R(4)            4           scalar                    272,276,281,315,321,334,338       
+ ZILFC                      Param  130      R(4)            4           scalar                    248,346                           
+ ZQ                         Local  175      R(4)            4           scalar                    175,176,190,191,221               
+ ZQRZT                      Param  123      R(4)            4           scalar                    125,126                           
+ ZSL                        Local  226      R(4)            4           scalar                    226,228,230,242,257,258,347       
+ ZSLT                       Local  258      R(4)            4           scalar                    258,261,268,269,311,312,347,348   
+ ZSLU                       Local  257      R(4)            4           scalar                    257,260,270,313                   
+ ZT                         Local  171      R(4)            4           scalar                    171,172,175,186,187,190,218,237,24
+                                                                                                  8,258,261,273,316,346,347,348,399,
+                                                                                                  400,401,405,406,407               
+ ZT02                       Local  399      R(4)            4           scalar                    399,405,411                       
+ ZT10                       Local  400      R(4)            4           scalar                    400,406,412                       
+ ZT30                       Local  401      R(4)            4           scalar                    401,407,413                       
+ ZTAT02                     Local  411      R(4)            4           scalar                    411,420,426,436,454,460           
+ ZTAT10                     Local  412      R(4)            4           scalar                    412,421,427,437,455,461           
+
+Page 15          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ZTAT30                     Local  413      R(4)            4           scalar                    413,422,428,438,456,462           
+ ZTAU                       Local  558      R(4)            4           scalar                    558,565,574,575                   
+ ZTAU10                     Local  409      R(4)            4           scalar                    409,418,424,434,452,458,559,563,57
+                                                                                                  2,574                             
+ ZTAU30                     Local  410      R(4)            4           scalar                    410,419,425,435,453,459,560,564,57
+                                                                                                  3,575                             
+ ZTFC                       Param  128      R(4)            4           scalar                    237                               
+ ZTMAX                      Param  117      R(4)            4           scalar                    334,335,336,337,452,453,454,455,45
+                                                                                                  6,572,573                         
+ ZTMIN                      Param  117      R(4)            4           scalar                    268,311                           
+ ZU                         Local  165      R(4)            4           scalar                    165,166,171,182,197,212,228,257,26
+                                                                                                  0,272,315,397,398,403,404,552,553,
+                                                                                                  554,555,556,557,558               
+ ZU10                       Local  397      R(4)            4           scalar                    397,403,409,554,556,559           
+ ZU30                       Local  398      R(4)            4           scalar                    398,404,410,555,557,560           
+ ZUUZ                       Local  552      R(4)            4           scalar                    552,553                           
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     828      1     21       COM                                                 
+ IE_GLB_TABLE               I(4)            4     84       1     21       COM                                                 
+ IE_LOC_TABLE               I(4)            4     660      1     21       COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1324     1     100      COM                                                 
+ IQUILT_GROUP               I(4)            4     1320           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     21       COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     21       COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     252      1     21       COM                                                 
+ JE_LOC_TABLE               I(4)            4     744      1     21       COM                                                 
+
+Page 16          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ JS_GLB_TABLE               I(4)            4     168      1     21       COM                                                 
+ JS_LOC_TABLE               I(4)            4     576      1     21       COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ MPI_COMM_COMP              I(4)            4     912            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     916            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     920      1     100      COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM                                                 
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM                                                 
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM                                                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM                                                 
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+
+Page 17          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM                                                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM                                                 
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM                                                 
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+
+Page 18          Source Listing                  SFCDIF
+2022-02-15 16:38 Symbol Table                    SFCDIF.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+
+Page 19          Source Listing                  SFCDIF
+2022-02-15 16:38 Subprograms/Common Blocks       SFCDIF.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ GLB_TABLE                  Common 82                                   336      SAVE                                               
+ MAPPINGS                   Common 101                                  5024     SAVE                                               
+ MPPCOM                     Common 46                                   1724     SAVE                                               
+ SFCDIF                     Subr   3                                                                                                
+ TEMPCOM                    Common 87                                   6603768  SAVE                                               
+ TOPO                       Common 95                                   17478548 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+
+Page 20          Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+
+Page 21          Source Listing                  SFCDIF
+2022-02-15 16:38                                 SFCDIF.F
+
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : SFCDIF.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

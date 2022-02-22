@@ -1,0 +1,872 @@
+Page 1           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+      1       SUBROUTINE NGMSLP2
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    NGMSLP2     NMC SEA LEVEL PRESSURE REDUCTION
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-02-02       
+      6 C     
+      7 C ABSTRACT:
+      8 C     
+      9 C     THIS ROUTINE COMPUTES SEA LEVEL PRESSURE USING THE
+     10 C     HYDROSTATIC EQUATION WITH THE SHUELL CORRECTION.  THE
+     11 C     FOLLOWING IS BASED ON DOCUMENTATION IN SUBROUTINE 
+     12 C     OUTHYDRO OF THE NGM:
+     13 C     
+     14 C     THE FUNDAMENTAL HYDROSTATIC EQUATION IS
+     15 C        D(HEIGHT)
+     16 C        ---------  =  TAU = VIRTUAL TEMPERATURE * (RGAS/GRAVITY)
+     17 C        D (Z)
+     18 C      WHERE
+     19 C        Z = MINUS LOG OF PRESSURE (-LN(P)).
+     20 C
+     21 C     SEA-LEVEL PRESSURE IS COMPUTED FROM THE FORMULA
+     22 C        PRESS(MSL) = PRESS(GROUND) * EXP( F)
+     23 C     WHERE
+     24 C        F        = HEIGHT OF GROUND / MEAN TAU
+     25 C        MEAN TAU = ( TAU(GRND) + TAU(SL) ) / 2
+     26 C     
+     27 C     IN THE NGM TAU(GRND) AND TAU(SL) ARE FIRST SET USING A 
+     28 C     6.5DEG/KM LAPSE RATE FROM SIGMA LEVEL K=1.  THIS IS MODIFIED
+     29 C     BY A CORRECTION BASED ON THE CRITICAL TAU OF THE SHUELL
+     30 C     CORRECTION:
+     31 C                  TAUCR=(RGASD/GRAVITY) * 290.66
+     32 C   
+     33 C     1) WHERE ONLY TAU(SL) EXCEEDS TAUCR, CHANGE TAU(SL) TO TAUCR.
+     34 C
+     35 C     2) WHERE BOTH TAU(SL) AND TAU(GRND) EXCEED TAUCR,
+     36 C        CHANGE TAU(SL) TO TAUCR-CONST*(TAU(GRND)-TAUCR  )**2
+     37 C        WHERE CONST = .005 (GRAVITY/RGASD)
+     38 C   
+     39 C     THE AVERAGE OF TAU(SL) AND TAU(GRND) IS THEN USED TOGETHER
+     40 C     WITH THE GROUND HEIGHT AND PRESSURE TO DERIVE THE PRESSURE
+     41 C     AT SEA LEVEL. 
+     42 C     
+     43 C     EXTRAPOLATING FROM TEMPERATURES IN THE FIRST ATMOSPHERIC ETA
+     44 C     LAYER LEAD TO EXCESSIVELY NOISY UNDERGROUND TEMPERATURE FIELDS.
+     45 C     AFTER EXPERIMENTATION WE OPTED TO USE A MEAN TEMPERATURE FROM
+     46 C     THE LOWEST DP=30MB ABOVE THE GROUND.  FROM THIS MEAN TEMPERATURE
+     47 C     WE EXTRAPOLATE TO GET THE GROUND AND SEA LEVEL TEMPERATURES.
+     48 C     USING A TRUE MASS WEIGHTED LAYER MEAN INSTEAD OF THE SIMPLE
+     49 C     ARITHMETIC MEAN CODED SHOWED LITTLE QUALITATIVE DIFFERENCE.
+     50 C     
+     51 C     HEIGHT OF THE 1000MB SURFACE IS COMPUTED FROM THE MSL PRESSURE
+     52 C     FIELD USING THE FORMULA:
+     53 C     
+     54 C       P(MSL) - P(1000MB) = MEAN DENSITY * GRAVITY * HGT(1000MBS)
+     55 C     
+     56 C     WHERE P(MSL) IS THE SEA LEVEL PRESSURE FIELD WE HAVE JUST
+     57 C     COMPUTED.
+
+Page 2           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+     58 C     
+     59 C     BELOW GROUND VIRTUAL TEMPERATURES ARE COMPUTED ASSUMING A CONSTANT
+     60 C     6.5DEG/KM LAPSE RATE.  TO CONVERT VIRTUAL TEMPERATURE TO A DRY
+     61 C     TEMPERATURE WE USE THE DP=30MB MEAN SPECIFIC HUMIDITY.
+     62 C     
+     63 C     LINE COMMENTED OUT WITH 'CX' ARE LEFT OVER FROM EARLIER
+     64 C     EXPERIMENTATION.  THEY REMAIN TO REMIND READERS WHAT 
+     65 C     WAS TRIED.
+     66 C   .     
+     67 C     
+     68 C PROGRAM HISTORY LOG:
+     69 C   93-02-02  RUSS TREADON
+     70 C   98-06-08  T BLACK - CONVERSION FROM 1-D TO 2-D
+     71 C   00-01-04  JIM TUCCILLO - MPI VERSION
+     72 C     
+     73 C USAGE:    CALL NGMSLP2
+     74 C   INPUT ARGUMENT LIST:
+     75 C     NONE     
+     76 C
+     77 C   OUTPUT ARGUMENT LIST: 
+     78 C     NONE
+     79 C     
+     80 C   OUTPUT FILES:
+     81 C     NONE
+     82 C     
+     83 C   SUBPROGRAMS CALLED:
+     84 C     UTILITIES:
+     85 C       NONE
+     86 C     LIBRARY:
+     87 C       COMMON   - VRBLS
+     88 C                  EXTRA
+     89 C                  MAPOT
+     90 C                  LOOPS
+     91 C                  DYNAMD
+     92 C                  MASKS
+     93 C                  PVRBLS
+     94 C                  INDX
+     95 C     
+     96 C   ATTRIBUTES:
+     97 C     LANGUAGE: FORTRAN
+     98 C     MACHINE : CRAY C-90
+     99 C$$$  
+    100 C     
+    101 C     
+    102 C     INCLUDE PARAMETERS.  SET LOCAL PARAMETERS.
+    103       INCLUDE "parmeta"
+    121       INCLUDE "params"
+    163       PARAMETER (GAMMA=6.5/1000.,ZSL=0.0)
+    164       PARAMETER (TAUCR=RD*GI*290.66,CONST=0.005*G/RD)
+    165       PARAMETER (GORD=G/RD,DP=60.E2)
+    166       PARAMETER (ISMTHT=4,ISMTHQ=2)
+    167 C     
+    168 C     DECLARE VARIABLES
+    169       REAL TBAR(IM,JM),QBAR(IM,JM),ALPBAR(IM,JM)
+    170       REAL TSFC(IM,JM),QSFC(IM,JM),EGRID(IM,JM)
+    171 C     
+    172 C     INCLUDE COMMON BLOCKS
+
+Page 3           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+    173       INCLUDE "VRBLS.comm"
+    180       INCLUDE "EXTRA.comm"
+    192       INCLUDE "MAPOT.comm"
+    205       INCLUDE "LOOPS.comm"
+    213       INCLUDE "DYNAMD.comm"
+    225       INCLUDE "MASKS.comm"
+    233       INCLUDE "PVRBLS.comm"
+    245       INCLUDE "INDX.comm"
+    251       INCLUDE "CTLBLK.comm"
+    252 C     
+    253 C**********************************************************************
+    254 C     START NGMSLP HERE.
+    255 C     
+    256 C     LOOP OVER HORIZONTAL GRID.
+    257 C
+    272 !$omp  parallel do
+    273 !$omp& private(alpm,alps,l,llmh,nlev,pm,psfc,ptop,qsum,thsfc,tsum)
+    274       DO 30 J=JSTA,JEND
+    275       DO 30 I=1,IM
+    276          LLMH = LMH(I,J)
+    277 C     
+    278 C        LOCATE TOP OF LAYER OVER WHICH TO COMPUTE MEAN FIELDS.
+    279          PSFC    = PD(I,J)+PT
+    280          PTOP    = PSFC-DP
+    281          QSFC(I,J) = (1.-SM(I,J))*QS(I,J)+SM(I,J)*QZ0(I,J)
+    282          QSFC(I,J) = AMAX1(H1M12,QSFC(I,J))
+    283          THSFC   = (1.-SM(I,J))*THS(I,J)+SM(I,J)*THZ0(I,J)
+    284          TSFC(I,J) = THSFC*(P1000/PSFC)**(-CAPA)
+    285 C
+    286 C        COMPUTE MEAN FIELDS.
+    287          NLEV = 1
+    288          ALPS = D50*(ALPINT(I,J,LLMH)+ALPINT(I,J,LLMH+1))
+    289          TSUM = T(I,J,LLMH)
+    290          QSUM = Q(I,J,LLMH)
+    291          TBAR(I,J)   = TSUM
+    292          QBAR(I,J)   = QSUM
+    293          ALPBAR(I,J) = ALPS
+    294          IF (LLMH.EQ.LM) GOTO 30
+    295          DO 10 L = LLMH-1,1,-1
+    296             ALPM = D50*(ALPINT(I,J,L)+ALPINT(I,J,L+1))
+    297             PM   = EXP(ALPM)
+    298             IF (PM.LT.PTOP) GOTO 20
+    299             NLEV = NLEV + 1
+    300             ALPS = ALPS + ALPM
+    301             TSUM = TSUM + T(I,J,L)
+    302             QSUM = QSUM + Q(I,J,L)
+    303  10      CONTINUE
+    304  20      CONTINUE
+    305          RNLEV     = 1./NLEV
+    306          ALPBAR(I,J) = ALPS*RNLEV
+    307          TBAR(I,J)   = TSUM*RNLEV
+    308          QBAR(I,J)   = QSUM*RNLEV
+    309  30   CONTINUE
+    310 C     
+    311 C     SMOOTH LAYER MEAN TEMPERATURE AND SPECIFIC HUMIDITY.
+    312 C     BOUND SPECIFIC HUMIDITY SO THAT IT IS NON-NEGATIVE.
+    313 C     
+
+Page 4           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+    314       CALL P2FILT(ISMTHT,HBM2,TBAR)
+    315       CALL P2FILT(ISMTHT,HBM2,TSFC)
+    316       CALL P2FILT(ISMTHQ,HBM2,QBAR)
+    317       CALL P2FILT(ISMTHQ,HBM2,QSFC)
+    318       CALL BOUNDL(QBAR,H1M12,H99999,IM,JM)
+    319       CALL BOUNDL(QSFC,H1M12,H99999,IM,JM)
+    320 C     
+    321 C     LOOP OVER HORIZONTAL GRID.
+    322 C     
+    323 !$omp  parallel do
+    324 !$omp& private(alpavg,alpsfc,llmh,pavg,psfc,ptop,qavg,rhoavg,rrhog,
+    325 !$omp&         tau,tauavg,tausfc,tausl,tavg,tvrbar,tvrsfc,tvrsl,
+    326 !$omp&         tvrt,tvrtal,zbar,zl,zsfc)
+    327        DO 50 J=JSTA,JEND
+    328        DO 50 I=1,IM
+    329          LLMH = LMH(I,J)
+    330          ZSFC = FIS(I,J)*GI
+    331          PSFC = PD(I,J)+PT
+    332          ALPSFC = ALOG(PSFC)
+    333          PTOP   = PSFC-DP
+    334          SLP(I,J) = PSFC
+    335 CX         IF (LLMH.EQ.LM) GOTO 50
+    336 C
+    337 C        COMPUTE LAYER MEAN TAU (VIRTUAL TEMP*RD/G).
+    338          TVRT = TBAR(I,J)*(H1+D608*QBAR(I,J))
+    339          TAU  = TVRT*RD*GI
+    340 C
+    341 C        COMPUTE HEIGHT OF MEAN ATMOSPHERIC LAYER.
+    342 CX         QSFC   = (1.-SM(I,J))*QS(I,J)+SM(I,J)*QZ0(I,J)
+    343 CX         QSFC   = AMAX1(H1M12,QSFC)
+    344          QAVG   = D50*(QSFC(I,J)+QBAR(I,J))
+    345 CX         THSFC  = (1.-SM(I,J))*THS(I,J)+SM(I,J)*THZ0(I,J)
+    346 CX         TSFC   = THSFC*(P1000/PSFC)**(-CAPA)
+    347          TAVG   = D50*(TSFC(I,J)+TBAR(I,J))
+    348          TVRBAR = TAVG*(H1+D608*QAVG)
+    349          ZBAR   = RD*GI*TVRBAR*(ALPSFC-ALPBAR(I,J)) + ZSFC
+    350 C     
+    351 C        COMPUTE TAU AT THE GROUND (Z=ZSFC) AND SEA LEVEL (Z=0)
+    352 C        ASSUMING A CONSTANT LAPSE RATE OF GAMMA=6.5DEG/KM.
+    353          TVRSFC = TVRT + (ZBAR-ZSFC)*GAMMA
+    354          TAUSFC = TVRSFC*RD*GI
+    355          TVRSL  = TVRT + (ZBAR- ZSL)*GAMMA
+    356          TAUSL  = TVRSL*RD*GI
+    357 C     
+    358 C        IF NEED BE APPLY SHEULL CORRECTION.
+    359          IF ((TAUSL.GT.TAUCR).AND.(TAUSFC.LE.TAUCR)) THEN
+    360             TAUSL=TAUCR
+    361          ELSEIF ((TAUSL.GT.TAUCR).AND.(TAUSFC.GT.TAUCR)) THEN
+    362             TAUSL = TAUCR-CONST*(TAUSFC-TAUCR)**2
+    363          ENDIF
+    364 C     
+    365 C        COMPUTE MEAN TAU.
+    366          TAUAVG = D50*(TAUSL+TAUSFC)
+    367 C     
+    368 C        COMPUTE SEA LEVEL PRESSURE.
+    369          IF (LLMH.LT.LM) SLP(I,J) = PSFC*EXP(ZSFC/TAUAVG)
+    370 C     
+
+Page 5           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+    371 C        COMPUTE 1000MB HEIGHTS.
+    372          ALPAVG   = D50*(ALOG(PSFC)+ALOG(SLP(I,J)))
+    373          PAVG     = EXP(ALPAVG)
+    374          RHOAVG   = PAVG*GI/TAUAVG
+    375          RRHOG    = H1/(RHOAVG*G)
+    376          Z1000(I,J) = (SLP(I,J)-P1000)*RRHOG
+    377 C     
+    378 C        COMPUTE TEMPERATURES ON ETA LEVELS BELOW GROUND.
+    379          IF ((ZSFC-ZSL).EQ.0.) GOTO 50
+    380 CX       TLAPSE = GORD*(TAUSFC-TAUSL)/(ZSFC-ZSL)
+    381          IF (LLMH.EQ.LM) GOTO 50
+    382          DO 40 L = LLMH+1,LM
+    383             ZL     = GI*DFL(L)
+    384             TVRTL  = TVRT + (ZBAR-ZL)*GAMMA
+    385             T(I,J,L) = TVRTL/(H1+D608*QBAR(I,J))
+    386  40      CONTINUE
+    387 C     
+    388 C     MOVE TO NEXT HORIZONTAL GRIDPOINT.
+    389  50   CONTINUE
+    390 C     
+    391 C     WE NOW HAVE THE SHEULL SEA LEVEL PRESSURE FIELD
+    392 C     IN ARRAY SLP.  APPLY A FIVE POINT SMOOTHER.
+    393 C     
+    394 !$omp  parallel do
+    395       DO J=JSTA,JEND
+    396       DO I=1,IM
+    397         EGRID(I,J)=SLP(I,J)
+    398       ENDDO
+    399       ENDDO
+    400 C
+    401       CALL EXCH(SLP) 
+    402       DO 90 KS=1,KSLPD
+    403          DO 80 J=JSTA_M2,JEND_M2
+    404          IEND=IM-1-MOD(J+1,2)
+    405          DO I=2,IEND
+    406            IF (FIS(I,J).GT.H1000)         GO TO 70
+    407            IF (FIS(I+IHW(J),J-1).GT.H1000)GO TO 70
+    408            IF (FIS(I+IHE(J),J-1).GT.H1000)GO TO 70
+    409            IF (FIS(I+IHW(J),J+1).GT.H1000)GO TO 70
+    410            IF (FIS(I+IHE(J),J+1).GT.H1000)GO TO 70
+    411            IF (KS.GT.1) GO TO 80
+    412  70        EGRID(I,J)=D125*
+    413      1          (SLP(I+IHW(J),J-1)+SLP(I+IHE(J),J-1)
+    414      1          +SLP(I+IHW(J),J+1)+SLP(I+IHE(J),J+1)
+    415      2          +H4*SLP(I,J))
+    416          ENDDO
+    417  80      CONTINUE
+    418          DO J=JSTA,JEND
+    419          DO I=1,IM
+    420            SLP(I,J) = EGRID(I,J)
+    421          ENDDO
+    422          ENDDO
+    423  90   CONTINUE
+    424 C     
+    425 C     END OF ROUTINE.
+    426 C     
+    427 
+
+Page 6           Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+    428       RETURN
+    429       END
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ ngmslp2_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  303                                                            295                               
+ 20                         Label  304                                                            298                               
+ 30                         Label  309                                                            274,275,294                       
+ 40                         Label  386                                                            382                               
+ 50                         Label  389                                                            327,328,379,381                   
+ 70                         Label  412                                                            406,407,408,409,410               
+ 80                         Label  417                                                            403,411                           
+ 90                         Label  423                                                            402                               
+ A2                         Param  162      R(4)            4           scalar                                                      
+ A3                         Param  162      R(4)            4           scalar                                                      
+ A4                         Param  162      R(4)            4           scalar                                                      
+ AD05                       Param  154      R(4)            4           scalar                                                      
+ ALOG                       Func   332                                  scalar                    332,372                           
+ ALPAVG                     Local  372      R(4)            4           scalar                    372,373                           
+ ALPBAR                     Local  169      R(4)            4     2     91719                     293,306,349                       
+ ALPM                       Local  296      R(4)            4           scalar                    296,297,300                       
+ ALPS                       Local  288      R(4)            4           scalar                    288,293,300,306                   
+ ALPSFC                     Local  332      R(4)            4           scalar                    332,349                           
+ AMAX1                      Func   282                                  scalar                    282                               
+ BETA                       Param  158      R(4)            4           scalar                    158                               
+ BOUNDL                     Subr   318                                                            318,319                           
+ BTG                        Param  158      R(4)            4           scalar                                                      
+ CAPA                       Param  149      R(4)            4           scalar                    156,284                           
+ CFT0                       Param  154      R(4)            4           scalar                                                      
+ CM1                        Param  144      R(4)            4           scalar                                                      
+ CM2                        Param  144      R(4)            4           scalar                                                      
+ CM3                        Param  144      R(4)            4           scalar                                                      
+ CONST                      Param  164      R(4)            4           scalar                    362                               
+ CP                         Param  155      R(4)            4           scalar                    157,161                           
+ CPDR                       Param  157      R(4)            4           scalar                                                      
+ CTLBLK                     Common 259                                  96       SAVE                                               
+ D00                        Param  146      R(4)            4           scalar                                                      
+ D001                       Param  146      R(4)            4           scalar                                                      
+ D0065                      Param  150      R(4)            4           scalar                                                      
+ D01                        Param  146      R(4)            4           scalar                                                      
+ D05                        Param  150      R(4)            4           scalar                    154                               
+ D1                         Param  146      R(4)            4           scalar                                                      
+ D115                       Param  150      R(4)            4           scalar                                                      
+ D125                       Param  148      R(4)            4           scalar                    412                               
+ D25                        Param  148      R(4)            4           scalar                                                      
+ D50                        Param  146      R(4)            4           scalar                    288,296,344,347,366,372           
+ D608                       Param  150      R(4)            4           scalar                    338,348,385                       
+
+Page 7           Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ DP                         Param  165      R(4)            4           scalar                    280,333                           
+ DP10M                      Param  156      R(4)            4           scalar                                                      
+ DTR                        Param  155      R(4)            4           scalar                    155                               
+ DYNAM                      Common 215                                  3675964  SAVE                                               
+ EGRID                      Local  170      R(4)            4     2     91719                     397,412,420                       
+ ELDR                       Param  157      R(4)            4           scalar                                                      
+ ELWV                       Param  157      R(4)            4           scalar                    157                               
+ EPS                        Param  160      R(4)            4           scalar                    160                               
+ EPSQ2                      Param  161      R(4)            4           scalar                                                      
+ ERAD                       Param  155      R(4)            4           scalar                                                      
+ EXCH                       Subr   401                                                            401                               
+ EXP                        Func   297                                  scalar                    297,369,373                       
+ EXTRA                      Common 183                                  71506268 SAVE                                               
+ FMD                        Param  160      R(4)            4           scalar                    160                               
+ FMW                        Param  160      R(4)            4           scalar                    160                               
+ G                          Param  153      R(4)            4           scalar                    153,164,165,375                   
+ GAMMA                      Param  163      R(4)            4           scalar                    353,355,384                       
+ GI                         Param  153      R(4)            4           scalar                    157,164,330,339,349,354,356,374,38
+                                                                                                  3                                 
+ GORD                       Param  165      R(4)            4           scalar                                                      
+ H1                         Param  147      R(4)            4           scalar                    154,338,348,375,385               
+ H100                       Param  148      R(4)            4           scalar                                                      
+ H1000                      Param  148      R(4)            4           scalar                    406,407,408,409,410               
+ H10000                     Param  149      R(4)            4           scalar                                                      
+ H10E5                      Param  149      R(4)            4           scalar                                                      
+ H1E2                       Param  151      R(4)            4           scalar                                                      
+ H1E4                       Param  151      R(4)            4           scalar                                                      
+ H1M12                      Param  147      R(4)            4           scalar                    282,318,319                       
+ H1M2                       Param  151      R(4)            4           scalar                                                      
+ H1M5                       Param  148      R(4)            4           scalar                                                      
+ H2                         Param  147      R(4)            4           scalar                                                      
+ H4                         Param  147      R(4)            4           scalar                    415                               
+ H999                       Param  146      R(4)            4           scalar                                                      
+ H99999                     Param  147      R(4)            4           scalar                    318,319                           
+ I                          Local  275      I(4)            4           scalar                    275,276,279,281,282,283,284,288,28
+                                                                                                  9,290,291,292,293,296,301,302,306,
+                                                                                                  307,308,328,329,330,331,334,338,34
+                                                                                                  4,347,349,369,372,376,385,396,397,
+                                                                                                  405,406,407,408,409,410,412,413,41
+                                                                                                  4,415,419,420                     
+ IDIM1                      Param  117      I(4)            4           scalar                                                      
+ IDIM2                      Param  117      I(4)            4           scalar                                                      
+ IEND                       Local  404      I(4)            4           scalar                    404,405                           
+ IGSTL                      Param  112      I(4)            4           scalar                    117                               
+ IGSTR                      Param  112      I(4)            4           scalar                    117                               
+ IM                         Param  106      I(4)            4           scalar                    114,117,125,127,128,130,169,170,17
+                                                                                                  6,178,182,184,185,186,187,188,189,
+                                                                                                  210,221,222,228,230,236,237,238,23
+                                                                                                  9,240,242,275,318,319,328,396,404,
+                                                                                                  419                               
+ IM1                        Param  127      I(4)            4           scalar                                                      
+ IMJM                       Param  182      I(4)            4           scalar                    185                               
+ IMT                        Param  125      I(4)            4           scalar                                                      
+ INDX                       Common 247                                  6192     SAVE                                               
+ INPES                      Param  109      I(4)            4           scalar                    114,117                           
+
+Page 8           Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ISMTHQ                     Param  166      I(4)            4           scalar                    316,317                           
+ ISMTHT                     Param  166      I(4)            4           scalar                    314,315                           
+ ITAIL                      Param  114      I(4)            4           scalar                                                      
+ J                          Local  274      I(4)            4           scalar                    274,276,279,281,282,283,284,288,28
+                                                                                                  9,290,291,292,293,296,301,302,306,
+                                                                                                  307,308,327,329,330,331,334,338,34
+                                                                                                  4,347,349,369,372,376,385,395,397,
+                                                                                                  403,404,406,407,408,409,410,412,41
+                                                                                                  3,414,415,418,420                 
+ JAM                        Param  127      I(4)            4           scalar                    208,219                           
+ JDIM1                      Param  118      I(4)            4           scalar                                                      
+ JDIM2                      Param  118      I(4)            4           scalar                                                      
+ JGSTL                      Param  113      I(4)            4           scalar                    118                               
+ JGSTR                      Param  113      I(4)            4           scalar                    118                               
+ JM                         Param  106      I(4)            4           scalar                    115,118,125,127,130,169,170,176,17
+                                                                                                  8,182,184,185,186,187,188,189,210,
+                                                                                                  221,222,228,230,236,237,238,239,24
+                                                                                                  0,242,248,318,319                 
+ JM2                        Param  127      I(4)            4           scalar                                                      
+ JMT                        Param  125      I(4)            4           scalar                                                      
+ JNPES                      Param  109      I(4)            4           scalar                    115,118                           
+ JTAIL                      Param  115      I(4)            4           scalar                                                      
+ KS                         Local  402      I(4)            4           scalar                    402,411                           
+ KSAV                       Param  135      I(4)            4           scalar                                                      
+ KSFI                       Param  134      I(4)            4           scalar                                                      
+ KSLI                       Param  135      I(4)            4           scalar                                                      
+ KSLP                       Param  135      I(4)            4           scalar                                                      
+ KSLPD                      Param  134      I(4)            4           scalar                    402                               
+ KSMUD                      Param  134      I(4)            4           scalar                                                      
+ KSRH                       Param  135      I(4)            4           scalar                                                      
+ KSSLP                      Param  134      I(4)            4           scalar                                                      
+ KST                        Param  134      I(4)            4           scalar                                                      
+ KSUV                       Param  135      I(4)            4           scalar                                                      
+ L                          Local  295      I(4)            4           scalar                    295,296,301,302,382,383,385       
+ LB                         Param  130      I(4)            4           scalar                                                      
+ LHEAT                      Param  161      I(4)            4           scalar                    161                               
+ LHTOCP                     Param  161      I(4)            4           scalar                                                      
+ LLMH                       Local  276      I(4)            4           scalar                    276,288,289,290,294,295,329,369,38
+                                                                                                  1,382                             
+ LM                         Param  106      I(4)            4           scalar                    129,140,178,185,200,217,230,242,29
+                                                                                                  4,369,381,382                     
+ LM1                        Param  129      I(4)            4           scalar                                                      
+ LOOPS                      Common 207                                  748952   SAVE                                               
+ LP1                        Param  129      I(4)            4           scalar                    184,200,217                       
+ LSM                        Param  106      I(4)            4           scalar                    199                               
+ MAPOT                      Common 194                                  1448     SAVE                                               
+ MASKS                      Common 227                                  34853220 SAVE                                               
+ MOD                        Func   404                                  scalar                    404                               
+ NGMSLP2                    Subr   1                                                                                                
+ NINC                       Param  128      I(4)            4           scalar                                                      
+ NLEV                       Local  287      I(4)            4           scalar                    287,299,305                       
+ NSTAT                      Param  140      I(4)            4           scalar                                                      
+ NSUMD                      Param  136      I(4)            4           scalar                                                      
+ NWORD                      Param  140      I(4)            4           scalar                    140                               
+ NWORD3                     Param  140      I(4)            4           scalar                                                      
+
+Page 9           Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ NWORD6                     Param  140      I(4)            4           scalar                                                      
+ ONEPS                      Param  160      R(4)            4           scalar                                                      
+ OVERRC                     Param  154      R(4)            4           scalar                    154                               
+ P1000                      Param  156      R(4)            4           scalar                    284,376                           
+ P2FILT                     Subr   314                                                            314,315,316,317                   
+ PARALLEL                   Common 266                                  8240                                                        
+ PAVG                       Local  373      R(4)            4           scalar                    373,374                           
+ PM                         Local  297      R(4)            4           scalar                    297,298                           
+ PQ0                        Param  162      R(4)            4           scalar                                                      
+ PSFC                       Local  279      R(4)            4           scalar                    279,280,284,331,332,333,334,369,37
+                                                                                                  2                                 
+ PTOP                       Local  280      R(4)            4           scalar                    280,298,333                       
+ PVRBLS                     Common 235                                  23480064 SAVE                                               
+ QAVG                       Local  344      R(4)            4           scalar                    344,348                           
+ QBAR                       Local  169      R(4)            4     2     91719                     292,308,316,318,338,344,385       
+ QSFC                       Local  170      R(4)            4     2     91719                     281,282,317,319,344               
+ QSUM                       Local  290      R(4)            4           scalar                    290,292,302,308                   
+ RCAPA                      Param  156      R(4)            4           scalar                                                      
+ RD                         Param  153      R(4)            4           scalar                    153,157,161,164,165,339,349,354,35
+                                                                                                  6                                 
+ RDOCP                      Param  161      R(4)            4           scalar                                                      
+ RG                         Param  157      R(4)            4           scalar                                                      
+ RHOAVG                     Local  374      R(4)            4           scalar                    374,375                           
+ RNLEV                      Local  305      R(4)            4           scalar                    305,306,307,308                   
+ ROG                        Param  153      R(4)            4           scalar                                                      
+ RRHOG                      Local  375      R(4)            4           scalar                    375,376                           
+ RTD                        Param  155      R(4)            4           scalar                                                      
+ SMTHA                      Param  136      R(4)            4           scalar                                                      
+ SMTHB                      Param  136      R(4)            4           scalar                                                      
+ TAU                        Local  339      R(4)            4           scalar                    339                               
+ TAUAVG                     Local  366      R(4)            4           scalar                    366,369,374                       
+ TAUCR                      Param  164      R(4)            4           scalar                    359,360,361,362                   
+ TAUSFC                     Local  354      R(4)            4           scalar                    354,359,361,362,366               
+ TAUSL                      Local  356      R(4)            4           scalar                    356,359,360,361,362,366           
+ TAVG                       Local  347      R(4)            4           scalar                    347,348                           
+ TBAR                       Local  169      R(4)            4     2     91719                     291,307,314,338,347               
+ TFRZ                       Param  160      R(4)            4           scalar                                                      
+ THSFC                      Local  283      R(4)            4           scalar                    283,284                           
+ TSFC                       Local  170      R(4)            4     2     91719                     284,315,347                       
+ TSUM                       Local  289      R(4)            4           scalar                    289,291,301,307                   
+ TVRBAR                     Local  348      R(4)            4           scalar                    348,349                           
+ TVRSFC                     Local  353      R(4)            4           scalar                    353,354                           
+ TVRSL                      Local  355      R(4)            4           scalar                    355,356                           
+ TVRT                       Local  338      R(4)            4           scalar                    338,339,353,355,384               
+ TVRTL                      Local  384      R(4)            4           scalar                    384,385                           
+ VRBLS                      Common 175                                  67138308                                                    
+ ZBAR                       Local  349      R(4)            4           scalar                    349,353,355,384                   
+ ZL                         Local  383      R(4)            4           scalar                    383,384                           
+ ZSFC                       Local  330      R(4)            4           scalar                    330,349,353,369,379               
+ ZSL                        Param  163      R(4)            4           scalar                    355,379                           
+
+
+
+Page 10          Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     6236892  2     91719    COM                                                 
+ ACPREC                     R(4)            4     5870016  2     91719    COM                                                 
+ AETA                       R(4)            4     808      1     45       COM                                                 
+ AETAD                      R(4)            4     396      1     45       COM                                                 
+ AKHS                       R(4)            4     733752   2     91719    COM                                                 
+ AKMS                       R(4)            4     366876   2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM              288,296                            
+ ALSL                       R(4)            4     472      1     39       COM                                                 
+ CLDEFI                     R(4)            4     5136264  2     91719    COM                                                 
+ CMLD                       R(4)            4     292            scalar   COM                                                 
+ CPGFU                      R(4)            4     740956   2     91719    COM                                                 
+ CPGFV                      R(4)            4     4              scalar   COM                                                 
+ CPHI0                      R(4)            4     1420           scalar   COM                                                 
+ CUPREC                     R(4)            4     6603768  2     91719    COM                                                 
+ CURV                       R(4)            4     1107832  2     91719    COM                                                 
+ DDMPU                      R(4)            4     2942212  2     91719    COM                                                 
+ DDMPV                      R(4)            4     3309088  2     91719    COM                                                 
+ DETA                       R(4)            4     628      1     45       COM                                                 
+ DETAD                      R(4)            4     36       1     45       COM                                                 
+ DFL                        R(4)            4     940      1     46       COM              383                                
+ DISLP                      R(4)            4     308            scalar   COM                                                 
+ DLMD                       R(4)            4     284            scalar   COM                                                 
+ DP30                       R(4)            4     296            scalar   COM                                                 
+ DPHD                       R(4)            4     288            scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DX                         R(4)            4     7204     2     91719    COM                                                 
+ DY                         R(4)            4     0              scalar   COM                                                 
+ EF4T                       R(4)            4     32             scalar   COM                                                 
+ EM                         R(4)            4     1124     1     760      COM                                                 
+ EMT                        R(4)            4     4164     1     760      COM                                                 
+ EN                         R(4)            4     8              scalar   COM                                                 
+ ENT                        R(4)            4     12             scalar   COM                                                 
+ ERLAM0                     R(4)            4     1416           scalar   COM                                                 
+ ETA                        R(4)            4     988      1     46       COM                                                 
+ ETAD                       R(4)            4     756      1     46       COM                                                 
+ F                          R(4)            4     2575336  2     91719    COM                                                 
+ F4D                        R(4)            4     24             scalar   COM                                                 
+ F4Q                        R(4)            4     28             scalar   COM                                                 
+ F4Q2                       R(4)            4     576      1     45       COM                                                 
+ FAD                        R(4)            4     2208460  2     91719    COM                                                 
+ FCP                        R(4)            4     1474708  2     91719    COM                                                 
+ FDIV                       R(4)            4     1841584  2     91719    COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM              330,406,407,408,409,410            
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM              314,315,316,317                    
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHE                        I(4)            4     0        1     387      COM              408,410,413,414                    
+
+Page 11          Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1548     1     387      COM              407,409,413,414                    
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ ISHDE                      I(4)            4     12       1     61       COM                                                 
+ IUNIT                      I(4)            4     1440           scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVE                        I(4)            4     3096     1     387      COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IVW                        I(4)            4     4644     1     387      COM                                                 
+ IXM                        I(4)            4     4              scalar   COM                                                 
+ IYM                        I(4)            4     8              scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              274,327,395,418                    
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM              403                                
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              274,327,395,418                    
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM              403                                
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KUNIT                      I(4)            4     1428           scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM              276,329                            
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ LSL                        I(4)            4     0              scalar   COM                                                 
+ LUNIT                      I(4)            4     1432           scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ MUNIT                      I(4)            4     1436           scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ NUNIT                      I(4)            4     1444           scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM              279,331                            
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM                                                 
+ PREC                       R(4)            4     5503140  2     91719    COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+
+Page 12          Source Listing                  NGMSLP2
+2022-02-15 16:39 Symbol Table                    NGMSLP2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ PT                         R(4)            4     260            scalar   COM              279,331                            
+ PTDYN                      R(4)            4     20             scalar   COM                                                 
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM              290,302                            
+ Q2                         R(4)            4     6970644  3     4127355  COM                                                 
+ QS                         R(4)            4     1467504  2     91719    COM              281                                
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ QWBS                       R(4)            4     4035636  2     91719    COM                                                 
+ QZ0                        R(4)            4     2935008  2     91719    COM              281                                
+ R                          R(4)            4     256            scalar   COM                                                 
+ RDETA                      R(4)            4     216      1     45       COM                                                 
+ RDYN                       R(4)            4     16             scalar   COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RF                         R(4)            4     3301884  2     91719    COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SBD                        R(4)            4     272            scalar   COM                                                 
+ SI                         R(4)            4     4769388  2     91719    COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM              334,369,372,376,397,401,413,414,41 
+                                                                                           5,420                              
+ SM                         R(4)            4     1100628  2     91719    COM              281,283                            
+ SNO                        R(4)            4     4402512  2     91719    COM                                                 
+ SPHI0                      R(4)            4     1424           scalar   COM                                                 
+ SPL                        R(4)            4     316      1     39       COM                                                 
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              289,301,385                        
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ THS                        R(4)            4     1100628  2     91719    COM              283                                
+ THZ0                       R(4)            4     2568132  2     91719    COM              283                                
+ TLM0D                      R(4)            4     276            scalar   COM                                                 
+ TPH0D                      R(4)            4     280            scalar   COM                                                 
+ TSHDE                      R(4)            4     1172     1     61       COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TSPH                       R(4)            4     264            scalar   COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ TWBS                       R(4)            4     3668760  2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM                                                 
+ UZ0                        R(4)            4     1834380  2     91719    COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ VZ0                        R(4)            4     2201256  2     91719    COM                                                 
+ WBD                        R(4)            4     268            scalar   COM                                                 
+ WPDAR                      R(4)            4     374080   2     91719    COM                                                 
+ X1P                        R(4)            4     300            scalar   COM                                                 
+ Y1P                        R(4)            4     304            scalar   COM                                                 
+ Z0                         R(4)            4     0        2     91719    COM                                                 
+ Z0SLP                      R(4)            4     312            scalar   COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM              376                                
+ ZINT                       R(4)            4     33752592 3     4219074  COM                                                 
+
+Page 13          Source Listing                  NGMSLP2
+2022-02-15 16:39 Subprograms/Common Blocks       NGMSLP2.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 259                                  96       SAVE                                               
+ DYNAM                      Common 215                                  3675964  SAVE                                               
+ EXTRA                      Common 183                                  71506268 SAVE                                               
+ INDX                       Common 247                                  6192     SAVE                                               
+ LOOPS                      Common 207                                  748952   SAVE                                               
+ MAPOT                      Common 194                                  1448     SAVE                                               
+ MASKS                      Common 227                                  34853220 SAVE                                               
+ NGMSLP2                    Subr   1                                                                                                
+ PARALLEL                   Common 266                                  8240                                                        
+ PVRBLS                     Common 235                                  23480064 SAVE                                               
+ VRBLS                      Common 175                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+
+Page 14          Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+
+Page 15          Source Listing                  NGMSLP2
+2022-02-15 16:39                                 NGMSLP2.f
+
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : NGMSLP2.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

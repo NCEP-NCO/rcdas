@@ -1,0 +1,1845 @@
+Page 1           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+      1       SUBROUTINE MISCLN(IMOUT,JMOUT)
+      2 C
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    MISCLN      POSTS MISCELLANEOUS FIELDS
+      6 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-20
+      7 C     
+      8 C ABSTRACT:
+      9 C     THIS ROUTINE HAS BECOME THE CATCH-ALL FOR MISCELLANEOUS
+     10 C     OUTPUT FIELDS POSTED BY THE ETA POST PROCESSOR.  
+     11 C     CURRENTLY THIS ROUTINE POSTS THE FOLLOWING FIELDS:
+     12 C        (1) TROPOPAUSE LEVEL Z,P, T, U, V, AND VERTICAL WIND SHEAR,
+     13 C        (2) MAX WIND LEVEL Z, P, U, AND V,
+     14 C        (3) FD LEVEL T, U, AND V,
+     15 C        (4) FREEZING LEVEL Z AND RH,
+     16 C        (5) CONSTANT MASS (BOUNDARY) FIELDS,
+     17 C        (6) LFM LOOK-ALIKE FIELDS, AND
+     18 C        (7) NGM LOOK-ALIKE FIELDS.
+     19 C
+     20 C   .     
+     21 C     
+     22 C PROGRAM HISTORY LOG:
+     23 C   92-12-20  RUSS TREADON
+     24 C   93-06-19  RUSS TREADON - ADDED TYPE 2 CAPE POSTING.
+     25 C   94-11-07  MIKE BALDWIN - ADDED HELICITY POSTING.
+     26 C   96-03-26  MIKE BALDWIN - CHANGE ETA BOUNDARY LAYER LABELS FOR GRIB
+     27 C   96-11-19  MIKE BALDWIN - BACK OUT PREVIOUS CHANGE 
+     28 C   97-04-25  MIKE BALDWIN - CHANGE ETA BOUNDARY LAYER LABELS FOR GRIB
+     29 C   97-04-29  GEOFF MANIKIN - ADDED TROPOPAUSE HEIGHT AND
+     30 C                             MAX WIND LEVEL FIELDS
+     31 C   98-06-15  T BLACK       - CONVERSION FROM 1-D TO 2-D
+     32 C   98-07-17  MIKE BALDWIN - REMOVED LABL84
+     33 C   00-01-04  JIM TUCCILLO - MPI VERSION
+     34 C     
+     35 C USAGE:    CALL MISCLN(IMOUT,JMOUT)
+     36 C   INPUT ARGUMENT LIST:
+     37 C     IMOUT    - FIRST DIMENSION OF OUTPUT GRID.
+     38 C     JMOUT    - SECOND DIMENSION OF OUTPUT GRID.
+     39 C
+     40 C   OUTPUT ARGUMENT LIST: 
+     41 C     NONE
+     42 C     
+     43 C   OUTPUT FILES:
+     44 C     STDOUT   - RUN-TIME MESSAGES (FOR DEBUGGING, NOW TURNED OFF)
+     45 C     
+     46 C   SUBPROGRAMS CALLED:
+     47 C     UTILITIES:
+     48 C       TRPAUS  - COMPUTE TROPOPAUSE LEVEL FIELDS.
+     49 C       CALMXW  - COMPUTE MAX WIND LEVEL FIELDS.
+     50 C       E2OUT   - INTERPOLATE STAGGERED E-GRID TO OUTPUT GRID.
+     51 C       SCLFLD  - SCALE ARRAY ELEMENTS BY CONSTANT.
+     52 C       OUTPUT  - DRIVER FOR TYPE OF FILE OUTPUT.
+     53 C       CALPOT2 - CALCULATE POTENTIAL TEMPERATURE.
+     54 C       FDLVL   - COMPUTE FD LEVEL DATA (AGL OR MSL).
+     55 C       FRZLVL  - COMPUTE FREEZING LEVEL DATA.
+     56 C       BOUND   - BOUND ARRAY ELEMENTS BETWEEN MINIMUM AND MAXIMUM VALUES.
+     57 C       BNDLYR2 - COMPUTE BOUNDARY LAYER FIELDS.
+
+Page 2           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+     58 C       CALDWP2 - CALCULATE DEWPOINT TEMPERATURE.
+     59 C       CALMCVG - CALCULATE MOISTURE CONVERGENCE.
+     60 C       OTLFT2  - COMPUTE LIFTED INDEX AT 500MB.
+     61 C       CALLCL  - COMPUTE LCL DATA.
+     62 C       LFMFLD  - COMPUTE LFM LOOK-ALIKE FIELDS.
+     63 C       NGMFLD2 - COMPUTE NGM LOOK-ALIKE FIELDS.
+     64 C       CALTHTE - COMPUTE THETA-E.
+     65 C       CALHEL  - COMPUTE HELICITY AND STORM MOTION.
+     66 C
+     67 C     LIBRARY:
+     68 C       COMMON - RQSTFLD
+     69 C                MASKS
+     70 C                IOUNIT
+     71 C                OPTIONS
+     72 C     
+     73 C   ATTRIBUTES:
+     74 C     LANGUAGE: FORTRAN
+     75 C     MACHINE : CRAY C-90
+     76 C$$$  
+     77 C     
+     78 C
+     79 C     INCLUDE GRID DIMENSIONS.  DERIVE DEPENDENT PARAMETERS.
+     80 C
+     81       INCLUDE "parmeta"
+     99       INCLUDE "parmout"
+    103       INCLUDE "params"
+    104 C     
+    105 C     SET LOCAL PARAMETERS.  MAKE SURE NFD AND NBND AGREE
+    106 C     WITH THE VALUES SET IN SUBROUTINES FDLVL AND BNDLYR2,
+    107 C     RESPECTIVELY.
+    149       PARAMETER (NFD=6,NBND=6,SMALL=1.E-12)
+    150       PARAMETER (C2K=273.15)
+    151 C     
+    152 C     DECLARE VARIABLES.
+    153 C     
+    154       LOGICAL NORTH
+    155       LOGICAL RUN,FIRST,RESTRT,SIGMA,OLDRD,STDRD
+    156       LOGICAL FIELD1,FIELD2
+    157       INTEGER LVLBND(IM,JM,NBND),LB2(IM,JM)
+    158       REAL P1D(IM,JM),T1D(IM,JM),Q1D(IM,JM),U1D(IM,JM),V1D(IM,JM)
+    159       REAL SHR1D(IM,JM),Z1D(IM,JM),RH1D(IM,JM)
+    160       REAL OMGBND(IM,JM,NBND),PWTBND(IM,JM,NBND)
+    161       REAL PBND(IM,JM,NBND),TBND(IM,JM,NBND),QBND(IM,JM,NBND)
+    162       REAL UBND(IM,JM,NBND),VBND(IM,JM,NBND),RHBND(IM,JM,NBND)
+    163       REAL T78483(IM,JM),T89671(IM,JM),P78483(IM,JM),P89671(IM,JM)
+    164       REAL QM8510(IM,JM),RH4710(IM,JM),RH8498(IM,JM)
+    165       REAL RH4796(IM,JM),RH1847(IM,JM),UST(IM,JM),VST(IM,JM)
+    166       REAL RH3310(IM,JM),RH6610(IM,JM),RH3366(IM,JM),PW3310(IM,JM)
+    167       REAL HTFD(NFD),T6D(IM,JM,NFD),U6D(IM,JM,NFD),V6D(IM,JM,NFD)
+    168       REAL PETABND(NBND),SIGBND(NBND),HELI(IM,JM)
+    169       REAL EGRID1(IM,JM),EGRID2(IM,JM)
+    170       REAL GRID1(IMOUT,JMOUT),GRID2(IMOUT,JMOUT)
+    171       REAL MAXWP(IM,JM),MAXWZ(IM,JM),MAXWU(IM,JM), MAXWV(IM,JM)
+    172       
+    173 C     
+    174 C     INCLUDE COMMON BLOCKS.
+    175       INCLUDE "RQSTFLD.comm"
+
+Page 3           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    188       INCLUDE "MASKS.comm"
+    196       INCLUDE "IOUNIT.comm"
+    204       INCLUDE "OPTIONS.comm"
+    208       INCLUDE "VRBLS.comm"
+    215       INCLUDE "EXTRA.comm"
+    227       INCLUDE "DYNAM.comm"
+    239       INCLUDE "CTLBLK.comm"
+    240 C     
+    241 C
+    242 C     EQUIVALENCES FOR SUBROUTINE MISCLN.
+    257       EQUIVALENCE (TBND(1,1,1),T6D(1,1,1))
+    258       EQUIVALENCE (TBND(1,1,2),T6D(1,1,2))
+    259       EQUIVALENCE (TBND(1,1,3),T6D(1,1,3))
+    260       EQUIVALENCE (TBND(1,1,4),T6D(1,1,4))
+    261       EQUIVALENCE (TBND(1,1,5),T6D(1,1,5))
+    262       EQUIVALENCE (TBND(1,1,6),T6D(1,1,6))
+    263       EQUIVALENCE (UBND(1,1,1),U6D(1,1,1))
+    264       EQUIVALENCE (UBND(1,1,2),U6D(1,1,2))
+    265       EQUIVALENCE (UBND(1,1,3),U6D(1,1,3))
+    266       EQUIVALENCE (UBND(1,1,4),U6D(1,1,4))
+    267       EQUIVALENCE (UBND(1,1,5),U6D(1,1,5))
+    268       EQUIVALENCE (UBND(1,1,6),U6D(1,1,6))
+    269       EQUIVALENCE (VBND(1,1,1),V6D(1,1,1))
+    270       EQUIVALENCE (VBND(1,1,2),V6D(1,1,2))
+    271       EQUIVALENCE (VBND(1,1,3),V6D(1,1,3))
+    272       EQUIVALENCE (VBND(1,1,4),V6D(1,1,4))
+    273       EQUIVALENCE (VBND(1,1,5),V6D(1,1,5))
+    274       EQUIVALENCE (VBND(1,1,6),V6D(1,1,6))
+    275 C     
+    276 C     SET FD LEVEL HEIGHTS IN GEOPOTENTAL METERS.
+    277       DATA HTFD  / 914.E0,1524.E0,1829.E0,
+    278      X     2134.E0,2743.E0,3658.E0/
+    279 C     
+    280 C     SET MIDPOINT "SIGMA" VALUES FOR ETA BOUNDARY LAYERS.
+    281       DATA SIGBND / 0.985,0.955,0.925,0.895,0.865,0.835 /
+    282       DATA PETABND / 15.,45.,75.,105.,135.,165. /
+    283 C     
+    284 C****************************************************************************
+    285 C     START MISCLN HERE.
+    286 C     
+    287 C        HELICITY AND STORM MOTION.
+    288        IF (IGET(162).GT.0.OR.IGET(163).GT.0.OR.IGET(164).GT.0) THEN
+    289          CALL CALHEL(UST,VST,HELI)
+    290          IF (IGET(162).GT.0) THEN
+    291             CALL E2OUT(162,000,HELI,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    292             ID(1:25) = 0
+    293             ID(10)   = 30
+    294             ID(11)   = 0
+    295             CALL OUTPUT(IOUTYP,IGET(162),LVLS(1,IGET(162)),
+    296      X           GRID1,IMOUT,JMOUT)
+    297          ENDIF
+    298          IF ((IGET(163).GT.0).OR.(IGET(164).GT.0)) THEN
+    299             CALL E2OUT(163,164,UST,VST,GRID1,GRID2,IMOUT,JMOUT)
+    300             ID(1:25) = 0
+    301             ID(10)   = 60
+    302             ID(11)   = 0 
+    303             IF (IGET(163).GT.0) CALL OUTPUT(IOUTYP,IGET(163),
+
+Page 4           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    304      X           LVLS(1,IGET(163)),GRID1,IMOUT,JMOUT)
+    305             ID(1:25) = 0
+    306             ID(10)   = 60
+    307             ID(11)   = 0 
+    308             IF (IGET(164).GT.0) CALL OUTPUT(IOUTYP,IGET(164),
+    309      X           LVLS(1,IGET(164)),GRID2,IMOUT,JMOUT)
+    310          ENDIF
+    311        ENDIF
+    312 C     
+    313 C
+    314 C
+    315 C     ***BLOCK 1:  TROPOPAUSE P, Z, T, U, V, AND WIND SHEAR.
+    316 C    
+    317       IF ( (IGET(054).GT.0).OR.(IGET(055).GT.0).OR.
+    318      X     (IGET(056).GT.0).OR.(IGET(057).GT.0).OR.
+    319      X     (IGET(177).GT.0).OR.
+    320      X     (IGET(058).GT.0).OR.(IGET(108).GT.0) ) THEN
+    321          CALL TRPAUS(P1D,T1D,Z1D,U1D,V1D,SHR1D) 
+    322 C
+    323 C        TROPOPAUSE PRESSURE.
+    324          IF (IGET(054).GT.0) THEN
+    325             CALL E2OUT(054,000,P1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    326             ID(1:25) = 0
+    327             CALL OUTPUT(IOUTYP,IGET(054),LVLS(1,IGET(054)),
+    328      X           GRID1,IMOUT,JMOUT)
+    329          ENDIF
+    330 
+    331 C        TROPOPAUSE HEIGHT.
+    332          IF (IGET(177).GT.0) THEN
+    333             CALL E2OUT(177,000,Z1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    334             ID(1:25) = 0
+    335             CALL OUTPUT(IOUTYP,IGET(177),LVLS(1,IGET(177)),
+    336      X           GRID1,IMOUT,JMOUT)
+    337          ENDIF
+    338 C
+    339 C        TROPOPAUSE TEMPERATURE.
+    340          IF (IGET(055).GT.0) THEN
+    341             CALL E2OUT(055,000,T1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    342             ID(1:25) = 0
+    343             CALL OUTPUT(IOUTYP,IGET(055),LVLS(1,IGET(055)),
+    344      X           GRID1,IMOUT,JMOUT)
+    345          ENDIF
+    346 C
+    347 C        TROPOPAUSE POTENTIAL TEMPERATURE.
+    348          IF (IGET(108).GT.0) THEN
+    349             CALL CALPOT2(P1D,T1D,EGRID1,IM,JM)
+    350             CALL E2OUT(108,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    351             ID(1:25) = 0
+    352             CALL OUTPUT(IOUTYP,IGET(108),LVLS(1,IGET(108)),
+    353      X           GRID1,IMOUT,JMOUT)
+    354          ENDIF
+    355 C     
+    356 C        TROPOPAUSE U WIND AND/OR V WIND.
+    357          IF ((IGET(056).GT.0).OR.(IGET(057).GT.0)) THEN
+    358             CALL E2OUT(056,057,U1D,V1D,GRID1,GRID2,IMOUT,JMOUT)
+    359             ID(1:25) = 0
+    360             IF (IGET(056).GT.0) CALL OUTPUT(IOUTYP,IGET(056),
+
+Page 5           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    361      X           LVLS(1,IGET(056)),GRID1,IMOUT,JMOUT)
+    362             ID(1:25) = 0
+    363             IF (IGET(057).GT.0) CALL OUTPUT(IOUTYP,IGET(057),
+    364      X           LVLS(1,IGET(057)),GRID2,IMOUT,JMOUT)
+    365          ENDIF
+    366 C
+    367 C        TROPOPAUSE WIND SHEAR.
+    368          IF (IGET(058).GT.0) THEN
+    369             CALL E2OUT(058,000,SHR1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    370             ID(1:25) = 0
+    371             CALL OUTPUT(IOUTYP,IGET(058),LVLS(1,IGET(058)),
+    372      X           GRID1,IMOUT,JMOUT)
+    373          ENDIF
+    374       ENDIF
+    375 C
+    376 C
+    377 C
+    378 C     ***BLOCK 2:  MAX WIND LEVEL  P, Z, U, AND V
+    379 C
+    380 C        MAX WIND LEVEL CALCULATIONS
+    381          IF ((IGET(173).GT.0) .OR. (IGET(174).GT.0) .OR.
+    382      X      (IGET(175).GT.0) .OR. (IGET(176).GT.0)) THEN
+    383             CALL CALMXW(MAXWP,MAXWZ,MAXWU,MAXWV)
+    384          ENDIF
+    385 C        PRESSURE OF MAX WIND LEVEL
+    386          IF (IGET(173).GT.0) THEN
+    387             CALL E2OUT(173,000,MAXWP,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    388             ID(1:25) = 0
+    389             CALL OUTPUT(IOUTYP,IGET(173),LVLS(1,IGET(173)),
+    390      X           GRID1,IMOUT,JMOUT)
+    391           ENDIF
+    392 C        HEIGHT OF MAX WIND LEVEL
+    393          IF (IGET(174).GT.0) THEN
+    394             CALL E2OUT(174,000,MAXWZ,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    395             ID(1:25) = 0
+    396             CALL OUTPUT(IOUTYP,IGET(174),LVLS(1,IGET(174)),
+    397      X           GRID1,IMOUT,JMOUT)
+    398           ENDIF
+    399 
+    400 C        MAX WIND LEVEL U WIND AND/OR V WIND.
+    401          IF ((IGET(175).GT.0).OR.(IGET(176).GT.0)) THEN
+    402             CALL E2OUT(175,176,MAXWU,MAXWV,GRID1,GRID2,IMOUT,JMOUT)
+    403             ID(1:25) = 0
+    404             IF (IGET(175).GT.0) CALL OUTPUT(IOUTYP,IGET(175),
+    405      X           LVLS(1,IGET(175)),GRID1,IMOUT,JMOUT)
+    406             ID(1:25) = 0
+    407             IF (IGET(176).GT.0) CALL OUTPUT(IOUTYP,IGET(176),
+    408      X           LVLS(1,IGET(176)),GRID2,IMOUT,JMOUT)
+    409          ENDIF
+    410 C
+    411 C
+    412 C
+    413 C     ***BLOCK 3:  FD LEVEL T, U, AND V.
+    414 C     
+    415       IF ( (IGET(059).GT.0).OR.(IGET(060).GT.0).OR.
+    416      X     (IGET(061).GT.0) ) THEN
+    417 C
+
+Page 6           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    418 C     DETERMINE WHETHER TO DO MSL OR AGL FD LEVELS
+    419 C
+    420          ITYPE=1
+    421          DO IFD = 1,NFD
+    422            IF (IGET(059).GT.0) THEN
+    423             IF (LVLS(IFD,IGET(059)).GT.1) ITYPE=2
+    424            ENDIF
+    425            IF (IGET(060).GT.0) THEN
+    426             IF (LVLS(IFD,IGET(060)).GT.1) ITYPE=2
+    427            ENDIF
+    428            IF (IGET(061).GT.0) THEN
+    429             IF (LVLS(IFD,IGET(061)).GT.1) ITYPE=2
+    430            ENDIF
+    431          ENDDO
+    432          CALL FDLVL(ITYPE,T6D,U6D,V6D)
+    433 C     
+    434          DO 10 IFD = 1,NFD
+    435             ID(1:25) = 0
+    436             ISVALUE = NINT(HTFD(IFD))
+    437             ID(11) = ISVALUE
+    438 C
+    439 C           FD LEVEL TEMPERATURE.
+    440             IF (IGET(059).GT.0) THEN
+    441               IF (LVLS(IFD,IGET(059)).GT.0) THEN
+    442                CALL E2OUT(059,000,T6D(1,1,IFD),EGRID2,
+    443      X              GRID1,GRID2,IMOUT,JMOUT)
+    444                CALL OUTPUT(IOUTYP,IGET(059),
+    445      X              LVLS(IFD,IGET(059)),GRID1,IMOUT,JMOUT)
+    446               ENDIF
+    447             ENDIF
+    448 C
+    449 C           FD LEVEL U WIND AND/OR V WIND.
+    450             IF ((IGET(060).GT.0).OR.(IGET(061).GT.0)) THEN
+    451                CALL E2OUT(060,061,U6D(1,1,IFD),V6D(1,1,IFD),
+    452      X              GRID1,GRID2,IMOUT,JMOUT)
+    453                IF (IGET(060).GT.0) THEN
+    454                  IF (LVLS(IFD,IGET(060)).GT.0) CALL OUTPUT(IOUTYP,
+    455      X              IGET(060),LVLS(IFD,IGET(060)),GRID1,IMOUT,JMOUT)
+    456                ENDIF
+    457                IF (IGET(061).GT.0) THEN
+    458                  IF (LVLS(IFD,IGET(061)).GT.0) CALL OUTPUT(IOUTYP,
+    459      X              IGET(061),LVLS(IFD,IGET(061)),GRID2,IMOUT,JMOUT)
+    460                ENDIF
+    461             ENDIF
+    462  10      CONTINUE
+    463       ENDIF
+    464 C     
+    465 C
+    466 C
+    467 C     ***BLOCK 4:  FREEZING LEVEL Z AND RH.
+    468 C     
+    469       IF ( (IGET(062).GT.0).OR.(IGET(063).GT.0) ) THEN
+    470          CALL FRZLVL(Z1D,RH1D)
+    471 C
+    472 C        FREEZING LEVEL HEIGHT.
+    473          IF (IGET(062).GT.0) THEN
+    474             CALL E2OUT(062,000,Z1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+
+Page 7           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    475             ID(1:25) = 0
+    476             CALL BOUND (GRID1,D00,H99999,IMOUT,JMOUT)
+    477             CALL OUTPUT(IOUTYP,IGET(062),LVLS(1,IGET(062)),
+    478      X           GRID1,IMOUT,JMOUT)
+    479          ENDIF
+    480 C
+    481 C        FREEZING LEVEL RELATIVE HUMIDITY.
+    482          IF (IGET(063).GT.0) THEN
+    483             CALL E2OUT(063,000,RH1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    484             ID(1:25) = 0
+    485             CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+    486             CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+    487             CALL OUTPUT(IOUTYP,IGET(063),LVLS(1,IGET(063)),
+    488      X           GRID1,IMOUT,JMOUT)
+    489          ENDIF
+    490       ENDIF
+    491       IF (IGET(165).GT.0) THEN
+    492          CALL FRZLVL2(Z1D,RH1D)
+    493 C
+    494 C        HIGHEST FREEZING LEVEL HEIGHT.
+    495             CALL E2OUT(165,000,Z1D,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    496             ID(1:25) = 0
+    497             CALL BOUND (GRID1,D00,H99999,IMOUT,JMOUT)
+    498             CALL OUTPUT(IOUTYP,IGET(165),LVLS(1,IGET(165)),
+    499      X           GRID1,IMOUT,JMOUT)
+    500       ENDIF
+    501 C     
+    502 C
+    503 C
+    504 C     ***BLOCK 5:  BOUNDARY LAYER FIELDS.
+    505 C     
+    506       IF ( (IGET(067).GT.0).OR.(IGET(068).GT.0).OR.
+    507      X     (IGET(069).GT.0).OR.(IGET(070).GT.0).OR.
+    508      X     (IGET(071).GT.0).OR.(IGET(072).GT.0).OR.
+    509      X     (IGET(073).GT.0).OR.(IGET(074).GT.0).OR.
+    510      X     (IGET(088).GT.0).OR.(IGET(089).GT.0).OR.
+    511      X     (IGET(090).GT.0).OR.(IGET(075).GT.0).OR.
+    512      X     (IGET(109).GT.0).OR.(IGET(110).GT.0).OR.
+    513      X     (IGET(031).GT.0).OR.(IGET(032).GT.0).OR.
+    514      X     (IGET(107).GT.0).OR.(IGET(091).GT.0).OR.
+    515      X     (IGET(092).GT.0).OR.(IGET(093).GT.0).OR.
+    516      X     (IGET(094).GT.0).OR.(IGET(095).GT.0).OR.
+    517      X     (IGET(096).GT.0).OR.(IGET(097).GT.0).OR.
+    518      X     (IGET(098).GT.0) ) THEN
+    519 C
+    520 C        COMPUTE ETA BOUNDARY LAYER FIELDS.
+    521          CALL BNDLYR2(PBND,TBND,QBND,RHBND,UBND,VBND,
+    522      X        OMGBND,PWTBND,LVLBND)
+    523 C     
+    524 C        LOOP OVER NBND BOUNDARY LAYERS.
+    525          DO 20 LBND = 1,NBND
+    526             ID(1:25) = 0
+    527             ID(10)   = NINT(PETABND(LBND)+15.)
+    528             ID(11)   = NINT(PETABND(LBND)-15.)
+    529 C     
+    530 C           BOUNDARY LAYER PRESSURE.
+    531             IF (IGET(067).GT.0) THEN
+
+Page 8           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    532               IF (LVLS(LBND,IGET(067)).GT.0) THEN
+    533                CALL E2OUT(067,000,PBND(1,1,LBND),EGRID2,
+    534      X              GRID1,GRID2,IMOUT,JMOUT)
+    535                CALL OUTPUT(IOUTYP,IGET(067),
+    536      X              LVLS(LBND,IGET(067)),GRID1,IMOUT,JMOUT)
+    537               ENDIF
+    538             ENDIF
+    539 C     
+    540 C           BOUNDARY LAYER TEMPERATURE.
+    541             IF (IGET(068).GT.0) THEN
+    542               IF (LVLS(LBND,IGET(068)).GT.0) THEN
+    543                CALL E2OUT(068,000,TBND(1,1,LBND),EGRID2,
+    544      X              GRID1,GRID2,IMOUT,JMOUT)
+    545                CALL OUTPUT(IOUTYP,IGET(068),LVLS(LBND,IGET(068)),
+    546      X              GRID1,IMOUT,JMOUT)
+    547               ENDIF
+    548             ENDIF
+    549 C     
+    550 C           BOUNDARY LAYER POTENTIAL TEMPERATURE.
+    551             IF (IGET(069).GT.0) THEN
+    552               IF (LVLS(LBND,IGET(069)).GT.0) THEN
+    553                CALL CALPOT2(PBND(1,1,LBND),TBND(1,1,LBND),EGRID1,IM,JM)
+    554                CALL E2OUT(069,000,EGRID1,EGRID2,GRID1,GRID2,
+    555      X              IMOUT,JMOUT)
+    556                CALL OUTPUT(IOUTYP,IGET(069),LVLS(LBND,IGET(069)),
+    557      X              GRID1,IMOUT,JMOUT)
+    558               ENDIF
+    559             ENDIF
+    560 C     
+    561 C           BOUNDARY LAYER RELATIVE HUMIDITY.
+    562             IF (IGET(072).GT.0) THEN
+    563               IF (LVLS(LBND,IGET(072)).GT.0) THEN
+    564                CALL E2OUT(072,000,RHBND(1,1,LBND),EGRID2,
+    565      X              GRID1,GRID2,IMOUT,JMOUT)
+    566                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+    567                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+    568                CALL OUTPUT(IOUTYP,IGET(072),LVLS(LBND,IGET(072)),
+    569      X              GRID1,IMOUT,JMOUT)
+    570               ENDIF
+    571             ENDIF
+    572 C     
+    573 C           BOUNDARY LAYER DEWPOINT TEMPERATURE.
+    574             IF (IGET(070).GT.0) THEN
+    575               IF (LVLS(LBND,IGET(070)).GT.0) THEN
+    576                CALL CALDWP2(PBND(1,1,LBND),QBND(1,1,LBND),EGRID1,
+    577      X              TBND(1,1,LBND))
+    578                CALL E2OUT(070,000,EGRID1,EGRID2,GRID1,GRID2,
+    579      X              IMOUT,JMOUT)
+    580                CALL OUTPUT(IOUTYP,IGET(070),LVLS(LBND,IGET(070)),
+    581      X              GRID1,IMOUT,JMOUT)
+    582               ENDIF
+    583             ENDIF
+    584 C     
+    585 C           BOUNDARY LAYER SPECIFIC HUMIDITY.
+    586             IF (IGET(071).GT.0) THEN
+    587               IF (LVLS(LBND,IGET(071)).GT.0) THEN
+    588                CALL E2OUT(071,000,QBND(1,1,LBND),EGRID2,
+
+Page 9           Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    589      X              GRID1,GRID2,IMOUT,JMOUT)
+    590                CALL BOUND(GRID1,H1M12,H99999,IMOUT,JMOUT)
+    591                CALL OUTPUT(IOUTYP,IGET(071),LVLS(LBND,IGET(071)),
+    592      X              GRID1,IMOUT,JMOUT)
+    593               ENDIF
+    594             ENDIF
+    595 C     
+    596 C           BOUNDARY LAYER MOISTURE CONVERGENCE.
+    597             IF (IGET(088).GT.0) THEN
+    598               IF (LVLS(LBND,IGET(088)).GT.0) THEN
+    599                CALL CALMCVG(QBND(1,1,LBND),UBND(1,1,LBND),
+    600      X              VBND(1,1,LBND),-1,EGRID1)
+    601 C          CONVERT TO DIVERGENCE FOR GRIB
+    602                DO J=JSTA,JEND
+    603                DO I=1,IM
+    604                  EGRID1(I,J)=-1.0*EGRID1(I,J)
+    605                ENDDO
+    606                ENDDO
+    607                CALL E2OUT(088,000,EGRID1,EGRID2,GRID1,GRID2,
+    608      X              IMOUT,JMOUT)
+    609                CALL OUTPUT(IOUTYP,IGET(088),LVLS(LBND,IGET(088)),
+    610      X              GRID1,IMOUT,JMOUT)
+    611               ENDIF
+    612             ENDIF
+    613 C     
+    614 C           BOUNDARY LAYER U WIND AND/OR V WIND.
+    615 C
+    616             FIELD1=.FALSE.
+    617             FIELD2=.FALSE.
+    618 C
+    619             IF(IGET(073).GT.0)THEN
+    620               IF(LVLS(LBND,IGET(073)).GT.0)FIELD1=.TRUE.
+    621             ENDIF
+    622             IF(IGET(074).GT.0)THEN
+    623               IF(LVLS(LBND,IGET(074)).GT.0)FIELD2=.TRUE.
+    624             ENDIF
+    625 C
+    626             IF(FIELD1.OR.FIELD2)THEN
+    627               CALL E2OUT(073,074,UBND(1,1,LBND),VBND(1,1,LBND),
+    628      X                   GRID1,GRID2,IMOUT,JMOUT)
+    629 C
+    630 C              TWO ROUTINES WERE WRITTEN DURING POST PROCESSOR
+    631 C              DEVELOPMENT TO MIMIC LFM BOUNDARY LAYER WINDS.
+    632 C              BOTH APPLY AN EKMAN SPIRAL ROTATION TO AN ARTIFICIALLY
+    633 C              REDUCED GEOSTROPHIC WIND FIELD.  SUBROUTINE CALEKM
+    634 C              BASES THE GEOSTROPHIC WIND ON 1000MB HEIGHTS WHILE
+    635 C              CALEKM2 USES THE SEA LEVEL PRESSURE FIELD.  IF
+    636 C              LBND EQUALS ONE AND LVLS IS 8 POST THE CALEKM WINDS
+    637 C              AS BOUNDARY LAYER ONE WINDS.  IF LBND EQUALS ONE AND
+    638 C              LVLS IS 9 POST CALEKM2 WINDS AS BOUNDARY LAYER ONE
+    639 C              WINDS.  OTHERWISE, POST THE "TRUE" BOUNDARY LAYER 
+    640 C              ONE WINDS.
+    641 C                              - 19 OCTOBER 1993, RUSS TREADON
+    642 C                     
+    643                IF (IGET(073).GT.0) THEN
+    644                IF ((LBND.EQ.1).AND.(LVLS(LBND,IGET(073)).EQ.8)) THEN
+    645                   WRITE(STDOUT,*)'MISCLN:  BNDLYR ',LBND,
+
+Page 10          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    646      X                 ' UV USING EKMAN-GEO Z1000 UV'
+    647                   CALL CALEKM(U1D,V1D)
+    648                   CALL E2OUT(073,074,U1D,V1D,GRID1,GRID2,IMOUT,JMOUT)
+    649                ENDIF
+    650                ENDIF
+    651 C
+    652                IF (IGET(073).GT.0) THEN
+    653                IF ((LBND.EQ.1).AND.(LVLS(LBND,IGET(073)).EQ.9)) THEN
+    654                   WRITE(STDOUT,*)'MISCLN:  BNDLYR ',LBND,
+    655      X                 ' UV USING EKMAN-GEO PMSL UV'
+    656                   CALL CALEKM2(U1D,V1D)
+    657                   CALL E2OUT(073,074,U1D,V1D,GRID1,GRID2,IMOUT,JMOUT)
+    658                ENDIF
+    659                ENDIF
+    660 C
+    661                IF (IGET(073).GT.0) THEN
+    662                  IF (LVLS(LBND,IGET(073)).GT.0)
+    663      X              CALL OUTPUT(IOUTYP,IGET(073),
+    664      X              LVLS(LBND,IGET(073)),GRID1,IMOUT,JMOUT)
+    665                ENDIF
+    666                IF (IGET(074).GT.0) THEN
+    667                  IF (LVLS(LBND,IGET(074)).GT.0) 
+    668      X              CALL OUTPUT(IOUTYP,IGET(074),
+    669      X              LVLS(LBND,IGET(074)),GRID2,IMOUT,JMOUT)
+    670                ENDIF
+    671             ENDIF
+    672 C     
+    673 C           BOUNDARY LAYER OMEGA.
+    674             IF (IGET(090).GT.0) THEN
+    675               IF (LVLS(LBND,IGET(090)).GT.0) THEN
+    676                CALL E2OUT(090,000,OMGBND(1,1,LBND),EGRID2,
+    677      X              GRID1,GRID2,IMOUT,JMOUT)
+    678                CALL OUTPUT(IOUTYP,IGET(090),LVLS(LBND,IGET(090)),
+    679      X              GRID1,IMOUT,JMOUT)
+    680               ENDIF
+    681             ENDIF
+    682 C     
+    683 C           BOUNDARY LAYER PRECIPITBLE WATER.
+    684             IF (IGET(089).GT.0) THEN
+    685               IF (LVLS(LBND,IGET(089)).GT.0) THEN
+    686                CALL E2OUT(089,000,PWTBND(1,1,LBND),EGRID2,
+    687      X              GRID1,GRID2,IMOUT,JMOUT)
+    688                CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    689                CALL OUTPUT(IOUTYP,IGET(089),LVLS(LBND,IGET(089)),
+    690      X              GRID1,IMOUT,JMOUT)
+    691               ENDIF
+    692             ENDIF
+    693 C     
+    694 C           BOUNDARY LAYER LIFTED INDEX.
+    695             IF (IGET(075).GT.0) THEN
+    696               IF (LVLS(LBND,IGET(075)).GT.0) THEN
+    697                CALL OTLFT2(PBND(1,1,LBND),TBND(1,1,LBND),
+    698      X              QBND(1,1,LBND),EGRID1)
+    699                CALL E2OUT(075,000,EGRID1,EGRID2,
+    700      X              GRID1,GRID2,IMOUT,JMOUT)
+    701 C     
+    702 C           23 SEPTEMBER 1993, RUSS TREADON.
+
+Page 11          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    703 C             ON LFM FORECAST GRID 026 WE POST THE FIRST ETA 
+    704 C             BOUNDARY LAYER LI AS THE SURFACE TO 500MB LI.
+    705 C             THE CALL TO E2OUT INTERPOLATES THE LI FROM
+    706 C             THE E-GRID TO THE OUTPUT GRID.  IF WE ARE POSTING
+    707 C             DATA THE THE LFM GRID WE NEED TO SAVE THIS 
+    708 C             INTERPOLATED FIELD FOR USE BELOW.  WHY?  WHEN
+    709 C             PACKING THE DATA IN GRIB1 THE VALUES IN GRID1
+    710 C             ARE MULTIPLIED BY 10.  IF WE SEND GRID1 TO THE
+    711 C             GRIB PACKER A SECOND TIME THE LI'S ARE 10 TIMES 
+    712 C             TOO BIG.
+    713 C
+    714                CALL E2OUT(075,000,EGRID1,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+    715                IF (KGTYPE.EQ.026) THEN
+    716                   DO J=JSTA,JEND
+    717                   DO I=1,IMOUT
+    718                      GRID2(I,J) = GRID1(I,J)
+    719                   ENDDO
+    720                   ENDDO
+    721                ENDIF
+    722                
+    723                
+    724                CALL OUTPUT(IOUTYP,IGET(075),LVLS(LBND,IGET(075)),
+    725      X              GRID1,IMOUT,JMOUT)
+    726 C
+    727 C              25 JUNE 1993, RUSS TREADON.
+    728 C                 ON THE LFM FORECAST GRID (026) WE POST THE FIRST
+    729 C                 BOUNDARY LAYER LIFTED INDEX AS THE SURFACE LI.
+    730 C     
+    731                IF (KGTYPE.EQ.026) THEN
+    732                   DO J=JSTA,JEND
+    733                   DO I=1,IMOUT
+    734                     GRID2(I,J) = GRID2(I,J) + C2K
+    735                   ENDDO
+    736                   ENDDO
+    737 C
+    738                   ID(1:25) = 0
+    739                   ID(9) = 101
+    740                   ID(10) = 50
+    741                   ID(11) = 0
+    742                   CALL OUTPUT(IOUTYP,IGET(030),LVLS(1,IGET(030)),
+    743      X                 GRID2,IMOUT,JMOUT)
+    744                ENDIF
+    745               ENDIF
+    746             ENDIF
+    747 C
+    748 C        END OF ETA BOUNDARY LAYER LOOP.
+    749  20      CONTINUE
+    750 C     
+    751 C        BEST LIFTED INDEX FROM BOUNDARY LAYER FIELDS.
+    752 C     
+    753          IF (IGET(031).GT.0) THEN
+    754             DO J=JSTA,JEND
+    755             DO I=1,IM
+    756               EGRID1(I,J) = H99999
+    757               EGRID2(I,J) = H99999
+    758             ENDDO
+    759             ENDDO
+
+Page 12          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    760 C
+    761             DO 50 LBND = 1,NBND
+    762                CALL OTLFT2(PBND(1,1,LBND),TBND(1,1,LBND),
+    763      X              QBND(1,1,LBND),EGRID2)
+    764                DO J=JSTA,JEND
+    765                DO I=1,IM
+    766                  EGRID1(I,J)=AMIN1(EGRID1(I,J),EGRID2(I,J))
+    767                ENDDO
+    768                ENDDO
+    769  50         CONTINUE
+    770             CALL E2OUT(031,000,EGRID1,EGRID2,
+    771      X           GRID1,GRID2,IMOUT,JMOUT)
+    772             ID(1:25) = 0
+    773             ID(10)   = PETABND(NBND)+15.
+    774             ID(11)   = PETABND(1)-15.
+    775             CALL OUTPUT(IOUTYP,IGET(031),LVLS(1,IGET(031)),
+    776      X           GRID1,IMOUT,JMOUT)
+    777          ENDIF
+    778 C     
+    779 C        BEST BOUNDARY LAYER CAPE AND CINS.
+    780 C     
+    781          FIELD1=.FALSE.
+    782          FIELD2=.FALSE.
+    783 C
+    784          IF(IGET(032).GT.0)THEN
+    785            IF(LVLS(2,IGET(032)).GT.0)FIELD1=.TRUE.
+    786          ENDIF
+    787          IF(IGET(107).GT.0)THEN
+    788            IF(LVLS(2,IGET(107)).GT.0)FIELD2=.TRUE.
+    789          ENDIF
+    790 C
+    791          IF(FIELD1.OR.FIELD2)THEN
+    792            ITYPE = 2
+    793 C
+    794            DO J=JSTA,JEND
+    795            DO I=1,IM
+    796              EGRID1(I,J) = -H99999
+    797              EGRID2(I,J) = -H99999
+    798            ENDDO
+    799            ENDDO
+    800 C
+    801            DO 80 LBND = 1,NBND
+    802            CALL CALTHTE(PBND(1,1,LBND),TBND(1,1,LBND),
+    803      X                  QBND(1,1,LBND),EGRID1)
+    804            DO J=JSTA,JEND
+    805            DO I=1,IM
+    806              IF (EGRID1(I,J).GT.EGRID2(I,J)) THEN
+    807                EGRID2(I,J) = EGRID1(I,J)
+    808                LB2(I,J)  = LVLBND(I,J,LBND)
+    809                P1D(I,J)  = PBND(I,J,LBND)
+    810                T1D(I,J)  = TBND(I,J,LBND)
+    811                Q1D(I,J)  = QBND(I,J,LBND)
+    812              ENDIF
+    813            ENDDO
+    814            ENDDO
+    815  80        CONTINUE
+    816 C
+
+Page 13          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    817            CALL CALCAPE(ITYPE,P1D,T1D,Q1D,LB2,EGRID1,EGRID2)
+    818 C
+    819            IF (IGET(032).GT.0) THEN
+    820              CALL E2OUT(032,000,EGRID1,EGRID2,
+    821      X                  GRID1,GRID2,IMOUT,JMOUT)
+    822              CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    823              ID(1:25) = 0
+    824              ID(09)   = 116
+    825              ID(10)   = PETABND(NBND)+15.
+    826              ID(11)   = PETABND(1)-15.
+    827              CALL OUTPUT(IOUTYP,IGET(032),LVLS(1,IGET(032)),
+    828      X                   GRID1,IMOUT,JMOUT)
+    829            ENDIF
+    830 C
+    831            IF (IGET(107).GT.0) THEN
+    832              CALL E2OUT(107,000,EGRID2,EGRID1,
+    833      X                  GRID1,GRID2,IMOUT,JMOUT)
+    834              DO J=JSTA,JEND
+    835              DO I=1,IMOUT
+    836                GRID1(I,J) = -1.*GRID1(I,J)
+    837              ENDDO
+    838              ENDDO
+    839 C
+    840              CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+    841 C
+    842              DO J=JSTA,JEND
+    843              DO I=1,IMOUT
+    844                GRID1(I,J) = -1.*GRID1(I,J)
+    845              ENDDO
+    846              ENDDO
+    847 C
+    848              ID(1:25) = 0
+    849              ID(09)   = 116
+    850              ID(10)   = PETABND(NBND)+15.
+    851              ID(11)   = PETABND(1)-15.
+    852              CALL OUTPUT(IOUTYP,IGET(107),LVLS(1,IGET(107)),
+    853      X                   GRID1,IMOUT,JMOUT)
+    854            ENDIF
+    855          ENDIF
+    856 C
+    857 C        BOUNDARY LAYER LIFTING CONDENSATION PRESSURE AND HEIGHT.
+    858 C        EGRID1 IS LCL PRESSURE.  EGRID2 IS LCL HEIGHT.
+    859 C
+    860          IF ( (IGET(109).GT.0).OR.(IGET(110).GT.0) ) THEN
+    861             CALL CALLCL(PBND(1,1,1),TBND(1,1,1),
+    862      X           QBND(1,1,1),EGRID1,EGRID2)
+    863             IF (IGET(109).GT.0) THEN
+    864                CALL E2OUT(109,000,EGRID2,EGRID1,
+    865      X              GRID1,GRID2,IMOUT,JMOUT)
+    866                ID(1:25) = 0
+    867                CALL OUTPUT(IOUTYP,IGET(109),ILVL,
+    868      X              GRID1,IMOUT,JMOUT)
+    869             ENDIF
+    870             IF (IGET(110).GT.0) THEN
+    871                CALL E2OUT(110,000,EGRID1,EGRID2,
+    872      X              GRID1,GRID2,IMOUT,JMOUT)
+    873                ID(1:25) = 0
+
+Page 14          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    874                CALL OUTPUT(IOUTYP,IGET(110),ILVL,
+    875      X              GRID1,IMOUT,JMOUT)
+    876             ENDIF
+    877          ENDIF
+    878 C     
+    879 C        NGM BOUNDARY LAYER FIELDS.
+    880 C     
+    881          IF ( (IGET(091).GT.0).OR.(IGET(092).GT.0).OR.
+    882      X        (IGET(093).GT.0).OR.(IGET(094).GT.0).OR.
+    883      X        (IGET(095).GT.0).OR.(IGET(095).GT.0).OR.
+    884      X        (IGET(096).GT.0).OR.(IGET(097).GT.0).OR.
+    885      X        (IGET(098).GT.0) ) THEN
+    886 C
+    887 C  COMPUTE SIGMA 0.89671 AND 0.78483 TEMPERATURES
+    888 C    INTERPOLATE LINEAR IN LOG P
+    889             IF (IGET(097).GT.0.OR.IGET(098).GT.0) THEN
+    890                DO J=JSTA,JEND
+    891                DO I=1,IM
+    892                  P78483(I,J)=ALOG((PD(I,J)+PT)*0.78483)
+    893                  P89671(I,J)=ALOG((PD(I,J)+PT)*0.89671)
+    894                ENDDO
+    895                ENDDO
+    896 !$omp  parallel do
+    897 !$omp& private(fac1,fac2,pkl1,pku1,t78483,t89671)
+    898                DO L=2,LM
+    899                 DO J=JSTA,JEND
+    900                 DO I=1,IM
+    901                   PKL1=0.5*(ALPINT(I,J,L)+ALPINT(I,J,L+1))
+    902                   PKU1=0.5*(ALPINT(I,J,L)+ALPINT(I,J,L-1))
+    903                   IF(P78483(I,J).LT.PKL1.AND.P78483(I,J).GT.PKU1)THEN
+    904                     FAC1=(PKL1-P78483(I,J))/(PKL1-PKU1)
+    905                     FAC2=(P78483(I,J)-PKU1)/(PKL1-PKU1)
+    906                     T78483(I,J)=T(I,J,L)*FAC2+T(I,J,L-1)*FAC1
+    907                   ENDIF
+    908                   IF(P89671(I,J).LT.PKL1.AND.P89671(I,J).GT.PKU1)THEN
+    909                     FAC1=(PKL1-P89671(I,J))/(PKL1-PKU1)
+    910                     FAC2=(P89671(I,J)-PKU1)/(PKL1-PKU1)
+    911                     T89671(I,J)=T(I,J,L)*FAC2+T(I,J,L-1)*FAC1
+    912                   ENDIF
+    913                 ENDDO
+    914                 ENDDO
+    915                ENDDO
+    916 C     
+    917 C           SIGMA 0.89671 TEMPERATURE
+    918              IF (IGET(097).GT.0) THEN
+    919                ID(1:25) = 0
+    920                ISVALUE = 8967
+    921                ID(11) = ISVALUE
+    922                CALL E2OUT(097,000,T89671,EGRID2,GRID1,GRID2,
+    923      X              IMOUT,JMOUT)
+    924                CALL OUTPUT(IOUTYP,IGET(097),LVLS(1,IGET(097)),
+    925      X              GRID1,IMOUT,JMOUT)
+    926              ENDIF
+    927 C     
+    928 C           SIGMA 0.78483 TEMPERATURE
+    929              IF (IGET(098).GT.0) THEN
+    930                ID(1:25) = 0
+
+Page 15          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    931                ISVALUE = 7848
+    932                ID(11) = ISVALUE
+    933                CALL E2OUT(098,000,T78483,EGRID2,GRID1,GRID2,
+    934      X              IMOUT,JMOUT)
+    935                CALL OUTPUT(IOUTYP,IGET(098),LVLS(1,IGET(098)),
+    936      X              GRID1,IMOUT,JMOUT)
+    937              ENDIF
+    938             ENDIF
+    939 C     
+    940 C           NGM SIGMA LAYER 0.98230 FIELDS.  THESE FIELDS ARE 
+    941 C           THE FIRST ETA LAYER BOUNDARY LAYER FIELDS.  AN
+    942 C           EXCEPTION IS MADE FOR RELATIVE HUMIDITY ON THE LFM
+    943 C           FORECAST GRID (026).  ON THIS OUTPUT GRID THE SIGMA
+    944 C           0.98230 RELATIVE HUMIDITY IS THE MEAN RELATIVE HUMIDITY
+    945 C           COMPUTED BY AVERAGING ETA BOUNDARY LAYER 1, 2, AND 3
+    946 C           RELATIVE HUMIDITIES.  THIS AD HOC APPROACH WAS TAKEN 
+    947 C           TO PRODUCE A MORE "LFM-LIKE" BOUNDARY LAYER RELATIVE
+    948 C           HUMIDITY FIELD FOR THE AVIATION BRANCH OF MOD.
+    949 C
+    950 C           THIS IS NOT A SATISFACTORY SOLUTION.  THE SIGMA 
+    951 C           0.98230 RELATIVE HUMIDITY SHOULD BE CONSISTENT
+    952 C           WITH THE OTHER SIGMA 0.98230 FIELDS.  
+    953 C     
+    954 C     
+    955             IF ( (IGET(091).GT.0).OR.(IGET(092).GT.0).OR.
+    956      X           (IGET(093).GT.0).OR.(IGET(094).GT.0).OR.
+    957      X           (IGET(095).GT.0).OR.(IGET(095).GT.0).OR.
+    958      X           (IGET(096).GT.0) ) THEN
+    959 C     
+    960                ID(1:25) = 0
+    961                ISVALUE = 9823
+    962                ID(11) = ISVALUE
+    963 C     
+    964 C              PRESSURE.
+    965                IF (IGET(091).GT.0) THEN
+    966                   CALL E2OUT(091,000,PBND(1,1,1),EGRID2,
+    967      X                 GRID1,GRID2,IMOUT,JMOUT)
+    968                   CALL OUTPUT(IOUTYP,IGET(091),LVLS(1,IGET(091)),
+    969      X                 GRID1,IMOUT,JMOUT)
+    970                ENDIF
+    971 C     
+    972 C              TEMPERATURE.
+    973                IF (IGET(092).GT.0) THEN
+    974                   CALL E2OUT(092,000,TBND(1,1,1),EGRID2,
+    975      X                 GRID1,GRID2,IMOUT,JMOUT)
+    976                   CALL OUTPUT(IOUTYP,IGET(092),LVLS(1,IGET(092)),
+    977      X                 GRID1,IMOUT,JMOUT)
+    978                ENDIF
+    979 C     
+    980 C              SPECIFIC HUMIDITY.
+    981                IF (IGET(093).GT.0) THEN
+    982                   CALL E2OUT(093,000,QBND(1,1,1),EGRID2,
+    983      X                 GRID1,GRID2,IMOUT,JMOUT)
+    984                   CALL BOUND(GRID1,H1M12,H99999,IMOUT,JMOUT)
+    985                   CALL OUTPUT(IOUTYP,IGET(093),LVLS(1,IGET(093)),
+    986      X                 GRID1,IMOUT,JMOUT)
+    987                ENDIF
+
+Page 16          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+    988 C     
+    989 C              RELATIVE HUMIDITY.
+    990                IF (IGET(094).GT.0) THEN
+    991                   IF (KGTYPE.EQ.026) THEN
+    992                      DO J=JSTA,JEND
+    993                      DO I=1,IM
+    994                        RH1D(I,J)=(RHBND(I,J,1)+RHBND(I,J,2)+
+    995      &                            RHBND(I,J,3))*0.33333333
+    996                      ENDDO
+    997                      ENDDO
+    998                   ELSE
+    999                      DO J=JSTA,JEND
+   1000                      DO I=1,IM
+   1001                        RH1D(I,J)=RHBND(I,J,1)
+   1002                      ENDDO
+   1003                      ENDDO
+   1004                   ENDIF
+   1005                   CALL E2OUT(094,000,RH1D,EGRID2,GRID1,GRID2,
+   1006      X                 IMOUT,JMOUT)
+   1007                   CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1008                   CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1009                   CALL OUTPUT(IOUTYP,IGET(094),LVLS(1,IGET(094)),
+   1010      X                 GRID1,IMOUT,JMOUT)
+   1011                ENDIF
+   1012 C     
+   1013 C              U AND/OR V WIND.
+   1014                IF ((IGET(095).GT.0).OR.(IGET(096).GT.0)) THEN
+   1015                   CALL E2OUT(095,096,UBND(1,1,1),VBND(1,1,1),
+   1016      X                 GRID1,GRID2,IMOUT,JMOUT)
+   1017                   IF (IGET(095).GT.0) CALL OUTPUT(IOUTYP,IGET(095),
+   1018      X                 LVLS(1,IGET(095)),GRID1,IMOUT,JMOUT)
+   1019                   IF (IGET(096).GT.0) CALL OUTPUT(IOUTYP,IGET(096),
+   1020      X                 LVLS(1,IGET(096)),GRID2,IMOUT,JMOUT)
+   1021                ENDIF
+   1022             ENDIF
+   1023          ENDIF
+   1024 C     
+   1025 C     ENDIF FOR BOUNDARY LAYER BLOCK.
+   1026 C
+   1027       ENDIF
+   1028 C     
+   1029 C
+   1030 C
+   1031 C     ***BLOCK 6:  MISCELLANEOUS LAYER MEAN LFM AND NGM FIELDS.
+   1032 C     
+   1033       IF ( (IGET(066).GT.0).OR.(IGET(081).GT.0).OR.
+   1034      X     (IGET(082).GT.0).OR.(IGET(104).GT.0).OR.
+   1035      X     (IGET(099).GT.0).OR.(IGET(100).GT.0).OR.
+   1036      X     (IGET(101).GT.0).OR.(IGET(102).GT.0).OR.
+   1037      X     (IGET(103).GT.0) ) THEN
+   1038 C     
+   1039 C        LFM "MEAN" RELATIVE HUMIDITIES AND PRECIPITABLE WATER.
+   1040 C     
+   1041          IF ( (IGET(066).GT.0).OR.(IGET(081).GT.0).OR.
+   1042      X        (IGET(082).GT.0).OR.(IGET(104).GT.0) ) THEN
+   1043             CALL LFMFLD(RH3310,RH6610,RH3366,PW3310)
+   1044             ID(1:25) = 0
+
+Page 17          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+   1045 C     
+   1046 C           SIGMA 0.33-1.00 MEAN RELATIVE HUMIIDITY.
+   1047             IF (IGET(066).GT.0) THEN
+   1048                CALL E2OUT(066,000,RH3310,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+   1049                ID(1:25) = 0
+   1050                ID(10) = 33
+   1051                ID(11) = 100
+   1052                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1053                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1054                CALL OUTPUT(IOUTYP,IGET(066),LVLS(1,IGET(066)),
+   1055      X              GRID1,IMOUT,JMOUT)
+   1056             ENDIF
+   1057 C     
+   1058 C           SIGMA 0.66-1.00 MEAN RELATIVE HUMIIDITY.
+   1059             IF (IGET(081).GT.0) THEN
+   1060                CALL E2OUT(081,000,RH6610,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+   1061                ID(1:25) = 0
+   1062                ID(10) = 67
+   1063                ID(11) = 100
+   1064                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1065                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1066                CALL OUTPUT(IOUTYP,IGET(081),LVLS(1,IGET(081)),
+   1067      X              GRID1,IMOUT,JMOUT)
+   1068             ENDIF
+   1069 C     
+   1070 C           SIGMA 0.33-0.66 MEAN RELATIVE HUMIIDITY.
+   1071             IF (IGET(082).GT.0) THEN
+   1072                CALL E2OUT(082,000,RH3366,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+   1073                ID(1:25) = 0
+   1074                ID(10) = 33
+   1075                ID(11) = 67
+   1076                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1077                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1078                CALL OUTPUT(IOUTYP,IGET(082),LVLS(1,IGET(082)),
+   1079      X              GRID1,IMOUT,JMOUT)
+   1080             ENDIF
+   1081 C     
+   1082 C           SIGMA 0.33-1.00 PRECIPITABLE WATER.
+   1083             IF (IGET(104).GT.0) THEN
+   1084                CALL E2OUT(104,000,PW3310,EGRID2,GRID1,GRID2,IMOUT,JMOUT)
+   1085                ID(1:25) = 0
+   1086                ID(10) = 33
+   1087                ID(11) = 100
+   1088                CALL BOUND(GRID1,D00,H99999,IMOUT,JMOUT)
+   1089                CALL OUTPUT(IOUTYP,IGET(104),LVLS(1,IGET(104)),
+   1090      X              GRID1,IMOUT,JMOUT)
+   1091             ENDIF
+   1092          ENDIF
+   1093 C     
+   1094 C        VARIOUS LAYER MEAN NGM SIGMA FIELDS.
+   1095 C     
+   1096          IF ( (IGET(099).GT.0).OR.(IGET(100).GT.0).OR.
+   1097      X        (IGET(101).GT.0).OR.(IGET(102).GT.0).OR.
+   1098      X        (IGET(103).GT.0) ) THEN
+   1099             CALL NGMFLD2(RH4710,RH4796,RH1847,RH8498,QM8510)
+   1100 C     
+   1101 C           SIGMA 0.47191-1.00000 RELATIVE HUMIDITY.
+
+Page 18          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+   1102             IF (IGET(099).GT.0) THEN
+   1103                CALL E2OUT(099,000,RH4710,EGRID2,GRID1,GRID2,
+   1104      X              IMOUT,JMOUT)
+   1105                ID(1:25) = 0
+   1106                ID(10)   = 47
+   1107                ID(11)   = 100
+   1108                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1109                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1110                CALL OUTPUT(IOUTYP,IGET(099),LVLS(1,IGET(099)),
+   1111      X              GRID1,IMOUT,JMOUT)
+   1112             ENDIF
+   1113 C     
+   1114 C           SIGMA 0.47191-0.96470 RELATIVE HUMIDITY.
+   1115             IF (IGET(100).GT.0) THEN
+   1116                CALL E2OUT(100,000,RH4796,EGRID2,GRID1,GRID2,
+   1117      X              IMOUT,JMOUT)
+   1118                ID(1:25) = 0
+   1119                ID(10)   = 47
+   1120                ID(11)   = 96
+   1121                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1122                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1123                CALL OUTPUT(IOUTYP,IGET(100),LVLS(1,IGET(100)),
+   1124      X              GRID1,IMOUT,JMOUT)
+   1125             ENDIF
+   1126 C     
+   1127 C           SIGMA 0.18019-0.47191 RELATIVE HUMIDITY.
+   1128             IF (IGET(101).GT.0) THEN
+   1129                CALL E2OUT(101,000,RH1847,EGRID2,GRID1,GRID2,
+   1130      X              IMOUT,JMOUT)
+   1131                ID(1:25) = 0
+   1132                ID(10)   = 18
+   1133                ID(11)   = 47
+   1134                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1135                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1136                CALL OUTPUT(IOUTYP,IGET(101),LVLS(1,IGET(101)),
+   1137      X              GRID1,IMOUT,JMOUT)
+   1138             ENDIF
+   1139 C     
+   1140 C           SIGMA 0.84368-0.98230 RELATIVE HUMIDITY.
+   1141             IF (IGET(102).GT.0) THEN
+   1142                CALL E2OUT(102,000,RH8498,EGRID2,GRID1,GRID2,
+   1143      X              IMOUT,JMOUT)
+   1144                ID(1:25) = 0
+   1145                ID(10)   = 84
+   1146                ID(11)   = 98
+   1147                CALL SCLFLD(GRID1,H100,IMOUT,JMOUT)
+   1148                CALL BOUND(GRID1,H1,H100,IMOUT,JMOUT)
+   1149                CALL OUTPUT(IOUTYP,IGET(102),LVLS(1,IGET(102)),
+   1150      X              GRID1,IMOUT,JMOUT)
+   1151             ENDIF
+   1152 C     
+   1153 C           SIGMA 0.85000-1.00000 MOISTURE CONVERGENCE.
+   1154             IF (IGET(103).GT.0) THEN
+   1155                CALL E2OUT(103,000,QM8510,EGRID2,GRID1,GRID2,
+   1156      X              IMOUT,JMOUT)
+   1157 C           CONVERT TO DIVERGENCE FOR GRIB
+   1158                DO J = JSTA,JEND
+
+Page 19          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+   1159                DO I = 1,IMOUT
+   1160                 GRID1(I,J) = -1.0 * GRID1(I,J)
+   1161                ENDDO
+   1162                ENDDO
+   1163                ID(1:25) = 0
+   1164                ID(10)   = 85
+   1165                ID(11)   = 100
+   1166                CALL OUTPUT(IOUTYP,IGET(103),LVLS(1,IGET(103)),
+   1167      X              GRID1,IMOUT,JMOUT)
+   1168             ENDIF
+   1169          ENDIF
+   1170       ENDIF
+   1171 C     
+   1172 C     END OF ROUTINE.
+   1173 C     
+   1174       RETURN
+   1175       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ miscln_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  462                                                            434                               
+ 20                         Label  749                                                            525                               
+ 50                         Label  769                                                            761                               
+ 80                         Label  815                                                            801                               
+ A2                         Param  148      R(4)            4           scalar                                                      
+ A3                         Param  148      R(4)            4           scalar                                                      
+ A4                         Param  148      R(4)            4           scalar                                                      
+ AD05                       Param  140      R(4)            4           scalar                                                      
+ ALOG                       Func   892                                  scalar                    892,893                           
+ AMIN1                      Func   766                                  scalar                    766                               
+ BETA                       Param  144      R(4)            4           scalar                    144                               
+ BNDLYR2                    Subr   521                                                            521                               
+ BOUND                      Subr   476                                                            476,486,497,567,590,688,822,840,98
+                                                                                                  4,1008,1053,1065,1077,1088,1109,11
+                                                                                                  22,1135,1148                      
+ BTG                        Param  144      R(4)            4           scalar                                                      
+ C2K                        Param  150      R(4)            4           scalar                    734                               
+ CALCAPE                    Subr   817                                                            817                               
+ CALDWP2                    Subr   576                                                            576                               
+ CALEKM                     Subr   647                                                            647                               
+ CALEKM2                    Subr   656                                                            656                               
+ CALHEL                     Subr   289                                                            289                               
+ CALLCL                     Subr   861                                                            861                               
+ CALMCVG                    Subr   599                                                            599                               
+ CALMXW                     Subr   383                                                            383                               
+ CALPOT2                    Subr   349                                                            349,553                           
+ CALTHTE                    Subr   802                                                            802                               
+
+Page 20          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CAPA                       Param  135      R(4)            4           scalar                    142                               
+ CFT0                       Param  140      R(4)            4           scalar                                                      
+ CM1                        Param  130      R(4)            4           scalar                                                      
+ CM2                        Param  130      R(4)            4           scalar                                                      
+ CM3                        Param  130      R(4)            4           scalar                                                      
+ CP                         Param  141      R(4)            4           scalar                    143,147                           
+ CPDR                       Param  143      R(4)            4           scalar                                                      
+ CTLBLK                     Common 244                                  96       SAVE                                               
+ D00                        Param  132      R(4)            4           scalar                    476,497,688,822,840,1088          
+ D001                       Param  132      R(4)            4           scalar                                                      
+ D0065                      Param  136      R(4)            4           scalar                                                      
+ D01                        Param  132      R(4)            4           scalar                                                      
+ D05                        Param  136      R(4)            4           scalar                    140                               
+ D1                         Param  132      R(4)            4           scalar                                                      
+ D115                       Param  136      R(4)            4           scalar                                                      
+ D125                       Param  134      R(4)            4           scalar                                                      
+ D25                        Param  134      R(4)            4           scalar                                                      
+ D50                        Param  132      R(4)            4           scalar                                                      
+ D608                       Param  136      R(4)            4           scalar                                                      
+ DP10M                      Param  142      R(4)            4           scalar                                                      
+ DTR                        Param  141      R(4)            4           scalar                    141                               
+ DYNAM                      Common 229                                  3675964  SAVE                                               
+ E2OUT                      Subr   291                                                            291,299,325,333,341,350,358,369,38
+                                                                                                  7,394,402,442,451,474,483,495,533,
+                                                                                                  543,554,564,578,588,607,627,648,65
+                                                                                                  7,676,686,699,714,770,820,832,864,
+                                                                                                  871,922,933,966,974,982,1005,1015,
+                                                                                                  1048,1060,1072,1084,1103,1116,1129
+                                                                                                  ,1142,1155                        
+ EGRID1                     Local  169      R(4)            4     2     91719                     349,350,553,554,576,578,600,604,60
+                                                                                                  7,698,699,714,756,766,770,796,803,
+                                                                                                  806,807,817,820,832,862,864,871   
+ EGRID2                     Local  169      R(4)            4     2     91719                     291,325,333,341,350,369,387,394,44
+                                                                                                  2,474,483,495,533,543,554,564,578,
+                                                                                                  588,607,676,686,699,714,757,763,76
+                                                                                                  6,770,797,806,807,817,820,832,862,
+                                                                                                  864,871,922,933,966,974,982,1005,1
+                                                                                                  048,1060,1072,1084,1103,1116,1129,
+                                                                                                  1142,1155                         
+ ELDR                       Param  143      R(4)            4           scalar                                                      
+ ELWV                       Param  143      R(4)            4           scalar                    143                               
+ EPS                        Param  146      R(4)            4           scalar                    146                               
+ EPSQ2                      Param  147      R(4)            4           scalar                                                      
+ ERAD                       Param  141      R(4)            4           scalar                                                      
+ EXTRA                      Common 218                                  71506268 SAVE                                               
+ FAC1                       Local  904      R(4)            4           scalar                    904,906,909,911                   
+ FAC2                       Local  905      R(4)            4           scalar                    905,906,910,911                   
+ FDLVL                      Subr   432                                                            432                               
+ FIELD1                     Local  156      L(4)            4           scalar                    616,620,626,781,785,791           
+ FIELD2                     Local  156      L(4)            4           scalar                    617,623,626,782,788,791           
+ FMD                        Param  146      R(4)            4           scalar                    146                               
+ FMW                        Param  146      R(4)            4           scalar                    146                               
+ FRZLVL                     Subr   470                                                            470                               
+ FRZLVL2                    Subr   492                                                            492                               
+ G                          Param  139      R(4)            4           scalar                    139                               
+
+Page 21          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ GI                         Param  139      R(4)            4           scalar                    143                               
+ GRID1                      Local  170      R(4)            4     2     0                         291,296,299,304,325,328,333,336,34
+                                                                                                  1,344,350,353,358,361,369,372,387,
+                                                                                                  390,394,397,402,405,443,445,452,45
+                                                                                                  5,474,476,478,483,485,486,488,495,
+                                                                                                  497,499,534,536,544,546,554,557,56
+                                                                                                  5,566,567,569,578,581,589,590,592,
+                                                                                                  607,610,628,648,657,664,677,679,68
+                                                                                                  7,688,690,700,714,718,725,771,776,
+                                                                                                  821,822,828,833,836,840,844,853,86
+                                                                                                  5,868,872,875,922,925,933,936,967,
+                                                                                                  969,975,977,983,984,986,1005,1007,
+                                                                                                  1008,1010,1016,1018,1048,1052,1053
+                                                                                                  ,1055,1060,1064,1065,1067,1072,107
+                                                                                                  6,1077,1079,1084,1088,1090,1103,11
+                                                                                                  08,1109,1111,1116,1121,1122,1124,1
+                                                                                                  129,1134,1135,1137,1142,1147,1148,
+                                                                                                  1150,1155,1160,1167               
+ GRID2                      Local  170      R(4)            4     2     0                         291,299,309,325,333,341,350,358,36
+                                                                                                  4,369,387,394,402,408,443,452,459,
+                                                                                                  474,483,495,534,544,554,565,578,58
+                                                                                                  9,607,628,648,657,669,677,687,700,
+                                                                                                  714,718,734,743,771,821,833,865,87
+                                                                                                  2,922,933,967,975,983,1005,1016,10
+                                                                                                  20,1048,1060,1072,1084,1103,1116,1
+                                                                                                  129,1142,1155                     
+ H1                         Param  133      R(4)            4           scalar                    140,486,567,1008,1053,1065,1077,11
+                                                                                                  09,1122,1135,1148                 
+ H100                       Param  134      R(4)            4           scalar                    485,486,566,567,1007,1008,1052,105
+                                                                                                  3,1064,1065,1076,1077,1108,1109,11
+                                                                                                  21,1122,1134,1135,1147,1148       
+ H1000                      Param  134      R(4)            4           scalar                                                      
+ H10000                     Param  135      R(4)            4           scalar                                                      
+ H10E5                      Param  135      R(4)            4           scalar                                                      
+ H1E2                       Param  137      R(4)            4           scalar                                                      
+ H1E4                       Param  137      R(4)            4           scalar                                                      
+ H1M12                      Param  133      R(4)            4           scalar                    590,984                           
+ H1M2                       Param  137      R(4)            4           scalar                                                      
+ H1M5                       Param  134      R(4)            4           scalar                                                      
+ H2                         Param  133      R(4)            4           scalar                                                      
+ H4                         Param  133      R(4)            4           scalar                                                      
+ H999                       Param  132      R(4)            4           scalar                                                      
+ H99999                     Param  133      R(4)            4           scalar                    476,497,590,688,756,757,796,797,82
+                                                                                                  2,840,984,1088                    
+ HELI                       Local  168      R(4)            4     2     91719                     289,291                           
+ HTFD                       Local  167      R(4)            4     1     6                         277,436                           
+ I                          Local  603      I(4)            4           scalar                    603,604,717,718,733,734,755,756,75
+                                                                                                  7,765,766,795,796,797,805,806,807,
+                                                                                                  808,809,810,811,835,836,843,844,89
+                                                                                                  1,892,893,900,901,902,903,904,905,
+                                                                                                  906,908,909,910,911,993,994,995,10
+                                                                                                  00,1001,1159,1160                 
+ IDIM1                      Param  95       I(4)            4           scalar                                                      
+ IDIM2                      Param  95       I(4)            4           scalar                                                      
+ IFD                        Local  421      I(4)            4           scalar                    421,423,426,429,434,436,441,442,44
+
+Page 22          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  5,451,454,455,458,459             
+ IGSTL                      Param  90       I(4)            4           scalar                    95                                
+ IGSTR                      Param  90       I(4)            4           scalar                    95                                
+ ILVL                       Local  867      I(4)            4           scalar                    867,874                           
+ IM                         Param  84       I(4)            4           scalar                    92,95,102,111,113,114,116,157,158,
+                                                                                                  159,160,161,162,163,164,165,166,16
+                                                                                                  7,168,169,171,191,193,211,213,217,
+                                                                                                  219,220,221,222,223,224,235,236,34
+                                                                                                  9,553,603,755,765,795,805,891,900,
+                                                                                                  993,1000                          
+ IM1                        Param  113      I(4)            4           scalar                                                      
+ IMJM                       Param  217      I(4)            4           scalar                    220                               
+ IMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        170,291,296,299,304,309,325,328,33
+                                                                                                  3,336,341,344,350,353,358,361,364,
+                                                                                                  369,372,387,390,394,397,402,405,40
+                                                                                                  8,443,445,452,455,459,474,476,478,
+                                                                                                  483,485,486,488,495,497,499,534,53
+                                                                                                  6,544,546,555,557,565,566,567,569,
+                                                                                                  579,581,589,590,592,608,610,628,64
+                                                                                                  8,657,664,669,677,679,687,688,690,
+                                                                                                  700,714,717,725,733,743,771,776,82
+                                                                                                  1,822,828,833,835,840,843,853,865,
+                                                                                                  868,872,875,923,925,934,936,967,96
+                                                                                                  9,975,977,983,984,986,1006,1007,10
+                                                                                                  08,1010,1016,1018,1020,1048,1052,1
+                                                                                                  053,1055,1060,1064,1065,1067,1072,
+                                                                                                  1076,1077,1079,1084,1088,1090,1104
+                                                                                                  ,1108,1109,1111,1117,1121,1122,112
+                                                                                                  4,1130,1134,1135,1137,1143,1147,11
+                                                                                                  48,1150,1156,1159,1167            
+ IMT                        Param  111      I(4)            4           scalar                                                      
+ IMX                        Param  102      I(4)            4           scalar                                                      
+ INPES                      Param  87       I(4)            4           scalar                    92,95                             
+ IOUNIT                     Common 200                                  20       SAVE                                               
+ ISVALUE                    Local  436      I(4)            4           scalar                    436,437,920,921,931,932,961,962   
+ ITAIL                      Param  92       I(4)            4           scalar                                                      
+ ITYPE                      Local  420      I(4)            4           scalar                    420,423,426,429,432,792,817       
+ J                          Local  602      I(4)            4           scalar                    602,604,716,718,732,734,754,756,75
+                                                                                                  7,764,766,794,796,797,804,806,807,
+                                                                                                  808,809,810,811,834,836,842,844,89
+                                                                                                  0,892,893,899,901,902,903,904,905,
+                                                                                                  906,908,909,910,911,992,994,995,99
+                                                                                                  9,1001,1158,1160                  
+ JAM                        Param  113      I(4)            4           scalar                    233                               
+ JDIM1                      Param  96       I(4)            4           scalar                                                      
+ JDIM2                      Param  96       I(4)            4           scalar                                                      
+ JGSTL                      Param  91       I(4)            4           scalar                    96                                
+ JGSTR                      Param  91       I(4)            4           scalar                    96                                
+ JM                         Param  84       I(4)            4           scalar                    93,96,102,111,113,116,157,158,159,
+                                                                                                  160,161,162,163,164,165,166,167,16
+                                                                                                  8,169,171,191,193,211,213,217,219,
+                                                                                                  220,221,222,223,224,235,236,349,55
+                                                                                                  3                                 
+ JM2                        Param  113      I(4)            4           scalar                                                      
+ JMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        170,291,296,299,304,309,325,328,33
+
+Page 23          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  3,336,341,344,350,353,358,361,364,
+                                                                                                  369,372,387,390,394,397,402,405,40
+                                                                                                  8,443,445,452,455,459,474,476,478,
+                                                                                                  483,485,486,488,495,497,499,534,53
+                                                                                                  6,544,546,555,557,565,566,567,569,
+                                                                                                  579,581,589,590,592,608,610,628,64
+                                                                                                  8,657,664,669,677,679,687,688,690,
+                                                                                                  700,714,725,743,771,776,821,822,82
+                                                                                                  8,833,840,853,865,868,872,875,923,
+                                                                                                  925,934,936,967,969,975,977,983,98
+                                                                                                  4,986,1006,1007,1008,1010,1016,101
+                                                                                                  8,1020,1048,1052,1053,1055,1060,10
+                                                                                                  64,1065,1067,1072,1076,1077,1079,1
+                                                                                                  084,1088,1090,1104,1108,1109,1111,
+                                                                                                  1117,1121,1122,1124,1130,1134,1135
+                                                                                                  ,1137,1143,1147,1148,1150,1156,116
+                                                                                                  7                                 
+ JMT                        Param  111      I(4)            4           scalar                                                      
+ JMX                        Param  102      I(4)            4           scalar                                                      
+ JNPES                      Param  87       I(4)            4           scalar                    93,96                             
+ JTAIL                      Param  93       I(4)            4           scalar                                                      
+ KSAV                       Param  121      I(4)            4           scalar                                                      
+ KSFI                       Param  120      I(4)            4           scalar                                                      
+ KSLI                       Param  121      I(4)            4           scalar                                                      
+ KSLP                       Param  121      I(4)            4           scalar                                                      
+ KSLPD                      Param  120      I(4)            4           scalar                                                      
+ KSMUD                      Param  120      I(4)            4           scalar                                                      
+ KSRH                       Param  121      I(4)            4           scalar                                                      
+ KSSLP                      Param  120      I(4)            4           scalar                                                      
+ KST                        Param  120      I(4)            4           scalar                                                      
+ KSUV                       Param  121      I(4)            4           scalar                                                      
+ L                          Local  898      I(4)            4           scalar                    898,901,902,906,911               
+ LB                         Param  116      I(4)            4           scalar                                                      
+ LB2                        Local  157      I(4)            4     2     91719                     808,817                           
+ LBND                       Local  525      I(4)            4           scalar                    525,527,528,532,533,536,542,543,54
+                                                                                                  5,552,553,556,563,564,568,575,576,
+                                                                                                  577,580,587,588,591,598,599,600,60
+                                                                                                  9,620,623,627,644,645,653,654,662,
+                                                                                                  664,667,669,675,676,678,685,686,68
+                                                                                                  9,696,697,698,724,761,762,763,801,
+                                                                                                  802,803,808,809,810,811           
+ LFMFLD                     Subr   1043                                                           1043                              
+ LHEAT                      Param  147      I(4)            4           scalar                    147                               
+ LHTOCP                     Param  147      I(4)            4           scalar                                                      
+ LM                         Param  84       I(4)            4           scalar                    102,115,126,193,213,220,231,898   
+ LM1                        Param  115      I(4)            4           scalar                                                      
+ LP1                        Param  115      I(4)            4           scalar                    219,231                           
+ LSM                        Param  84       I(4)            4           scalar                                                      
+ LVLBND                     Local  157      I(4)            4     3     550314                    522,808                           
+ MASKS                      Common 190                                  34853220 SAVE                                               
+ MAXWP                      Local  171      R(4)            4     2     91719                     383,387                           
+ MAXWU                      Local  171      R(4)            4     2     91719                     383,402                           
+ MAXWV                      Local  171      R(4)            4     2     91719                     383,402                           
+ MAXWZ                      Local  171      R(4)            4     2     91719                     383,394                           
+ MISCLN                     Subr   1                                                                                                
+
+Page 24          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MXFLD                      Param  102      I(4)            4           scalar                    177,183,184,185,186               
+ MXLVL                      Param  102      I(4)            4           scalar                    185                               
+ NBND                       Param  149      I(4)            4           scalar                    157,160,161,162,168,525,761,773,80
+                                                                                                  1,825,850                         
+ NFD                        Param  149      I(4)            4           scalar                    167,421,434                       
+ NGMFLD2                    Subr   1099                                                           1099                              
+ NINC                       Param  114      I(4)            4           scalar                                                      
+ NINT                       Func   436                                  scalar                    436,527,528                       
+ NORTH                      Local  154      L(4)            4           scalar                                                      
+ NSTAT                      Param  126      I(4)            4           scalar                                                      
+ NSUMD                      Param  122      I(4)            4           scalar                                                      
+ NWORD                      Param  126      I(4)            4           scalar                    126                               
+ NWORD3                     Param  126      I(4)            4           scalar                                                      
+ NWORD6                     Param  126      I(4)            4           scalar                                                      
+ OMGBND                     Local  160      R(4)            4     3     550314                    522,676                           
+ ONEPS                      Param  146      R(4)            4           scalar                                                      
+ OPTIONS                    Common 206                                  24       SAVE                                               
+ OTLFT2                     Subr   697                                                            697,762                           
+ OUTPUT                     Subr   295                                                            295,303,308,327,335,343,352,360,36
+                                                                                                  3,371,389,396,404,407,444,454,458,
+                                                                                                  477,487,498,535,545,556,568,580,59
+                                                                                                  1,609,663,668,678,689,724,742,775,
+                                                                                                  827,852,867,874,924,935,968,976,98
+                                                                                                  5,1009,1017,1019,1054,1066,1078,10
+                                                                                                  89,1110,1123,1136,1149,1166       
+ OVERRC                     Param  140      R(4)            4           scalar                    140                               
+ P1000                      Param  142      R(4)            4           scalar                                                      
+ P1D                        Local  158      R(4)            4     2     91719                     321,325,349,809,817               
+ P78483                     Local  163      R(4)            4     2     91719                     892,903,904,905                   
+ P89671                     Local  163      R(4)            4     2     91719                     893,908,909,910                   
+ PARALLEL                   Common 251                                  8240                                                        
+ PBND                       Local  161      R(4)            4     3     550314                    521,533,553,576,697,762,802,809,86
+                                                                                                  1,966                             
+ PETABND                    Local  168      R(4)            4     1     6                         282,527,528,773,774,825,826,850,85
+                                                                                                  1                                 
+ PKL1                       Local  901      R(4)            4           scalar                    901,903,904,905,908,909,910       
+ PKU1                       Local  902      R(4)            4           scalar                    902,903,904,905,908,909,910       
+ PQ0                        Param  148      R(4)            4           scalar                                                      
+ PW3310                     Local  166      R(4)            4     2     91719                     1043,1084                         
+ PWTBND                     Local  160      R(4)            4     3     550314                    522,686                           
+ Q1D                        Local  158      R(4)            4     2     91719                     811,817                           
+ QBND                       Local  161      R(4)            4     3     550314                    521,576,588,599,698,763,803,811,86
+                                                                                                  2,982                             
+ QM8510                     Local  164      R(4)            4     2     91719                     1099,1155                         
+ RCAPA                      Param  142      R(4)            4           scalar                                                      
+ RD                         Param  139      R(4)            4           scalar                    139,143,147                       
+ RDOCP                      Param  147      R(4)            4           scalar                                                      
+ RG                         Param  143      R(4)            4           scalar                                                      
+ RH1847                     Local  165      R(4)            4     2     91719                     1099,1129                         
+ RH1D                       Local  159      R(4)            4     2     91719                     470,483,492,994,1001,1005         
+ RH3310                     Local  166      R(4)            4     2     91719                     1043,1048                         
+ RH3366                     Local  166      R(4)            4     2     91719                     1043,1072                         
+ RH4710                     Local  164      R(4)            4     2     91719                     1099,1103                         
+ RH4796                     Local  165      R(4)            4     2     91719                     1099,1116                         
+ RH6610                     Local  166      R(4)            4     2     91719                     1043,1060                         
+
+Page 25          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ RH8498                     Local  164      R(4)            4     2     91719                     1099,1142                         
+ RHBND                      Local  162      R(4)            4     3     550314                    521,564,994,995,1001              
+ ROG                        Param  139      R(4)            4           scalar                                                      
+ RQSTFLD                    Common 182                                  64130                                                       
+ RTD                        Param  141      R(4)            4           scalar                                                      
+ SCLFLD                     Subr   485                                                            485,566,1007,1052,1064,1076,1108,1
+                                                                                                  121,1134,1147                     
+ SHR1D                      Local  159      R(4)            4     2     91719                     321,369                           
+ SIGBND                     Local  168      R(4)            4     1     6                         281                               
+ SMALL                      Param  149      R(4)            4           scalar                                                      
+ SMTHA                      Param  122      R(4)            4           scalar                                                      
+ SMTHB                      Param  122      R(4)            4           scalar                                                      
+ T1D                        Local  158      R(4)            4     2     91719                     321,341,349,810,817               
+ T6D                        Local  167      R(4)            4     3     550314                    432,442                           
+ T78483                     Local  163      R(4)            4     2     91719                     906,933                           
+ T89671                     Local  163      R(4)            4     2     91719                     911,922                           
+ TBND                       Local  161      R(4)            4     3     550314                    521,543,553,577,697,762,802,810,86
+                                                                                                  1,974                             
+ TFRZ                       Param  146      R(4)            4           scalar                                                      
+ TRPAUS                     Subr   321                                                            321                               
+ U1D                        Local  158      R(4)            4     2     91719                     321,358,647,648,656,657           
+ U6D                        Local  167      R(4)            4     3     550314                    432,451                           
+ UBND                       Local  162      R(4)            4     3     550314                    521,599,627,1015                  
+ UST                        Local  165      R(4)            4     2     91719                     289,299                           
+ V1D                        Local  158      R(4)            4     2     91719                     321,358,647,648,656,657           
+ V6D                        Local  167      R(4)            4     3     550314                    432,451                           
+ VBND                       Local  162      R(4)            4     3     550314                    521,600,627,1015                  
+ VRBLS                      Common 210                                  67138308                                                    
+ VST                        Local  165      R(4)            4     2     91719                     289,299                           
+ Z1D                        Local  159      R(4)            4     2     91719                     321,333,470,474,492,495           
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     396      1     45       COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM              901,902                            
+ AVBL                       CHAR            20    59130    1     250      COM                                                 
+ CPGFU                      R(4)            4     740956   2     91719    COM                                                 
+ CPGFV                      R(4)            4     4              scalar   COM                                                 
+ CURV                       R(4)            4     1107832  2     91719    COM                                                 
+ DATSET                     CHAR            6     54124          scalar   COM                                                 
+ DDMPU                      R(4)            4     2942212  2     91719    COM                                                 
+ DDMPV                      R(4)            4     3309088  2     91719    COM                                                 
+ DEC                        R(4)            4     1016     1     250      COM                                                 
+ DETA                       R(4)            4     36       1     45       COM                                                 
+ DFL                        R(4)            4     940      1     46       COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DX                         R(4)            4     7204     2     91719    COM                                                 
+ DY                         R(4)            4     0              scalar   COM                                                 
+ EF4T                       R(4)            4     32             scalar   COM                                                 
+ EM                         R(4)            4     1124     1     760      COM                                                 
+ EMT                        R(4)            4     4164     1     760      COM                                                 
+ EN                         R(4)            4     8              scalar   COM                                                 
+
+Page 26          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ENT                        R(4)            4     12             scalar   COM                                                 
+ ETA                        R(4)            4     756      1     46       COM                                                 
+ F                          R(4)            4     2575336  2     91719    COM                                                 
+ F4D                        R(4)            4     24             scalar   COM                                                 
+ F4Q                        R(4)            4     28             scalar   COM                                                 
+ F4Q2                       R(4)            4     576      1     45       COM                                                 
+ FAD                        R(4)            4     2208460  2     91719    COM                                                 
+ FCP                        R(4)            4     1474708  2     91719    COM                                                 
+ FDIV                       R(4)            4     1841584  2     91719    COM                                                 
+ FIELD                      CHAR            20    54130    1     250      COM                                                 
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ ID                         I(4)            4     54016    1     25       COM              292,293,294,300,301,302,305,306,30 
+                                                                                           7,326,334,342,351,359,362,370,388, 
+                                                                                           395,403,406,435,437,475,484,496,52 
+                                                                                           6,527,528,738,739,740,741,772,773, 
+                                                                                           774,823,824,825,826,848,849,850,85 
+                                                                                           1,866,873,919,921,930,932,960,962, 
+                                                                                           1044,1049,1050,1051,1061,1062,1063 
+                                                                                           ,1073,1074,1075,1085,1086,1087,110 
+                                                                                           5,1106,1107,1118,1119,1120,1131,11 
+                                                                                           32,1133,1144,1145,1146,1163,1164,1 
+                                                                                           165                                
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDENT                      I(4)            4     52016    1     250      COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFILV                      I(4)            4     53016    1     250      COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IGET                       I(4)            4     16       1     250      COM              288,290,295,298,303,304,308,309,31 
+                                                                                           7,318,319,320,324,327,332,335,340, 
+                                                                                           343,348,352,357,360,361,363,364,36 
+                                                                                           8,371,381,382,386,389,393,396,401, 
+                                                                                           404,405,407,408,415,416,422,423,42 
+                                                                                           5,426,428,429,440,441,444,445,450, 
+                                                                                           453,454,455,457,458,459,469,473,47 
+                                                                                           7,482,487,491,498,506,507,508,509, 
+                                                                                           510,511,512,513,514,515,516,517,51 
+                                                                                           8,531,532,535,536,541,542,545,551, 
+                                                                                           552,556,562,563,568,574,575,580,58 
+                                                                                           6,587,591,597,598,609,619,620,622, 
+                                                                                           623,643,644,652,653,661,662,663,66 
+                                                                                           4,666,667,668,669,674,675,678,684, 
+                                                                                           685,689,695,696,724,742,753,775,78 
+                                                                                           4,785,787,788,819,827,831,852,860, 
+                                                                                           863,867,870,874,881,882,883,884,88 
+                                                                                           5,889,918,924,929,935,955,956,957, 
+                                                                                           958,965,968,973,976,981,985,990,10 
+                                                                                           09,1014,1017,1018,1019,1020,1033,1 
+
+Page 27          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+                                                                                           034,1035,1036,1037,1041,1042,1047, 
+                                                                                           1054,1059,1066,1071,1078,1083,1089 
+                                                                                           ,1096,1097,1098,1102,1110,1115,112 
+                                                                                           3,1128,1136,1141,1149,1154,1166    
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IOUTYP                     I(4)            4     4              scalar   COM              295,303,308,327,335,343,352,360,36 
+                                                                                           3,371,389,396,404,407,444,454,458, 
+                                                                                           477,487,498,535,545,556,568,580,59 
+                                                                                           1,609,663,668,678,689,724,742,775, 
+                                                                                           827,852,867,874,924,935,968,976,98 
+                                                                                           5,1009,1017,1019,1054,1066,1078,10 
+                                                                                           89,1110,1123,1136,1149,1166        
+ IQ                         I(4)            4     2016     1     250      COM                                                 
+ IS                         I(4)            4     3016     1     250      COM                                                 
+ ISMFUL                     I(4)            4     5016     1     250      COM                                                 
+ ISMOUT                     I(4)            4     6016     1     250      COM                                                 
+ ISMSTG                     I(4)            4     4016     1     250      COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              602,716,732,754,764,794,804,834,84 
+                                                                                           2,890,899,992,999,1158             
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              602,716,732,754,764,794,804,834,84 
+                                                                                           2,890,899,992,999,1158             
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KGTYPE                     I(4)            4     0              scalar   COM              715,731,991                        
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM                                                 
+ LUNOUT                     I(4)            4     16             scalar   COM                                                 
+ LVLS                       I(4)            4     7016     2     11250    COM              295,304,309,327,335,343,352,361,36 
+                                                                                           4,371,389,396,405,408,423,426,429, 
+                                                                                           441,445,454,455,458,459,477,487,49 
+                                                                                           8,532,536,542,545,552,556,563,568, 
+                                                                                           575,580,587,591,598,609,620,623,64 
+                                                                                           4,653,662,664,667,669,675,678,685, 
+                                                                                           689,696,724,742,775,785,788,827,85 
+                                                                                           2,924,935,968,976,985,1009,1018,10 
+                                                                                           20,1054,1066,1078,1089,1110,1123,1 
+                                                                                           136,1149,1166                      
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+
+Page 28          Source Listing                  MISCLN
+2022-02-15 16:39 Symbol Table                    MISCLN.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NFLD                       I(4)            4     12             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ OLDRD                      L(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM              892,893                            
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     20             scalar   COM              892,893                            
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM                                                 
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ R                          R(4)            4     16             scalar   COM                                                 
+ RDETA                      R(4)            4     216      1     45       COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RITE2                      L(4)            4     54120          scalar   COM                                                 
+ RITEHD                     L(4)            4     54116          scalar   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ STDOUT                     I(4)            4     0              scalar   COM              645,654                            
+ STDRD                      L(4)            4     71506264       scalar   COM                                                 
+ SVALUE                     R(4)            4     8              scalar   COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              906,911                            
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ WPDAR                      R(4)            4     374080   2     91719    COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM                                                 
+
+Page 29          Source Listing                  MISCLN
+2022-02-15 16:39 Subprograms/Common Blocks       MISCLN.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 244                                  96       SAVE                                               
+ DYNAM                      Common 229                                  3675964  SAVE                                               
+ EXTRA                      Common 218                                  71506268 SAVE                                               
+ IOUNIT                     Common 200                                  20       SAVE                                               
+ MASKS                      Common 190                                  34853220 SAVE                                               
+ MISCLN                     Subr   1                                                                                                
+ OPTIONS                    Common 206                                  24       SAVE                                               
+ PARALLEL                   Common 251                                  8240                                                        
+ RQSTFLD                    Common 182                                  64130                                                       
+ VRBLS                      Common 210                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+
+Page 30          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+
+Page 31          Source Listing                  MISCLN
+2022-02-15 16:39                                 MISCLN.f
+
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : MISCLN.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

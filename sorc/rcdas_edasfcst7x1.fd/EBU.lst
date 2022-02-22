@@ -1,0 +1,2135 @@
+Page 1           Source Listing                  EBU
+2022-02-15 16:36                                 /tmp/ifortRE3xes.i
+
+      1 # 1 "EBU.F"
+      2               PROGRAM EBU
+      3 C$$$  MAIN PROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .                                       .
+      5 C MAIN PROGRAM: ETAFCST      EARLY ETA MODEL FORECAST DRIVER
+      6 C   PRGMMR: JANJIC           ORG: NP22        DATE: 99-01-20
+      7 C
+      8 C ABSTRACT: EBU3 CONTAINS THE PRIMARY RUNSTREAM FOR THE EARLY ETA
+      9 C   FORECAST MODEL.  AFTER AN INITIAL CALL TO SUBROUTINE INIT, CALLS
+     10 C   ARE MADE TO SUBROUTINES WHICH COMPUTE THE VARIOUS DYNAMICAL AND
+     11 C   PHYSICAL PROCESSES IN THE MODEL.  THE VARIABLE 'NTSD' IS THE
+     12 C   FUNDAMENTAL TIMESTEP COUNTER AND THUS ITS VALUE DETERMINES WHEN
+     13 C   THE SUBROUTINES ARE CALLED.  INFORMATION PERTAINING TO THE SCHEMES
+     14 C   USED IN THE MODEL AS WELL AS ADDITIONAL REFERENCES MAY BE FOUND
+     15 C   IN "THE STEP-MOUNTAIN ETA COORDINATE REGIONAL MODEL:  A DOCUMEN-
+     16 C   TATION" (BLACK 1988; DEVELOPMENT DIVISION) AND "THE NEW NMC MESO-
+     17 C   SCALE ETA MODEL:  DESCRIPTION AND FORECAST EXAMPLES (BLACK 1994;
+     18 C   WEATHER AND FORECASTING).
+     19 C
+     20 C PROGRAM HISTORY LOG:
+     21 C   87-08-??  JANJIC,     ORIGINATOR
+     22 C             BLACK
+     23 C   93-05-12  TREADON     DOCBLOCK INSERTED
+     24 C   93-10-25  BLACK       DOCBLOCK UPDATED
+     25 C   97-03-15  MESINGER    SPLITTING MODIFIED, TO SEPARATE THE
+     26 C                         ADJUSTMENT AND THE ADVECTION STEP
+     27 C   97-11-19  BLACK       MODIFIED FOR DISTRIBUTED MEMORY
+     28 C   98-10-20  BLACK       DISTRIBUTED MEMORY FORM FOR
+     29 C                         CURRENT OPERATIONAL CODE
+     30 C   00-02-25 TUCCILLO     INCORPORATED ASYNCHRONOUS I/O SERVERS
+     31 C
+     32 C
+     33 C USAGE:  MAIN PROGRAM
+     34 C
+     35 C   INPUT FILES:  NONE (SEE SUBROUTINE INIT)
+     36 C
+     37 C   OUTPUT FILES:  NONE (SEE SUBROUTINE CHKOUT)
+     38 C
+     39 C   SUBPROGRAMS CALLED:
+     40 C     UNIQUE:
+     41 C       INIT     - INITIALIZE VARIABLES AT START OF INTEGRATION
+     42 C       DIVHOA   - DIVERGENCE, AND HORIZONTAL PART OF THE OMEGA-ALPHA
+     43 C                  TERM
+     44 C       PGCOR    - PRESSURE GRADIENT AND CORIOLIS FORCE
+     45 C       PDTE     - UPDATE SURFACE PRESSURE TENDENCY AND ETADOT
+     46 C       VTADV    - VERTICAL ADVECTION
+     47 C       HZADV    - HORIZONTAL ADVECTION OF T,U,V, AND TKE
+     48 C       HZADV2   - HORIZONTAL ADVECTION OF Q AND CLOUD WATER
+     49 C       DDAMP    - APPLY DIVERGENCE DAMPING
+     50 C       PDNEW    - UPDATE SURFACE PRESSURE
+     51 C       HDIFF    - LATERAL DIFFUSION
+     52 C       BOCOH    - UPDATE H POINTS ON THE BOUNDARIES
+     53 C       BOCOV    - UPDATE V POINTS ON THE BOUNDARIES
+     54 C       RADTN    - RADIATION DRIVER
+     55 C       RDTEMP   - APPLY TEMPERATURE TENDENCY DUE TO RADIATION
+     56 C       TURBL    - PERFORM THE VERTICAL TURBULENT EXCHANGE
+     57 C       SURFACE  - UPDATE SURFACE TEMPERATURE, MOISTURE, AND OTHER
+
+Page 2           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+     58 C                  GROUND HYDROLOGY
+     59 C       GSCOND   - CLOUD WATER/ICE PHYSICS PARAMETERIZATION
+     60 C       CUCNVC   - CONVECTIVE ADJUSTMENT FOR DEEP OR SHALLOW CONVECTION
+     61 C       PRECPD   - GRID SCALE PRECIPITATION
+     62 C       CHKOUT   - POST PROFILE DATA.  FOR INTERNAL POST,
+     63 C                  POSTS MODEL OUTPUT.  FOR EXTERNAL POST,
+     64 C                  WRITES TEMPORARY FILE CONTAINING ALL MODEL
+     65 C                  ARRAYS.
+     66 C
+     67 C   EXIT STATES:
+     68 C     COND =   1 - NORMAL EXIT
+     69 C
+     70 C ATTRIBUTES:
+     71 C   LANGUAGE: FORTRAN 90
+     72 C   MACHINE : IBM SP
+     73 C
+     74 C$$$
+     75 C
+     76 C     ******************************************************************
+     77 C     *                                                                *
+     78 C     *                   LIMITED AREA ETA MODEL                       *
+     79 C     *                WITH STEP-MOUNTAIN TOPOGRAPHY                   *
+     80 C     *                                                                *
+     81 C     *                                                                *
+     82 C     *    NOAA / NATIONAL CENTERS FOR ENVIRONMENTAL PREDICTION,       *
+     83 C     *                                             CAMP SPRINGS, MD   *
+     84 C     *                                                                *
+     85 C     *  GEOPHYSICAL FLUID DYNAMICS LABORATORY / NOAA, PRINCETON, NJ,  *
+     86 C     *                                                                *
+     87 C     *  UNIVERSITY CORPORATION FOR ATMOSPHERIC RESEARCH, BOULDER, CO, *
+     88 C     *                              &                                 *
+     89 C     * DEPARTMENT OF METEOROLOGY, UNIVERSITY OF BELGRADE, YUGOSLAVIA  *
+     90 C     *                                                                *
+     91 C     ******************************************************************
+     92 C
+     93 C     ******************************************************************
+     94 C     *                                                                *
+     95 C     *                        REFERENCES                              *
+     96 C     *             FOR THE DYNAMICAL PART OF THE MODEL                *
+     97 C     *                                                                *
+     98 C     *  STEP-MOUNTAIN ETA COORDINATE:                                 *
+     99 C     *      F. MESINGER, 1983, IN RES. ACTIVITIES IN ATMOS. AND       *
+    100 C     *      OCEANIC MODELING, REP. NO. 5, WMO, GENEVA, 4.9-4.10.      *
+    101 C     *                                                                *
+    102 C     *  HORIZONTAL ADVECTION, CONTINUITY EQUATION:                    *
+    103 C     *      Z.I. JANJIC, 1984, MWR, 112, NO.6, 1234-1245.             *
+    104 C     *                                                                *
+    105 C     *  INTERNAL BOUNDARIES, OMEGA-ALPHA TERM, CODING, PERFORMANCE:   *
+    106 C     *      MESINGER ET AL., 1988, MWR, 116 NO.7, 1493-1518.          *
+    107 C     *                                                                *
+    108 C     *  N.B. FOR MORE DETAILS ON THESE TOPICS SEE ALSO:               *
+    109 C     *                                                                *
+    110 C     *  1.  MESINGER, F., AND Z.I. JANJIC, 1985: PROBLEMS AND         *
+    111 C     *        NUMERICAL METHODS OF THE INCORPORATION OF MOUNTAINS IN  *
+    112 C     *        ATMOSPHERIC MODELS.  LECTURES IN APPLIED MATHEMATICS,   *
+    113 C     *        VOL 22, AMER. MATH. SOC.; ALSO, NUMERICAL METHODS FOR   *
+    114 C     *        WEATHER PREDICTION, SEMINAR 1983, ECMWF, 103-157;       *
+
+Page 3           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+    115 C     *        ALSO, SHORT- AND MEDIUM-RANGE WEATHER PREDICTION        *
+    116 C     *        RESEARCH PUBL. SER., NO. 8, WMO, GENEVA, 175-233.       *
+    117 C     *                                                                *
+    118 C     *  2.  JANJIC, Z.I., AND F. MESINGER, 1983: FINITE-DIFFERENCE    *
+    119 C     *        METHODS FOR THE SHALLOW WATER EQUATIONS ON VARIOUS      *
+    120 C     *        HORIZONTAL GRIDS.  NUMERICAL METHODS FOR WEATHER        *
+    121 C     *        PREDICTION, SEMINAR 1983, ECMWF,29-101.                 *
+    122 C     *                                                                *
+    123 C     *                     SOME  REFERENCES                           *
+    124 C     *             FOR THE PHYSICS PART OF THE MODEL                  *
+    125 C     *                                                                *
+    126 C     *  JANJIC, Z.I., 1990: THE STEP-MOUNTAIN COORDINATE:             *
+    127 C     *     PHYSICAL PACKAGE.  MONTHLY WEATHER REVIEW, VOL. 118,       *
+    128 C     *     NO. 7, 1429-1443.                                          *
+    129 C     *  JANJIC, Z.I., 1994: THE STEP MOUNTAIN ETA COORDINATE:         *
+    130 C     *     FURTHER DEVELOPMENTS OF THER CONVECTION, VISCOUS SUBLAYER, *
+    131 C     *     AND TURBULENCE CLOSURE SCHEMES.  MONTHLY WEATHER REVIEW,   *
+    132 C     *     VOL. 122, 927-945.                                         *
+    133 C     *                                                                *
+    134 C     *  ALSO SEE REFERENCES IN PHYSICAL SUBROUTINES                   *
+    135 C     *                                                                *
+    136 C     ******************************************************************
+    137 C
+    138 C     ******************************************************************
+    139 C     *                                                                *
+    140 C     *  THIS VERSION OF THE PROGRAM IS WRITTEN IN STANDARD ANSI       *
+    141 C     *  FORTRAN 90                                                    *
+    142 C     *                                                                *
+    143 C     *  PRINCIPAL PROGRAMMERS:                                        *
+    144 C     *                                                                *
+    145 C     *  Z. JANJIC, UNIVERSITY OF BELGRADE,                            *
+    146 C     *  T. BLACK, NCEP
+    147 C     *                                                                *
+    148 C     ******************************************************************
+    149 C     *                                                                *
+    150 C     *  THE MODEL USES THE SEMI-STAGGERED E GRID IN ARAKAWA NOTATION. *
+    151 C     *  HORIZONTAL INDEXING IS TWO-DIMENSIONAL.
+    152 C     *                                                                *
+    153 C     *                                                                *
+    154 C     *                                                                *
+    155 C     * H(1,JM)  V(1,JM)  H(2,JM)  V(2,JM) ...... V(IM-1,JM)  H(IM,JM) *
+    156 C     *    .        .        .        .               .          .     *
+    157 C     *    .        .        .        .               .          .     *
+    158 C     *    .        .        .        .               .          .     *
+    159 C     *    .        .        .        .               .          .     *
+    160 C     *                                                                *
+    161 C     * H(1,3)   V(1,3)   H(2,3)   V(2,3) ....... V(IM-1,3)   H(IM,3)  *
+    162 C     *                                                                *
+    163 C     * V(1,2)   H(1,2)   V(2,2)   H(2,2) ....... H(IM-1,2)   V(IM,2)  *
+    164 C     *                                                                *
+    165 C     * H(1,1)   V(1,1)   H(2,1)   V(2,1) ....... V(IM-1,1)   H(IM,1)  *
+    166 C     *                                                                *
+    167 C     *                                                                *
+    168 C     *                                                                *
+    169 C     *  ARRAYS ARE DIMENSIONED (IM,JM).  NOTE THAT A PHANTOM COLUMN   *
+    170 C     *  OF POINTS MUST EXIST ALONG THE EASTERN EDGE FOR THE ARRAYS    *
+    171 C     *  TO BE COMPLETE.                                               *
+
+Page 4           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+    172 C     *                                                                *
+    173 C     *  THE TOTAL NUMBER OF GRID POINTS IN THE HORIZONTAL EXCLUDING   *
+    174 C     *  THE PHANTOM COLUMN IS IMJM=IM*JM-JM/2.                        *
+    175 C     *                                                                *
+    176 C     *  AUXILIARY ARRAYS ARE USED TO LOCATE NEIGHBORING GRID POINTS   *
+    177 C     *  WITH RESPECT TO A GIVEN GRID POINT.  IHE(J) IS THE INCREMENT  *
+    178 C     *  TO THE I INDEX NEEDED TO REFER TO THE V POINT EAST OF AN      *
+    179 C     *  H POINT THUS IHE(J)=0 ON ODD ROWS AND =1 ON EVEN ROWS.        *
+    180 C     *  IHW(J)=IHE(J)-1 IS THE INCREMENT TO THE INDEX OF AN H POINT   *
+    181 C     *  TO REFER TO THE V POINT TO THE WEST OF THAT H POINT.  THE     *
+    182 C     *  ANALOG EXISTS FOR THE ARRAYS IVE(J) AND IVW(J).               *
+    183 C     *                                                                *
+    184 C     *  BOUNDARY MASKS AND TOPOGRAPHY MASKS ARE DEFINED FOR VECTOR    *
+    185 C     *  PROCESSING. THE BOUNDARY MASKS HBM2(K) AND VBM2(K) ARE        *
+    186 C     *  EQUAL TO ONE EVERYWHERE EXCEPT AT THE TWO OUTERMOST ROWS      *
+    187 C     *  WHERE THEY ARE EQUAL TO ZERO. THE BOUNDARY MASK VBM3(K) IS    *
+    188 C     *  EQUAL TO ONE EVERYWHERE EXCEPT AT THE THREE OUTERMOST ROWS    *
+    189 C     *  WHERE IT IS EQUAL TO ZERO. THE TOPOGRAPHY MASKS (HTM(K,L)     *
+    190 C     *  AND VTM(K,L)) ARE SET TO ZERO UNDERNEATH THE TOPOGRAPHY AND   *
+    191 C     *  TO ONE ELSWHERE. IN ADDITION, FOR TREATMENT OF PHYSICAL       *
+    192 C     *  PROCESSES, MAXIMUM VALUES OF THE VERTICAL INDEX ARE DEFINED   *
+    193 C     *  AND STORED (LMH(K) AND LMV(K).
+    194 C     *                                                                *
+    195 C     ******************************************************************
+    196 C
+    197 C
+    198 C************************************************************************************
+    199 C
+    200 C      THE NUMBER OF QUILT SERVERS MUST AGREE WITH THE FOLLOWING RELATIONSHIP:
+    201 C
+    202 C       0 <=  NUMBER_QUILT_SERVERS <= JNPES
+    203 C
+    204 C       WHERE THE NUMBER_QUILT_SERVERS = ( NUMBER_OF MPI_TASKS - INPES*JNPES )
+    205 C
+    206 C      PREFERABLY, THE NUMBER OF QUILT SERVERS DIVIDES EVENLY INTO JNPES
+    207 C
+    208 C         Jim Tuccillo August 2000
+    209 C
+    210 C************************************************************************************
+    211 C
+    212        INCLUDE 'EXCHM.h'
+    220                              L O G I C A L
+    221      & RUN,FIRST,RESTRT,SIGMA
+    222 C-----------------------------------------------------------------------
+    223       INCLUDE "parmeta"
+    246       INCLUDE "mpif.h"
+    808       INCLUDE "mpp.h"
+    867       INCLUDE "parm.tbl"
+    868 # 1 "./sp.h" 1 
+    869 # 4
+    870 
+    871 # 220 "EBU.F" 2 
+    872 C-----------------------------------------------------------------------
+    874       INCLUDE "CTLBLK.comm"
+    884       INCLUDE "CONTIN.comm"
+    894       INCLUDE "VRBLS.comm"
+    904       INCLUDE "PVRBLS.comm"
+
+Page 5           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+    934       INCLUDE "CLDWTR.comm"
+    942       parameter(lp1=lm+1)
+    943       INCLUDE "PHYS2.comm"
+    971       INCLUDE "MASKS.comm"
+    982       dimension glob_temp(im,jm,lm)
+    983       character*10 fname
+    984 C-----------------------------------------------------------------------
+    985 C***
+    986 C***  THE FOLLOWING ARE USED FOR TIMIMG PURPOSES ONLY
+    987 C***
+    988       real*8 timef
+    989       real nhb_tim,mpp_tim,init_tim
+    990       common/timing/surfce_tim,nhb_tim,res_tim,exch_tim
+    991 CYL
+    992       character envar*4, srfile*7
+    993       LOGICAL DOADJPPT
+    994       NAMELIST /UPADJPPT/ DOADJPPT
+    995 CYL
+    996 C
+    997 C-----------------------------------------------------------------------
+    998 C***
+    999 C***  INITIALIZE MPI,
+   1000 C***  SETUP I/O SERVER MECHANICS AND CHECK FOR WHETHER A
+   1001 C***  SUFFICIENT NUMBER OF MPI TASKS HAVE BEEN INITIATED.
+   1002 C***  IF INSUFFICIENT MPI TASK HAVE BEEN INITIATED THE
+   1003 C***  CODE WILL STOP IN SETUP_SERVERS
+   1004 C***
+   1005 	write(*,*) 'inpes,jnpes=',INPES,JNPES
+   1006 
+   1007       CALL SETUP_SERVERS(INPES*JNPES,
+   1008      *                   MYPE,
+   1009      *                   NPES,
+   1010      *                   IQUILT_GROUP,
+   1011      *                   INUMQ,
+   1012      *                   MPI_COMM_COMP,
+   1013      *                   MPI_COMM_INTER,
+   1014      *                   MPI_COMM_INTER_ARRAY)
+   1015 C
+   1016       IF(MYPE.EQ.0)THEN
+   1017         CALL W3TAGB('ETAFCST ',0097,0365,0060,'NP22   ')
+   1018       ENDIF
+   1019 C
+   1020 c     IF(MYPE.EQ.NPES)THEN
+   1021 c       CALL START()
+   1022 c     ENDIF
+   1023 C
+   1024 C***
+   1025 C***  AT THIS POINT NPES IS THE NUMBER OF MPI TASKS WORKING ON THE
+   1026 C***  MODEL INTEGRATION. ALL OTHER TASKS ARE I/O SERVERS.
+   1027 C
+   1028 C***  AND AWAY WE GO !
+   1029 C***
+   1030 c
+   1031 c Here are the point we will be checking - PS 29 June 2001
+   1032 c
+   1033        ichk=39
+   1034        jchk=26
+
+Page 6           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1035        lchk=42
+   1036        mchk=5
+   1037 c
+   1038        IF(MYPE.GE.NPES)THEN
+   1039 C
+   1040 C***  FIRE UP THE I/O SERVERS
+   1041 C
+   1042          CALL QUILT
+   1043 C
+   1044        ELSE
+   1045 C***
+   1046 C***  THESE ARE THE TASKS THAT DO THE MODEL INTEGRATION
+   1047 C***
+   1048 C-----------------------------------------------------------------------
+   1049       mpp_tim=   0.
+   1050 C
+   1051       bocoh_tim= 0.
+   1052       bocov_tim= 0.
+   1053       chkout_tim=0.
+   1054       cucnvc_tim=0.
+   1055       ddamp_tim= 0.
+   1056       divhoa_tim=0.
+   1057       exch_tim=  0.
+   1058       goss_tim=  0.
+   1059       gscond_tim=0.
+   1060       hdiff_tim= 0.
+   1061       hzadv_tim= 0.
+   1062       hzadv2_tim=0.
+   1063       init_tim=  0.
+   1064       nhb_tim=   0.
+   1065       pdnew_tim= 0.
+   1066       pdte_tim=  0.
+   1067       pgcor_tim= 0.
+   1068       precpd_tim=0.
+   1069 cyl
+   1070       pptadj_tim=0.
+   1071 cyl
+   1072       radtn_tim= 0.
+   1073       rdtemp_tim=0.
+   1074       res_tim=   0.
+   1075 c      sst_tim=   0.
+   1076       surfce_tim=0.
+   1077       turbl_tim= 0.
+   1078       vtadv_tim= 0.
+   1079 C-----------------------------------------------------------------------
+   1080 C***
+   1081 C***  INITIALIZE ALL QUANTITIES ASSOCIATED WITH GRID DECOMPOSITION
+   1082 C***
+   1083       btimx=timef()
+   1084       btim=timef()
+   1085       CALL MPPINIT
+   1086       mpp_tim=mpp_tim+timef()-btim
+   1087 C-----------------------------------------------------------------------
+   1088 C--------INITIALIZE CONSTANTS AND VARIABLES-----------------------------
+   1089 C--------DISTRIBUTE THE VALUES TO THE VARIOUS NODES/PEs-----------------
+   1090 C-----------------------------------------------------------------------
+   1091 c     CALL EXIT('INIT')
+
+Page 7           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1092       bbtim=timef()
+   1093       CALL INIT  
+   1094       call exitt('INIT')
+   1095       init_tim=timef()-bbtim
+   1096 c
+   1097 c Call the subroutine that assigns a climatological value of the SSTs
+   1098 c in the Gulf of California. PS - 13 Dec 2001
+   1099 c
+   1100        btim=timef()
+   1101 c      call sstbaja(glat,glon,sm,sst,idim1,idim2,jdim1,jdmim2,idat)
+   1102 c      call sstbaja(idat)
+   1103 c      sst_tim=timef()-btim
+   1104 C
+   1105       btim=timef()
+   1106       CALL GOSSIP
+   1107       goss_tim=goss_tim+timef()-btim
+   1108 C-----------------------------------------------------------------------
+   1109 C--------INVOKE THE LYNCH DIGITAL FILTER IF DESIRED--------------------
+   1110 C-----------------------------------------------------------------------
+   1111 c     DO NFLT=1,5
+   1112 c       IF(NFLT.GT.1.AND.MYPE.EQ.0)THEN
+   1113 c         REWIND NBC
+   1114 c         READ(NBC)
+   1115 c         READ(NBC)BCHR
+   1116 c       ENDIF
+   1117 C
+   1118 c       BCHR=0.
+   1119 c       WRITE(6,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1120 c       WRITE(6,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1121 c       WRITE(6,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1122 c       WRITE(0,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1123 c       WRITE(0,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1124 c       WRITE(0,*) " INVOKE THE LYNCH DIGITAL FILTER "
+   1125 c       CALL DIGFLT
+   1126 C
+   1127 c     ENDDO
+   1128 CYL
+   1129 C Look at the environmental variable, tmmark, to see whether we are running
+   1130 C fcst for Eta or EDAS (if Eta, we don't read in the ppt obs or call ADJPPT)
+   1131 C
+   1132       CALL get_environment_variable("tmmark",ENVAR)
+   1133       IF(MYPE.EQ.0) PRINT *, "EBU finds that tmmark =",ENVAR
+   1134       IF(ENVAR.NE.'tm00') then
+   1135         write(srfile,10) envar
+   1136 10      format('SR.',a4)
+   1137         open(90,file=srfile,form='unformatted')
+   1138         CALL READPCP
+   1139         DOADJPPT=.TRUE.
+   1140         READ(9,UPADJPPT)
+   1141         WRITE(6,UPADJPPT)
+   1142       endif
+   1143 CYL
+   1144 C-----------------------------------------------------------------------
+   1145 C********ENTRY INTO THE TIME LOOP***************************************
+   1146 C-----------------------------------------------------------------------
+   1147  2000 CONTINUE
+   1148       NTSD=NTSD+1
+
+Page 8           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1149       IF(MYPE.EQ.0)WRITE(6,2001) NTSD,(NTSD-1)*DT
+   1150       IF(MYPE.EQ.0)WRITE(0,2001) NTSD,(NTSD-1)*DT
+   1151  2001 FORMAT('EBU:  TIMESTEP NTSD=',I5,'  FCST TIME=',F8.1)
+   1152 C-----------------------------------------------------------------------
+   1153 C------------------GENERATE INITIAL OUTPUT------------------------------
+   1154 C-----------------------------------------------------------------------
+   1155       IF(NTSD.EQ.1.OR.NTSD.GT.1.AND.NTSD-1.EQ.NSTART+1)THEN
+   1156         btim=timef()
+   1157         CALL CHKOUT
+   1158         chkout_tim=chkout_tim+timef()-btim
+   1159       ENDIF
+   1160 
+   1161 C      if (ntsd.ge.81 .and. ntsd.le.81) then
+   1162 C
+   1163 C        write(fname,fmt="(a,i4.4)") "dump.",ntsd
+   1164 C        open(61,file=fname,form="unformatted",access="direct"
+   1165 C     &                                       ,recl=im*jm*lm*4)
+   1166 C
+   1167 C           do l=1,lm
+   1168 C           call loc2glb(T(IDIM1,JDIM1,L),glob_temp(1,1,L))
+   1169 C           end do
+   1170 C           if (mype.eq.0) then
+   1171 C              write(66,*)glob_temp
+   1172 C              write(61,rec=1)glob_temp
+   1173 C           end if
+   1174 C
+   1175 C           do l=1,lm
+   1176 C           call loc2glb(Q(IDIM1,JDIM1,L),glob_temp(1,1,L))
+   1177 C           end do
+   1178 C           if (mype.eq.0) then
+   1179 C              write(67,*)glob_temp
+   1180 C              write(61,rec=2)glob_temp
+   1181 C           end if
+   1182 C
+   1183 C           do l=1,lm
+   1184 C           call loc2glb(U(IDIM1,JDIM1,L),glob_temp(1,1,L))
+   1185 C           end do
+   1186 C           if (mype.eq.0) then
+   1187 C              write(68,*)glob_temp
+   1188 C              write(61,rec=3)glob_temp
+   1189 C           end if
+   1190 C
+   1191 C           do l=1,lm
+   1192 C           call loc2glb(V(IDIM1,JDIM1,L),glob_temp(1,1,L))
+   1193 C           end do
+   1194 C           if (mype.eq.0) then
+   1195 C              write(69,*)glob_temp
+   1196 C              write(61,rec=4)glob_temp
+   1197 C           end if
+   1198 C
+   1199 C           do l=1,lm
+   1200 C           call loc2glb(CWM(IDIM1,JDIM1,L),glob_temp(1,1,L))
+   1201 C           end do
+   1202 C           if (mype.eq.0) then
+   1203 C              write(70,*)glob_temp
+   1204 C              write(61,rec=5)glob_temp
+   1205 C           end if
+
+Page 9           Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1206 C
+   1207 C        close(61)
+   1208 C
+   1209 C      end if
+   1210 
+   1211 C-----------------------------------------------------------------------
+   1212 C------------------------RADIATION--------------------------------------
+   1213 C-----------------------------------------------------------------------
+   1214 c     print*,'before RADTN'
+   1215       IF(MOD(NTSD-1,NRADS).EQ.0.OR.MOD(NTSD-1,NRADL).EQ.0)THEN
+   1216         btim=timef()
+   1217         call exitt('before RADTN')
+   1218         CALL RADTN
+   1219         call exitt('after  RADTN')
+   1220 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,RADTN,Q=',
+   1221 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1222       if(mype.eq.mchk)print*,'ichk,jchk,lchk,RADTN,T=',
+   1223      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1224 c     if(mype.eq.mchk)
+   1225 c    *   print*,'ichk,jchk,lchk,RADTN,CWM=',
+   1226 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1227         radtn_tim=radtn_tim+timef()-btim
+   1228       ENDIF
+   1229 C-----------------------------------------------------------------------
+   1230 C***  START THE ADJUSTMENT STEP: INTEGRATE FORWARD THE CONTINUITY
+   1231 C***  EQUATION (UPDATE THE MASS FIELD)
+   1232 C-----------------------------------------------------------------------
+   1233 C***
+   1234 C***  DIVERGENCE AND HORIZONTAL PART OF THE OMEGA-ALPHA TERM
+   1235 C***
+   1236       IF(NTSD.GT.1)CALL EXCH(T,LM,U,LM,V,LM,Q,LM,2,2)
+   1237 c     if(mype.eq.4) print*,'Before DIVHOA'
+   1238       btim=timef()
+   1239       CALL DIVHOA
+   1240 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,DIVHOA,Q=',
+   1241 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1242       if(mype.eq.mchk)print*,'ichk,jchk,lchk,DIVHOA,T=',
+   1243      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1244 c     if(mype.eq.mchk)
+   1245 c    *   print*,'ichk,jchk,lchk,DIVHOA,CWM=',
+   1246 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1247 c     print*,'after divhoa, t=',t
+   1248       call exitt('DIVHOA')
+   1249       divhoa_tim=divhoa_tim+timef()-btim
+   1250 C
+   1251 C-----------------------------------------------------------------------
+   1252 C--------PRESS. TEND.,ETA DOT & VERTICAL OMEGA-ALPHA--------------------
+   1253 C-----------------------------------------------------------------------
+   1254 C
+   1255       btim=timef()
+   1256 c     if(mype.eq.4) print*,'Before PDTE'
+   1257       CALL PDTE
+   1258 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,PDTE,Q=',
+   1259 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1260       if(mype.eq.mchk)print*,'ichk,jchk,lchk,PDTE,T=',
+   1261      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1262 c     if(mype.eq.mchk)
+
+Page 10          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1263 c    *   print*,'ichk,jchk,lchk,PDTE,CWM=',
+   1264 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1265       call exitt('PDTE')
+   1266       pdte_tim=pdte_tim+timef()-btim
+   1267 C
+   1268 C-----------------------------------------------------------------------
+   1269 C--------DO VERTICAL ADVECTION WITHIN THE FIRST ADJUSTMENT STEP---------
+   1270 C-----------------------------------------------------------------------
+   1271 C
+   1272       IF(MOD(NTSD-1,IDTAD).EQ.0)THEN
+   1273         btim=timef()
+   1274         CALL EXCH(ETADT,LM-1,1,1)
+   1275         exch_tim=exch_tim+timef()-btim
+   1276 C
+   1277         btim=timef()
+   1278 c       if(mype.eq.4) print*,'before VTADV'
+   1279         CALL VTADV
+   1280 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,VTADV,Q=',
+   1281 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1282       if(mype.eq.mchk)print*,'ichk,jchk,lchk,VTADV,T=',
+   1283      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1284 c     if(mype.eq.mchk)
+   1285 c    *   print*,'ichk,jchk,lchk,VTADV,CWM=',
+   1286 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1287         call exitt('VTADV')
+   1288         vtadv_tim=vtadv_tim+timef()-btim
+   1289 C
+   1290         btim=timef()
+   1291         CALL EXCH(T,LM,U,LM,V,LM,Q,LM,Q2,LM,1,1)
+   1292         exch_tim=exch_tim+timef()-btim
+   1293       ENDIF
+   1294 C
+   1295 C-----------------------------------------------------------------------
+   1296 C--------UPDATING PRESSURE DIFFERENCE-----------------------------------
+   1297 C-----------------------------------------------------------------------
+   1298 C
+   1299       btim=timef()
+   1300 c     if(mype.eq.4) print*,'before PDNEW'
+   1301       CALL PDNEW
+   1302 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,PDNEW,Q=',
+   1303 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1304       if(mype.eq.mchk)print*,'ichk,jchk,lchk,PDNEW,T=',
+   1305      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1306 c     if(mype.eq.mchk)
+   1307 c    *   print*,'ichk,jchk,lchk,PDNEW,CWM=',
+   1308 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1309       call exitt('PDNEW')
+   1310       pdnew_tim=pdnew_tim+timef()-btim
+   1311 C
+   1312 C-----------------------------------------------------------------------
+   1313 C--------UPDATING BOUNDARY VALUES AT HEIGHT POINTS----------------------
+   1314 C-----------------------------------------------------------------------
+   1315 C
+   1316 c     btim=timef()
+   1317 c     IF(MOD(NTSD,IDTAD).EQ.0)THEN
+   1318 c       CALL EXCH(T,LM,Q,LM,Q2,LM,1,1)
+   1319 c     ENDIF
+
+Page 11          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1320 c     CALL EXCH(PD,1,CWM,LM,1,1)
+   1321 c     exch_tim=exch_tim+timef()-btim
+   1322 C
+   1323       btim=timef()
+   1324 c     if(mype.eq.6) print*,'before BOCOH'
+   1325       CALL BOCOH
+   1326 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,BOCOH,Q=',
+   1327 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1328       if(mype.eq.mchk)print*,'ichk,jchk,lchk,BOCOH,T=',
+   1329      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1330 c     if(mype.eq.mchk)
+   1331 c    *   print*,'ichk,jchk,lchk,BOCOH,CWM=',
+   1332 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1333       call exitt('BOCOH')
+   1334 c     if(mype.eq.6) print*,'after BOCOH'
+   1335       bocoh_tim=bocoh_tim+timef()-btim
+   1336 C
+   1337 C-----------------------------------------------------------------------
+   1338 C***  INTEGRATE BACKWARD THE MOMENTUM EQUATION
+   1339 C***  (UPDATE THE WIND FIELD)
+   1340 C-----------------------------------------------------------------------
+   1341 C
+   1342 C***  PRESSURE GRADIENT AND CORIOLIS FORCE TERMS
+   1343 C
+   1344       btim=timef()
+   1345       CALL EXCH(PD,1,T,LM,Q,LM,2,2)
+   1346       exch_tim=exch_tim+timef()-btim
+   1347 C
+   1348       btim=timef()
+   1349 c     if(mype.eq.4) print*,'before PGCOR'
+   1350       CALL PGCOR
+   1351       call exitt('PGCOR')
+   1352 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,PGCOR,Q=',
+   1353 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1354       if(mype.eq.mchk)print*,'ichk,jchk,lchk,PGCOR,T=',
+   1355      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1356 c     if(mype.eq.mchk)
+   1357 c    *   print*,'ichk,jchk,lchk,PGCOR,CWM=',
+   1358 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1359       pgcor_tim=pgcor_tim+timef()-btim
+   1360 C
+   1361       btim=timef()
+   1362       CALL EXCH(PDSL,1,5,5)
+   1363       exch_tim=exch_tim+timef()-btim
+   1364 C
+   1365 C-----------------------------------------------------------------------
+   1366 C--------DIVERGENCE DAMPING---------------------------------------------
+   1367 C-----------------------------------------------------------------------
+   1368 C
+   1369       IF(MOD(NTSD,NTDDMP).EQ.0)THEN
+   1370         btim=timef()
+   1371         CALL EXCH(T,LM,U,LM,V,LM,DIV,LM,1,1)
+   1372         exch_tim=exch_tim+timef()-btim
+   1373 C
+   1374         btim=timef()
+   1375 c       if(mype.eq.4) print*,'before DDAMP'
+   1376         CALL DDAMP
+
+Page 12          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1377         call exitt('DDAMP')
+   1378 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,DDAMP,Q=',
+   1379 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1380       if(mype.eq.mchk)print*,'ichk,jchk,lchk,DDAMP,T=',
+   1381      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1382 c     if(mype.eq.mchk)
+   1383 c    *   print*,'ichk,jchk,lchk,DDAMP,CWM=',
+   1384 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1385         ddamp_tim=ddamp_tim+timef()-btim
+   1386       ENDIF
+   1387 C-----------------------------------------------------------------------
+   1388 C--------UPDATING BOUNDARY VALUES AT VELOCITY POINTS--------------------
+   1389 C-----------------------------------------------------------------------
+   1390 C
+   1391       btim=timef()
+   1392       CALL EXCH(U,LM,V,LM,1,1)
+   1393       exch_tim=exch_tim+timef()-btim
+   1394 C
+   1395       btim=timef()
+   1396 c     if(mype.eq.4) print*,'before BOCOV'
+   1397       CALL BOCOV
+   1398       call exitt('BOCOV')
+   1399 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,BOCOV,Q=',
+   1400 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1401       if(mype.eq.mchk)print*,'ichk,jchk,lchk,BOCOV,T=',
+   1402      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1403 c     if(mype.eq.mchk)
+   1404 c    *   print*,'ichk,jchk,lchk,BOCOV,CWM=',
+   1405 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1406       bocov_tim=bocov_tim+timef()-btim
+   1407 C
+   1408 C-----------------------------------------------------------------------
+   1409 C***
+   1410 C***  THE ADJUSTMENT STEP IS NOW DONE.  MAKE THE REMAINING CALLS WHICH
+   1411 C***  TRADITIONALLY (SO FAR) HAVE BEEN DONE EVERY ADJUSTMENT STEP
+   1412 C***
+   1413 C-----------------------------------------------------------------------
+   1414 C--------APPLY TEMPERATURE TENDENCY DUE TO RADIATION--------------------
+   1415 C-----------------------------------------------------------------------
+   1416 C
+   1417       btim=timef()
+   1418 c     if(mype.eq.4) print*,'Before RDTEMP'
+   1419       CALL RDTEMP
+   1420       call exitt('RDTEMP')
+   1421 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,RDTEMP,Q=',
+   1422 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1423       if(mype.eq.mchk)print*,'ichk,jchk,lchk,RDTEMP,T=',
+   1424      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1425 c     if(mype.eq.mchk)
+   1426 c    *   print*,'ichk,jchk,lchk,RDTEMP,CWM=',
+   1427 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1428       rdtemp_tim=rdtemp_tim+timef()-btim
+   1429 C
+   1430 C-----------------------------------------------------------------------
+   1431 C--------LATERAL DIFFUSION----------------------------------------------
+   1432 C-----------------------------------------------------------------------
+   1433 C
+
+Page 13          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1434       btim=timef()
+   1435       CALL EXCH(T,LM,U,LM,V,LM,Q,LM,2,2)
+   1436       CALL EXCH(Q2,LM,1,1)
+   1437       exch_tim=exch_tim+timef()-btim
+   1438 C
+   1439       btim=timef()
+   1440 c     if(mype.eq.4) print*,'before HDIFF'
+   1441       CALL HDIFF
+   1442       call exitt('HDIFF')
+   1443 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,HDIFF,Q=',
+   1444 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1445       if(mype.eq.mchk)print*,'ichk,jchk,lchk,HDIFF,T=',
+   1446      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1447 c     if(mype.eq.mchk)
+   1448 c    *   print*,'ichk,jchk,lchk,HDIFF,CWM=',
+   1449 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1450       hdiff_tim=hdiff_tim+timef()-btim
+   1451 C
+   1452 C-----------------------------------------------------------------------
+   1453 C------- HORIZONTAL ADVECTION ------------------------------------------
+   1454 C-----------------------------------------------------------------------
+   1455 C
+   1456       IF(MOD(NTSD,IDTAD).EQ.0)THEN
+   1457         btim=timef()
+   1458         CALL EXCH(T,LM,U,LM,V,LM,4,4)
+   1459         CALL EXCH(Q2,LM,5,5)
+   1460         exch_tim=exch_tim+timef()-btim
+   1461 C
+   1462         btim=timef()
+   1463 c       if(mype.eq.4) print*,'before HZADV'
+   1464         CALL HZADV
+   1465 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,HZADV,Q=',
+   1466 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1467       if(mype.eq.mchk)print*,'ichk,jchk,lchk,HZADV,T=',
+   1468      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1469 c     if(mype.eq.mchk)
+   1470 c    *   print*,'ichk,jchk,lchk,HZADV,CWM=',
+   1471 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1472         call exitt('HZADV')
+   1473         hzadv_tim=hzadv_tim+timef()-btim
+   1474 C
+   1475         btim=timef()
+   1476         CALL EXCH(U,LM,V,LM,Q,LM,CWM,LM,2,2)
+   1477         exch_tim=exch_tim+timef()-btim
+   1478 C
+   1479 C***  HORIZONTAL ADVECTION OF WATER SUBSTANCE
+   1480 C
+   1481         btim=timef()
+   1482         CALL HZADV2
+   1483 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,HZADV2,Q=',
+   1484 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1485       if(mype.eq.mchk)print*,'ichk,jchk,lchk,HZADV2,T=',
+   1486      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1487 c     if(mype.eq.mchk)
+   1488 c    *   print*,'ichk,jchk,lchk,HZADV2,CWM=',
+   1489 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1490         call exitt('HZADV2')
+
+Page 14          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1491         hzadv2_tim=hzadv2_tim+timef()-btim
+   1492       ENDIF
+   1493 C-----------------------------------------------------------------------
+   1494 C
+   1495 C***  IF THE TIME IS RIGHT, NOW DO VARIOUS PHYSICS CALLS
+   1496 C***  (WARNING: TO AVOID ENDING THE INTEGRATION WITH PHYSICS CALLS
+   1497 C***  WHICH HAVE NOT BEEN FOLLOWED BY ADJUSTMENT STEPS, PHYSICS CALLS
+   1498 C***  ARE OFFSET BY HALVES OF VARIOUS CALLING INTERVALS.  IT IS
+   1499 C***  ASSUMED THAT THE CALLING INTERVALS, NPHS AND NCNVC,
+   1500 C***  ARE DIVISIBLE BY IDTAD.  IF NOT, INTEGRATION WILL END WITH AN
+   1501 C***  INCORRECT NUMBER OF CALLS HAVING BEEN MADE.
+   1502 C
+   1503 C-----------------------------------------------------------------------
+   1504 C--------TURBULENT PROCESSES AND PRECIPITATION--------------------------
+   1505 C-----------------------------------------------------------------------
+   1506       IF(MOD(NTSD-NPHS/2,NPHS).EQ.0)THEN
+   1507         btim=timef()
+   1508         CALL EXCH(PD,1,UZ0,1,VZ0,1,T,LM,U,LM,V,LM,Q,LM,1,1)
+   1509         exch_tim=exch_tim+timef()-btim
+   1510 C
+   1511         btim=timef()
+   1512 c       if(mype.eq.4) print*,'before TURBL'
+   1513         CALL TURBL                     !Contains calls to EXCH
+   1514         call exitt('TURBL')
+   1515 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,TURBL,Q=',
+   1516 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1517       if(mype.eq.mchk)print*,'ichk,jchk,lchk,TURBL,T=',
+   1518      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1519 c     if(mype.eq.mchk)
+   1520 c    *   print*,'ichk,jchk,lchk,TURBL,CWM=',
+   1521 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1522         turbl_tim=turbl_tim+timef()-btim
+   1523       ENDIF
+   1524 C-----------------------------------------------------------------------
+   1525 C--------CONDENSATION/EVAPORATION OF CLOUD WATER------------------------
+   1526 C-----------------------------------------------------------------------
+   1527       IF(MOD(NTSD-NPHS/2,NPHS).EQ.0)THEN
+   1528         btim=timef()
+   1529 c       if(mype.eq.4) print*,'before GSCOND'
+   1530         CALL GSCOND
+   1531 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,GSCOND,Q=',
+   1532 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1533       if(mype.eq.mchk)print*,'ichk,jchk,lchk,GSCOND,T=',
+   1534      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1535 c     if(mype.eq.mchk)
+   1536 c    *   print*,'ichk,jchk,lchk,GSCOND,CWM=',
+   1537 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1538         call exitt('GSCOND')
+   1539         gscond_tim=gscond_tim+timef()-btim
+   1540       ENDIF
+   1541 C-----------------------------------------------------------------------
+   1542 C--------CONVECTIVE PRECIPITATION---------------------------------------
+   1543 C-----------------------------------------------------------------------
+   1544       IF(MOD(NTSD-NCNVC/2,NCNVC).EQ.0)THEN
+   1545         btim=timef()
+   1546 c       if(mype.eq.4) print*,'before CUCNVC'
+   1547         CALL CUCNVC
+
+Page 15          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1548         call exitt('CUCNVC')
+   1549 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,CUCNVC,Q=',
+   1550 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1551       if(mype.eq.mchk)print*,'ichk,jchk,lchk,CUCNVC,T=',
+   1552      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1553 c     if(mype.eq.mchk)
+   1554 c    *   print*,'ichk,jchk,lchk,CUCNVC,CWM=',
+   1555 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1556         cucnvc_tim=cucnvc_tim+timef()-btim
+   1557       ENDIF
+   1558 C-----------------------------------------------------------------------
+   1559 C--------GRIDSCALE PRECIPITATION----------------------------------------
+   1560 C-----------------------------------------------------------------------
+   1561       IF(MOD(NTSD-NPHS/2,NPHS).EQ.0)THEN
+   1562         btim=timef()
+   1563 c       if(mype.eq.4) print*,'before PRECPD'
+   1564         CALL PRECPD
+   1565 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,PRECPD,Q=',
+   1566 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1567       if(mype.eq.mchk)print*,'ichk,jchk,lchk,PRECPD,T=',
+   1568      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1569 c     if(mype.eq.mchk)
+   1570 c    *   print*,'ichk,jchk,lchk,PRECPD,CWM=',
+   1571 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1572         call exitt('PRECPD')
+   1573         precpd_tim=precpd_tim+timef()-btim
+   1574       ENDIF
+   1575 C-----------------------------------------------------------------------
+   1576 C--------PRECIPIPTATION ASSIMILATION------------------------------------
+   1577 C-----------------------------------------------------------------------
+   1578       IF(MOD(NTSD-NPHS/2,NPHS).EQ.0 .AND. ENVAR.NE.'tm00')THEN
+   1579         btim=timef()
+   1580 c       if(mype.eq.4) print*,'before CHKSNOW'
+   1581         CALL CHKSNOW
+   1582 c       call exit('CHKSNOW')
+   1583 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,CHKSNOW,Q=',
+   1584 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1585       if(mype.eq.mchk)print*,'ichk,jchk,lchk,CHKSNOW,T=',
+   1586      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1587 c     if(mype.eq.mchk)
+   1588 c    *   print*,'ichk,jchk,lchk,CHKSNOW,CWM=',
+   1589 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1590 c       if(mype.eq.4) print*,'before ADJPPT'
+   1591       IF (DOADJPPT) THEN
+   1592         CALL ADJPPT
+   1593       ELSE
+   1594         if (mype.eq.0) then
+   1595         WRITE(6,*) " NO PRECIPITATION ASSIMILATION !!!"
+   1596         WRITE(6,*) " NO PRECIPITATION ASSIMILATION !!!"
+   1597         WRITE(0,*) " NO PRECIPITATION ASSIMILATION !!!"
+   1598         WRITE(0,*) " NO PRECIPITATION ASSIMILATION !!!"
+   1599         end if
+   1600       END IF
+   1601         call exitt('ADJPPT')
+   1602 c     if(mype.eq.mchk)print*,'ichk,jchk,lchk,ADJPPT,Q=',
+   1603 c    *   ichk,jchk,lchk,Q(ichk,jchk,lchk)
+   1604       if(mype.eq.mchk)print*,'ichk,jchk,lchk,ADJPPT,T=',
+
+Page 16          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1605      *   ichk,jchk,lchk,T(ichk,jchk,lchk)
+   1606 c     if(mype.eq.mchk)
+   1607 c    *   print*,'ichk,jchk,lchk,ADJPPT,CWM=',
+   1608 c    *   ichk,jchk,lchk,CWM(ichk,jchk,lchk)
+   1609 c       if(mype.eq.4) print*,'after ADJPPT'
+   1610         pptadj_tim=pptadj_tim+timef()-btim
+   1611       ENDIF
+   1612 C-----------------------------------------------------------------------
+   1613 C--------IS IT TIME FOR A CHECK POINT ON THE MODEL HISTORY FILE?--------
+   1614 C-----------------------------------------------------------------------
+   1615 c     if(mype.eq.4) print*,'before CHKOUT'
+   1616       IF(NTSD.GT.NSTART+1)THEN
+   1617         btim=timef()
+   1618         CALL CHKOUT
+   1619         chkout_tim=chkout_tim+timef()-btim
+   1620       ENDIF
+   1621 C-----------------------------------------------------------------------
+   1622 C--------CLEAN UP AFTER RESTART-----------------------------------------
+   1623 C-----------------------------------------------------------------------
+   1624       IF(RESTRT)THEN
+   1625         RESTRT=.FALSE.
+   1626       ENDIF
+   1627 C-----------------------------------------------------------------------
+   1628       IF(NTSD.LT.NTSTM)GO TO 2000
+   1629 C***********************************************************************
+   1630 C********EXIT FROM THE TIME LOOP****************************************
+   1631 C***********************************************************************
+   1632 C
+   1633  2005 continue
+   1634       tot2_tim=timef()-btimx
+   1635       tot_tim=mpp_tim+init_tim+goss_tim+radtn_tim+chkout_tim+
+   1636      1        divhoa_tim+pdte_tim+vtadv_tim+pdnew_tim+bocoh_tim+
+   1637      2        pgcor_tim+ddamp_tim+bocov_tim+rdtemp_tim+hdiff_tim+
+   1638      3        hzadv_tim+hzadv2_tim+turbl_tim+gscond_tim+cucnvc_tim+
+   1639      4        precpd_tim+exch_tim
+   1640 cyl
+   1641      5       +pptadj_tim
+   1642 cyl
+   1643 C
+   1644       if(mype.eq.0)then
+   1645         pct=mpp_tim/tot_tim*1.e2
+   1646         write(6,*)' mpp=',mpp_tim*1.e-3,'    pct=',pct
+   1647         pct=init_tim/tot_tim*1.e2
+   1648         write(6,*)' init=',init_tim*1.e-3,'   pct=',pct
+   1649         pct=goss_tim/tot_tim*1.e2
+   1650         write(6,*)' goss=',goss_tim*1.e-3,'   pct=',pct
+   1651         pct=radtn_tim/tot_tim*1.e2
+   1652         write(6,*)' radtn=',radtn_tim*1.e-3,'  pct=',pct
+   1653         pct=chkout_tim/tot_tim*1.e2
+   1654         write(6,*)' chkout=',chkout_tim*1.e-3,' pct=',pct
+   1655         pct=divhoa_tim/tot_tim*1.e2
+   1656         write(6,*)' divhoa=',divhoa_tim*1.e-3,' pct=',pct
+   1657         pct=pdte_tim/tot_tim*1.e2
+   1658         write(6,*)' pdte=',pdte_tim*1.e-3,'   pct=',pct
+   1659         pct=vtadv_tim/tot_tim*1.e2
+   1660         write(6,*)' vtadv=',vtadv_tim*1.e-3,'  pct=',pct
+   1661         pct=pdnew_tim/tot_tim*1.e2
+
+Page 17          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1662         write(6,*)' pdnew=',pdnew_tim*1.e-3,'  pct=',pct
+   1663         pct=bocoh_tim/tot_tim*1.e2
+   1664         write(6,*)' bocoh=',bocoh_tim*1.e-3,'  pct=',pct
+   1665         pct=pgcor_tim/tot_tim*1.e2
+   1666         write(6,*)' pgcor=',pgcor_tim*1.e-3,'  pct=',pct
+   1667         pct=ddamp_tim/tot_tim*1.e2
+   1668         write(6,*)' ddamp=',ddamp_tim*1.e-3,'  pct=',pct
+   1669         pct=bocov_tim/tot_tim*1.e2
+   1670         write(6,*)' bocov=',bocov_tim*1.e-3,'  pct=',pct
+   1671         pct=rdtemp_tim/tot_tim*1.e2
+   1672         write(6,*)' rdtemp=',rdtemp_tim*1.e-3,' pct=',pct
+   1673         pct=hdiff_tim/tot_tim*1.e2
+   1674         write(6,*)' hdiff=',hdiff_tim*1.e-3,'  pct=',pct
+   1675         pct=hzadv_tim/tot_tim*1.e2
+   1676         write(6,*)' hzadv=',hzadv_tim*1.e-3,'  pct=',pct
+   1677         pct=hzadv2_tim/tot_tim*1.e2
+   1678         write(6,*)' hzadv2=',hzadv2_tim*1.e-3,' pct=',pct
+   1679         pct=turbl_tim/tot_tim*1.e2
+   1680         write(6,*)' turbl=',turbl_tim*1.e-3,'  pct=',pct
+   1681         pct=gscond_tim/tot_tim*1.e2
+   1682         write(6,*)' gscond=',gscond_tim*1.e-3,' pct=',pct
+   1683         pct=cucnvc_tim/tot_tim*1.e2
+   1684         write(6,*)' cucnvc=',cucnvc_tim*1.e-3,' pct=',pct
+   1685         pct=precpd_tim/tot_tim*1.e2
+   1686         write(6,*)' precpd=',precpd_tim*1.e-3,' pct=',pct
+   1687 cyl
+   1688         pct=pptadj_tim/tot_tim*1.e2
+   1689         write(6,*)' pptadj=',pptadj_tim*1.e-3,' pct=',pct
+   1690 cyl
+   1691         pct=exch_tim/tot_tim*1.e2
+   1692         write(6,*)' exch=',exch_tim*1.e-3,'   pct=',pct
+   1693         write(6,*)' total=',tot_tim*1.e-3
+   1694         write(6,*)' total2=',tot2_tim*1.e-3
+   1695       endif
+   1696 C----------------------------------------------------------------------
+   1697 C
+   1698 C***  WE MUST NOW SHUT DOWN THE I/O SERVERS
+   1699 C***  THIS IS DONE BY SENDING A -999 TO MPI TASK 0 OF EACH SERVER GROUP
+   1700 C
+   1701       IF(MYPE.EQ.0)THEN
+   1702         DO I=1,IQUILT_GROUP
+   1703           CALL MPI_SEND(-999,1,MPI_INTEGER,0,0,
+   1704      *                  MPI_COMM_INTER_ARRAY(I),IER)
+   1705         ENDDO
+   1706       ENDIF
+   1707 C
+   1708 C----------------------------------------------------------------------
+   1709 C----------------------------------------------------------------------
+   1710       ENDIF    !  ENDIF ON TASKS FOR MODEL INTEGRATION VS I/O SERVING
+   1711 C----------------------------------------------------------------------
+   1712 C----------------------------------------------------------------------
+   1713 C
+   1714       CALL MPI_BARRIER(MPI_COMM_WORLD,IERR)
+   1715 C
+   1716       IF(MYPE.EQ.0) THEN 
+   1717         CALL W3TAGE('ETAFCST ')
+   1718       ENDIF
+
+Page 18          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+   1719 C
+   1720 c     IF(MYPE.EQ.NPES)THEN
+   1721 c       CALL SUMMARY()
+   1722 c     ENDIF
+   1723 C
+   1724       CALL MPI_FINALIZE(IERR)
+   1725 C----------------------------------------------------------------------
+   1726                             STOP
+   1727                             END
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ MAIN__             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  1136                                                           1135                              
+ 2000                       Label  1147                                                           1628                              
+ 2001                       Label  1151                                                           1149,1150                         
+ 2005                       Label  1633                                                                                             
+ ADJPPT                     Subr   1592                                                           1592                              
+ BBTIM                      Local  1092     R(4)            4           scalar                    1092,1095                         
+ BOCOH                      Subr   1325                                                           1325                              
+ BOCOH_TIM                  Local  1051     R(4)            4           scalar                    1051,1335,1636,1663,1664          
+ BOCOV                      Subr   1397                                                           1397                              
+ BOCOV_TIM                  Local  1052     R(4)            4           scalar                    1052,1406,1637,1669,1670          
+ BTIM                       Local  1084     R(4)            4           scalar                    1084,1086,1100,1105,1107,1156,1158
+                                                                                                  ,1216,1227,1238,1249,1255,1266,127
+                                                                                                  3,1275,1277,1288,1290,1292,1299,13
+                                                                                                  10,1323,1335,1344,1346,1348,1359,1
+                                                                                                  361,1363,1370,1372,1374,1385,1391,
+                                                                                                  1393,1395,1406,1417,1428,1434,1437
+                                                                                                  ,1439,1450,1457,1460,1462,1473,147
+                                                                                                  5,1477,1481,1491,1507,1509,1511,15
+                                                                                                  22,1528,1539,1545,1556,1562,1573,1
+                                                                                                  579,1610,1617,1619                
+ BTIMX                      Local  1083     R(4)            4           scalar                    1083,1634                         
+ CHKOUT                     Subr   1157                                                           1157,1618                         
+ CHKOUT_TIM                 Local  1053     R(4)            4           scalar                    1053,1158,1619,1635,1653,1654     
+ CHKSNOW                    Subr   1581                                                           1581                              
+ CLDWTR                     Common 936                                  3447720  SAVE                                               
+ CONTIN                     Common 886                                  12999420 SAVE                                               
+ CTLBLK                     Common 878                                  112      SAVE                                               
+ CUCNVC                     Subr   1547                                                           1547                              
+ CUCNVC_TIM                 Local  1054     R(4)            4           scalar                    1054,1556,1638,1683,1684          
+ DDAMP                      Subr   1376                                                           1376                              
+ DDAMP_TIM                  Local  1055     R(4)            4           scalar                    1055,1385,1637,1667,1668          
+ DIVHOA                     Subr   1239                                                           1239                              
+ DIVHOA_TIM                 Local  1056     R(4)            4           scalar                    1056,1249,1636,1655,1656          
+ DOADJPPT                   Local  993      L(4)            4           scalar                    994,1139,1591                     
+ EBU                        Prog   2                                                                                                
+
+Page 19          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ENVAR                      Local  992      CHAR            4           scalar                    1132,1133,1134,1135,1578          
+ EXCH                       Local  214                                  scalar                    1236,1274,1291,1345,1362,1371,1392
+                                                                                                  ,1435,1436,1458,1459,1476,1508    
+ EXCH0                      Subr   215                                                            1362                              
+ EXCH00                     Subr   215                                                                                              
+ EXCH0001111                Subr   215                                                            1508                              
+ EXCH01                     Subr   215                                                                                              
+ EXCH011                    Subr   215                                                            1345                              
+ EXCH1                      Subr   216                                                            1274,1436,1459                    
+ EXCH11                     Subr   216                                                            1392                              
+ EXCH111                    Subr   216                                                            1458                              
+ EXCH1111                   Subr   216                                                            1236,1371,1435,1476               
+ EXCH11111                  Subr   216                                                            1291                              
+ EXCH111111                 Subr   217                                                                                              
+ EXCHM                      Module 213                                                            213                               
+ EXITT                      Subr   1094                                                           1094,1217,1219,1248,1265,1287,1309
+                                                                                                  ,1333,1351,1377,1398,1420,1442,147
+                                                                                                  2,1490,1514,1538,1548,1572,1601   
+ FNAME                      Local  983      CHAR            10          scalar                                                      
+ GET_ENVIRONMENT_VARIABLE   Intrin 1132                                                           1132                              
+ GLB_TABLE                  Common 845                                  128      SAVE                                               
+ GLOB_TEMP                  Local  982      R(4)            4     3     4127355                                                     
+ GOSSIP                     Subr   1106                                                           1106                              
+ GOSS_TIM                   Local  1058     R(4)            4           scalar                    1058,1107,1635,1649,1650          
+ GSCOND                     Subr   1530                                                           1530                              
+ GSCOND_TIM                 Local  1059     R(4)            4           scalar                    1059,1539,1638,1681,1682          
+ HDIFF                      Subr   1441                                                           1441                              
+ HDIFF_TIM                  Local  1060     R(4)            4           scalar                    1060,1450,1637,1673,1674          
+ HZADV                      Subr   1464                                                           1464                              
+ HZADV2                     Subr   1482                                                           1482                              
+ HZADV2_TIM                 Local  1062     R(4)            4           scalar                    1062,1491,1638,1677,1678          
+ HZADV_TIM                  Local  1061     R(4)            4           scalar                    1061,1473,1638,1675,1676          
+ I                          Local  1702     I(4)            4           scalar                    1702,1704                         
+ ICHK                       Local  1033     I(4)            4           scalar                    1033,1223,1243,1261,1283,1305,1329
+                                                                                                  ,1355,1381,1402,1424,1446,1468,148
+                                                                                                  6,1518,1534,1552,1568,1586,1605   
+ IDIM1                      Param  242      I(4)            4           scalar                    887,888,889,890,891,897,899,900,90
+                                                                                                  1,907,908,909,910,911,912,913,914,
+                                                                                                  915,916,917,918,919,920,921,922,92
+                                                                                                  3,925,930,937,939,956,957,958,959,
+                                                                                                  960,961,962,963,964,965,966,974,97
+                                                                                                  5,977,978,979                     
+ IDIM2                      Param  242      I(4)            4           scalar                    887,888,889,890,891,897,899,900,90
+                                                                                                  1,907,908,909,910,911,912,913,914,
+                                                                                                  915,916,917,918,919,920,921,922,92
+                                                                                                  3,925,930,937,939,956,957,958,959,
+                                                                                                  960,961,962,963,964,965,966,974,97
+                                                                                                  5,977,978,979                     
+ IER                        Local  1704     I(4)            4           scalar                    1704                              
+ IERR                       Local  1714     I(4)            4           scalar                    1714,1724                         
+ IEXCH                      Subr   217                                                                                              
+ IGSTL                      Param  237      I(4)            4           scalar                    242                               
+ IGSTR                      Param  237      I(4)            4           scalar                    242                               
+ IM                         Param  226      I(4)            4           scalar                    239,242,851,852,853,854,855,859,86
+                                                                                                  0,865,982                         
+
+Page 20          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ INIT                       Subr   1093                                                           1093                              
+ INIT_TIM                   Local  989      R(4)            4           scalar                    1063,1095,1635,1647,1648          
+ INPES                      Param  234      I(4)            4           scalar                    239,242,835,836,837,846,847,1005,1
+                                                                                                  007                               
+ ITAIL                      Param  239      I(4)            4           scalar                                                      
+ ITB                        Param  873      I(4)            4           scalar                    953,968                           
+ ITBQ                       Param  873      I(4)            4           scalar                    954,968                           
+ JCHK                       Local  1034     I(4)            4           scalar                    1034,1223,1243,1261,1283,1305,1329
+                                                                                                  ,1355,1381,1402,1424,1446,1468,148
+                                                                                                  6,1518,1534,1552,1568,1586,1605   
+ JDIM1                      Param  243      I(4)            4           scalar                    887,888,889,890,891,897,899,900,90
+                                                                                                  1,907,908,909,910,911,912,913,914,
+                                                                                                  915,916,917,918,919,920,921,922,92
+                                                                                                  3,925,930,937,939,956,957,958,959,
+                                                                                                  960,961,962,963,964,965,966,974,97
+                                                                                                  5,977,978,979                     
+ JDIM2                      Param  243      I(4)            4           scalar                    887,888,889,890,891,897,899,900,90
+                                                                                                  1,907,908,909,910,911,912,913,914,
+                                                                                                  915,916,917,918,919,920,921,922,92
+                                                                                                  3,925,930,937,939,956,957,958,959,
+                                                                                                  960,961,962,963,964,965,966,974,97
+                                                                                                  5,977,978,979                     
+ JGSTL                      Param  238      I(4)            4           scalar                    243                               
+ JGSTR                      Param  238      I(4)            4           scalar                    243                               
+ JM                         Param  226      I(4)            4           scalar                    240,243,851,852,853,854,855,859,86
+                                                                                                  0,865,982                         
+ JNPES                      Param  234      I(4)            4           scalar                    240,243,835,836,837,846,847,1005,1
+                                                                                                  007                               
+ JTAIL                      Param  240      I(4)            4           scalar                                                      
+ JTB                        Param  873      I(4)            4           scalar                    953,968                           
+ JTBQ                       Param  873      I(4)            4           scalar                    968                               
+ LCHK                       Local  1035     I(4)            4           scalar                    1035,1223,1243,1261,1283,1305,1329
+                                                                                                  ,1355,1381,1402,1424,1446,1468,148
+                                                                                                  6,1518,1534,1552,1568,1586,1605   
+ LM                         Param  226      I(4)            4           scalar                    860,888,889,890,891,899,900,925,93
+                                                                                                  7,938,942,952,977,978,982,1236,127
+                                                                                                  4,1291,1345,1371,1392,1435,1436,14
+                                                                                                  58,1459,1476,1508                 
+ LP1                        Param  942      I(4)            4           scalar                    952                               
+ LSM                        Param  226      I(4)            4           scalar                                                      
+ MAPPINGS                   Common 864                                  5024     SAVE                                               
+ MASKS                      Common 973                                  6894720  SAVE                                               
+ MCHK                       Local  1036     I(4)            4           scalar                    1036,1222,1242,1260,1282,1304,1328
+                                                                                                  ,1354,1380,1401,1423,1445,1467,148
+                                                                                                  5,1517,1533,1551,1567,1585,1604   
+ MOD                        Func   1215                                 scalar                    1215,1272,1369,1456,1506,1527,1544
+                                                                                                  ,1561,1578                        
+ MPIFCMB5                   Common 796                                  4        SAVE                                               
+ MPIFCMB9                   Common 797                                  4        SAVE                                               
+ MPIPRIV1                   Common 801                                  28       SAVE                                               
+ MPIPRIV2                   Common 803                                  24       SAVE                                               
+ MPIPRIVC                   Common 806                                  2        SAVE                                               
+ MPI_2DOUBLE_PRECISION      Param  542      I(4)            4           scalar                                                      
+ MPI_2INT                   Param  626      I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  540      I(4)            4           scalar                                                      
+
+Page 21          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_2REAL                  Param  544      I(4)            4           scalar                                                      
+ MPI_ADDRESS_KIND           Param  578      I(4)            4           scalar                                                      
+ MPI_AINT                   Param  656      I(4)            4           scalar                                                      
+ MPI_ANY_SOURCE             Param  508      I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  510      I(4)            4           scalar                                                      
+ MPI_APPNUM                 Param  472      I(4)            4           scalar                                                      
+ MPI_ASYNC_PROTECTS_NONBLOC                                                                                                         
+ KING                       Param  778      L(4)            4           scalar                                                      
+ MPI_BAND                   Param  416      I(4)            4           scalar                                                      
+ MPI_BARRIER                Subr   1714                                                           1714                              
+ MPI_BOR                    Param  420      I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  504      I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  424      I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  548      I(4)            4           scalar                                                      
+ MPI_CART                   Param  516      I(4)            4           scalar                                                      
+ MPI_CHAR                   Param  586      I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  546      I(4)            4           scalar                                                      
+ MPI_COMBINER_CONTIGUOUS    Param  674      I(4)            4           scalar                                                      
+ MPI_COMBINER_DARRAY        Param  696      I(4)            4           scalar                                                      
+ MPI_COMBINER_DUP           Param  672      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_COMPLEX   Param  700      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_INTEGER   Param  702      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_REAL      Param  698      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED      Param  686      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_BLOC                                                                                                         
+ K                          Param  706      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_INTE                                                                                                         
+ GER                        Param  684      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR       Param  680      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR_INTEG                                                                                                         
+ ER                         Param  678      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED       Param  682      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED_BLOCK Param  688      I(4)            4           scalar                                                      
+ MPI_COMBINER_NAMED         Param  670      I(4)            4           scalar                                                      
+ MPI_COMBINER_RESIZED       Param  704      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT        Param  692      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT_INTEGE                                                                                                         
+ R                          Param  690      I(4)            4           scalar                                                      
+ MPI_COMBINER_SUBARRAY      Param  694      I(4)            4           scalar                                                      
+ MPI_COMBINER_VECTOR        Param  676      I(4)            4           scalar                                                      
+ MPI_COMM_DUP_FN            Subr   785                                  scalar                                                      
+ MPI_COMM_NULL              Param  440      I(4)            4           scalar                                                      
+ MPI_COMM_NULL_COPY_FN      Subr   786                                  scalar                                                      
+ MPI_COMM_NULL_DELETE_FN    Subr   785                                  scalar                                                      
+ MPI_COMM_SELF              Param  436      I(4)            4           scalar                                                      
+ MPI_COMM_TYPE_SHARED       Param  724      I(4)            4           scalar                                                      
+ MPI_COMM_WORLD             Param  434      I(4)            4           scalar                    1714                              
+ MPI_COMPLEX                Param  528      I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  574      I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  576      I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  572      I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  388      I(4)            4           scalar                                                      
+ MPI_CONVERSION_FN_NULL     Subr   791                                  scalar                                                      
+ MPI_COUNT                  Param  660      I(4)            4           scalar                                                      
+ MPI_COUNT_KIND             Param  582      I(4)            4           scalar                                                      
+
+Page 22          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_CXX_BOOL               Param  662      I(4)            4           scalar                                                      
+ MPI_CXX_DOUBLE_COMPLEX     Param  666      I(4)            4           scalar                                                      
+ MPI_CXX_FLOAT_COMPLEX      Param  664      I(4)            4           scalar                                                      
+ MPI_CXX_LONG_DOUBLE_COMPLE                                                                                                         
+ X                          Param  668      I(4)            4           scalar                                                      
+ MPI_C_BOOL                 Param  646      I(4)            4           scalar                                                      
+ MPI_C_COMPLEX              Param  650      I(4)            4           scalar                                                      
+ MPI_C_DOUBLE_COMPLEX       Param  652      I(4)            4           scalar                                                      
+ MPI_C_FLOAT_COMPLEX        Param  648      I(4)            4           scalar                                                      
+ MPI_C_LONG_DOUBLE_COMPLEX  Param  654      I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  450      I(4)            4           scalar                    565,663,665,667,669               
+ MPI_DISPLACEMENT_CURRENT   Param  774      I(8)            8           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  766      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  768      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  772      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  770      I(4)            4           scalar                                                      
+ MPI_DIST_GRAPH             Param  518      I(4)            4           scalar                                                      
+ MPI_DOUBLE                 Param  608      I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  530      I(4)            4           scalar                                                      
+ MPI_DOUBLE_INT             Param  620      I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  536      I(4)            4           scalar                                                      
+ MPI_DUP_FN                 Subr   782                                  scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  454      I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  255      I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  382      I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  384      I(4)            4           scalar                                                      
+ MPI_ERR_ACCESS             Param  368      I(4)            4           scalar                                                      
+ MPI_ERR_AMODE              Param  334      I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  344      I(4)            4           scalar                                                      
+ MPI_ERR_ASSERT             Param  278      I(4)            4           scalar                                                      
+ MPI_ERR_BAD_FILE           Param  340      I(4)            4           scalar                                                      
+ MPI_ERR_BASE               Param  378      I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  296      I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  376      I(4)            4           scalar                                                      
+ MPI_ERR_CONVERSION         Param  358      I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  288      I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  266      I(4)            4           scalar                                                      
+ MPI_ERR_DISP               Param  324      I(4)            4           scalar                                                      
+ MPI_ERR_DUP_DATAREP        Param  354      I(4)            4           scalar                                                      
+ MPI_ERR_FILE               Param  314      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_EXISTS        Param  366      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_IN_USE        Param  360      I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  276      I(4)            4           scalar                                                      
+ MPI_ERR_INFO               Param  282      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_KEY           Param  312      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_NOKEY         Param  356      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_VALUE         Param  304      I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  332      I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  306      I(4)            4           scalar                                                      
+ MPI_ERR_IO                 Param  292      I(4)            4           scalar                                                      
+ MPI_ERR_KEYVAL             Param  336      I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  372      I(4)            4           scalar                                                      
+ MPI_ERR_LOCKTYPE           Param  352      I(4)            4           scalar                                                      
+ MPI_ERR_NAME               Param  272      I(4)            4           scalar                                                      
+ MPI_ERR_NOT_SAME           Param  290      I(4)            4           scalar                                                      
+
+Page 23          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_NO_MEM             Param  302      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SPACE           Param  294      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SUCH_FILE       Param  364      I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  268      I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  320      I(4)            4           scalar                                                      
+ MPI_ERR_PENDING            Param  308      I(4)            4           scalar                                                      
+ MPI_ERR_PORT               Param  298      I(4)            4           scalar                                                      
+ MPI_ERR_QUOTA              Param  270      I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  374      I(4)            4           scalar                                                      
+ MPI_ERR_READ_ONLY          Param  316      I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  318      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_ATTACH         Param  300      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_CONFLICT       Param  286      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_FLAVOR         Param  274      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_RANGE          Param  310      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SHARED         Param  370      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SYNC           Param  350      I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  338      I(4)            4           scalar                                                      
+ MPI_ERR_SERVICE            Param  362      I(4)            4           scalar                                                      
+ MPI_ERR_SIZE               Param  284      I(4)            4           scalar                                                      
+ MPI_ERR_SPAWN              Param  326      I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  346      I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  348      I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  322      I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  342      I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  330      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_DATARE                                                                                                         
+ P                          Param  280      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_OPERAT                                                                                                         
+ ION                        Param  328      I(4)            4           scalar                                                      
+ MPI_ERR_WIN                Param  380      I(4)            4           scalar                                                      
+ MPI_FILE_NULL              Param  444      I(4)            4           scalar                                                      
+ MPI_FINALIZE               Subr   1724                                                           1724                              
+ MPI_FLOAT                  Param  606      I(4)            4           scalar                                                      
+ MPI_FLOAT_INT              Param  618      I(4)            4           scalar                                                      
+ MPI_GRAPH                  Param  514      I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  438      I(4)            4           scalar                                                      
+ MPI_GROUP_NULL             Param  446      I(4)            4           scalar                                                      
+ MPI_HOST                   Param  462      I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  386      I(4)            4           scalar                                                      
+ MPI_INFO_ENV               Param  458      I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  456      I(4)            4           scalar                                                      
+ MPI_INT                    Param  598      I(4)            4           scalar                                                      
+ MPI_INT16_T                Param  632      I(4)            4           scalar                                                      
+ MPI_INT32_T                Param  634      I(4)            4           scalar                                                      
+ MPI_INT64_T                Param  636      I(4)            4           scalar                                                      
+ MPI_INT8_T                 Param  630      I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  538      I(4)            4           scalar                    1703                              
+ MPI_INTEGER1               Param  556      I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  564      I(4)            4           scalar                                                      
+ MPI_INTEGER2               Param  558      I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  560      I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  562      I(4)            4           scalar                                                      
+ MPI_INTEGER_KIND           Param  584      I(4)            4           scalar                                                      
+ MPI_IO                     Param  464      I(4)            4           scalar                                                      
+
+Page 24          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_KEYVAL_INVALID         Param  502      I(4)            4           scalar                                                      
+ MPI_LAND                   Param  414      I(4)            4           scalar                                                      
+ MPI_LASTUSEDCODE           Param  470      I(4)            4           scalar                                                      
+ MPI_LB                     Param  552      I(4)            4           scalar                                                      
+ MPI_LOCK_EXCLUSIVE         Param  524      I(4)            4           scalar                                                      
+ MPI_LOCK_SHARED            Param  526      I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  532      I(4)            4           scalar                                                      
+ MPI_LONG                   Param  602      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE            Param  610      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE_INT        Param  628      I(4)            4           scalar                                                      
+ MPI_LONG_INT               Param  622      I(4)            4           scalar                                                      
+ MPI_LONG_LONG              Param  616      I(4)            4           scalar                                                      
+ MPI_LONG_LONG_INT          Param  612      I(4)            4           scalar                                                      
+ MPI_LOR                    Param  418      I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  422      I(4)            4           scalar                                                      
+ MPI_MAX                    Param  406      I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  428      I(4)            4           scalar                                                      
+ MPI_MAX_DATAREP_STRING     Param  496      I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  484      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  490      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  492      I(4)            4           scalar                                                      
+ MPI_MAX_LIBRARY_VERSION_ST                                                                                                         
+ RING                       Param  498      I(4)            4           scalar                                                      
+ MPI_MAX_OBJECT_NAME        Param  488      I(4)            4           scalar                                                      
+ MPI_MAX_PORT_NAME          Param  486      I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  494      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NO_PROC        Param  728      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NULL           Param  726      I(4)            4           scalar                                                      
+ MPI_MIN                    Param  408      I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  426      I(4)            4           scalar                                                      
+ MPI_MODE_APPEND            Param  752      I(4)            4           scalar                                                      
+ MPI_MODE_CREATE            Param  748      I(4)            4           scalar                                                      
+ MPI_MODE_DELETE_ON_CLOSE   Param  744      I(4)            4           scalar                                                      
+ MPI_MODE_EXCL              Param  750      I(4)            4           scalar                                                      
+ MPI_MODE_NOCHECK           Param  714      I(4)            4           scalar                                                      
+ MPI_MODE_NOPRECEDE         Param  720      I(4)            4           scalar                                                      
+ MPI_MODE_NOPUT             Param  718      I(4)            4           scalar                                                      
+ MPI_MODE_NOSTORE           Param  716      I(4)            4           scalar                                                      
+ MPI_MODE_NOSUCCEED         Param  722      I(4)            4           scalar                                                      
+ MPI_MODE_RDONLY            Param  738      I(4)            4           scalar                                                      
+ MPI_MODE_RDWR              Param  740      I(4)            4           scalar                                                      
+ MPI_MODE_SEQUENTIAL        Param  754      I(4)            4           scalar                                                      
+ MPI_MODE_UNIQUE_OPEN       Param  746      I(4)            4           scalar                                                      
+ MPI_MODE_WRONLY            Param  742      I(4)            4           scalar                                                      
+ MPI_NO_OP                  Param  432      I(4)            4           scalar                                                      
+ MPI_NULL_COPY_FN           Subr   782                                  scalar                                                      
+ MPI_NULL_DELETE_FN         Subr   782                                  scalar                                                      
+ MPI_OFFSET                 Param  658      I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  580      I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  448      I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  762      I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  764      I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  554      I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  506      I(4)            4           scalar                                                      
+ MPI_PROD                   Param  412      I(4)            4           scalar                                                      
+
+Page 25          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_REAL                   Param  534      I(4)            4           scalar                                                      
+ MPI_REAL16                 Param  570      I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  566      I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  568      I(4)            4           scalar                                                      
+ MPI_REPLACE                Param  430      I(4)            4           scalar                                                      
+ MPI_REQUEST_NULL           Param  452      I(4)            4           scalar                                                      
+ MPI_ROOT                   Param  512      I(4)            4           scalar                                                      
+ MPI_SEEK_CUR               Param  758      I(4)            4           scalar                                                      
+ MPI_SEEK_END               Param  760      I(4)            4           scalar                                                      
+ MPI_SEEK_SET               Param  756      I(4)            4           scalar                                                      
+ MPI_SEND                   Subr   1703                                                           1703                              
+ MPI_SHORT                  Param  594      I(4)            4           scalar                                                      
+ MPI_SHORT_INT              Param  624      I(4)            4           scalar                                                      
+ MPI_SIGNED_CHAR            Param  588      I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  390      I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  255      I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  257      I(4)            4           scalar                    259,260                           
+ MPI_SUBARRAYS_SUPPORTED    Param  776      L(4)            4           scalar                                                      
+ MPI_SUBVERSION             Param  522      I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  264      I(4)            4           scalar                                                      
+ MPI_SUM                    Param  410      I(4)            4           scalar                                                      
+ MPI_TAG                    Param  255      I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  460      I(4)            4           scalar                                                      
+ MPI_THREAD_FUNNELED        Param  732      I(4)            4           scalar                                                      
+ MPI_THREAD_MULTIPLE        Param  736      I(4)            4           scalar                                                      
+ MPI_THREAD_SERIALIZED      Param  734      I(4)            4           scalar                                                      
+ MPI_THREAD_SINGLE          Param  730      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_COMPLEX      Param  712      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_INTEGER      Param  710      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_REAL         Param  708      I(4)            4           scalar                                                      
+ MPI_TYPE_DUP_FN            Subr   789                                  scalar                                                      
+ MPI_TYPE_NULL_COPY_FN      Subr   790                                  scalar                                                      
+ MPI_TYPE_NULL_DELETE_FN    Subr   789                                  scalar                                                      
+ MPI_UB                     Param  550      I(4)            4           scalar                                                      
+ MPI_UINT16_T               Param  640      I(4)            4           scalar                                                      
+ MPI_UINT32_T               Param  642      I(4)            4           scalar                                                      
+ MPI_UINT64_T               Param  644      I(4)            4           scalar                                                      
+ MPI_UINT8_T                Param  638      I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  500      I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  392      I(4)            4           scalar                                                      
+ MPI_UNIVERSE_SIZE          Param  468      I(4)            4           scalar                                                      
+ MPI_UNSIGNED               Param  600      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_CHAR          Param  590      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG          Param  604      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG_LONG     Param  614      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_SHORT         Param  596      I(4)            4           scalar                                                      
+ MPI_VERSION                Param  520      I(4)            4           scalar                                                      
+ MPI_WCHAR                  Param  592      I(4)            4           scalar                                                      
+ MPI_WIN_BASE               Param  474      I(4)            4           scalar                                                      
+ MPI_WIN_CREATE_FLAVOR      Param  480      I(4)            4           scalar                                                      
+ MPI_WIN_DISP_UNIT          Param  478      I(4)            4           scalar                                                      
+ MPI_WIN_DUP_FN             Subr   787                                  scalar                                                      
+ MPI_WIN_FLAVOR_ALLOCATE    Param  396      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_CREATE      Param  394      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_DYNAMIC     Param  398      I(4)            4           scalar                                                      
+
+Page 26          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_WIN_FLAVOR_SHARED      Param  400      I(4)            4           scalar                                                      
+ MPI_WIN_MODEL              Param  482      I(4)            4           scalar                                                      
+ MPI_WIN_NULL               Param  442      I(4)            4           scalar                                                      
+ MPI_WIN_NULL_COPY_FN       Subr   788                                  scalar                                                      
+ MPI_WIN_NULL_DELETE_FN     Subr   787                                  scalar                                                      
+ MPI_WIN_SEPARATE           Param  402      I(4)            4           scalar                                                      
+ MPI_WIN_SIZE               Param  476      I(4)            4           scalar                                                      
+ MPI_WIN_UNIFIED            Param  404      I(4)            4           scalar                                                      
+ MPI_WTICK                  Func   783      R(8)            8           scalar                                                      
+ MPI_WTIME                  Func   783      R(8)            8           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  466      I(4)            4           scalar                                                      
+ MPPCOM                     Common 809                                  1464     SAVE                                               
+ MPPINIT                    Subr   1085                                                           1085                              
+ MPP_TIM                    Local  989      R(4)            4           scalar                    1049,1086,1635,1645,1646          
+ PCT                        Local  1645     R(4)            4           scalar                    1645,1646,1647,1648,1649,1650,1651
+                                                                                                  ,1652,1653,1654,1655,1656,1657,165
+                                                                                                  8,1659,1660,1661,1662,1663,1664,16
+                                                                                                  65,1666,1667,1668,1669,1670,1671,1
+                                                                                                  672,1673,1674,1675,1676,1677,1678,
+                                                                                                  1679,1680,1681,1682,1683,1684,1685
+                                                                                                  ,1686,1688,1689,1691,1692         
+ PDNEW                      Subr   1301                                                           1301                              
+ PDNEW_TIM                  Local  1065     R(4)            4           scalar                    1065,1310,1636,1661,1662          
+ PDTE                       Subr   1257                                                           1257                              
+ PDTE_TIM                   Local  1066     R(4)            4           scalar                    1066,1266,1636,1657,1658          
+ PGCOR                      Subr   1350                                                           1350                              
+ PGCOR_TIM                  Local  1067     R(4)            4           scalar                    1067,1359,1637,1665,1666          
+ PHYS                       Common 947                                  1788916  SAVE                                               
+ PMPI_WTICK                 Func   784      R(8)            8           scalar                                                      
+ PMPI_WTIME                 Func   784      R(8)            8           scalar                                                      
+ PPTADJ_TIM                 Local  1070     R(4)            4           scalar                    1070,1610,1641,1688,1689          
+ PRECPD                     Subr   1564                                                           1564                              
+ PRECPD_TIM                 Local  1068     R(4)            4           scalar                    1068,1573,1639,1685,1686          
+ PVRBLS                     Common 906                                  5530140  SAVE                                               
+ QUILT                      Subr   1042                                                           1042                              
+ RADTN                      Subr   1218                                                           1218                              
+ RADTN_TIM                  Local  1072     R(4)            4           scalar                    1072,1227,1635,1651,1652          
+ RDTEMP                     Subr   1419                                                           1419                              
+ RDTEMP_TIM                 Local  1073     R(4)            4           scalar                    1073,1428,1637,1671,1672          
+ READPCP                    Subr   1138                                                           1138                              
+ SETUP_SERVERS              Subr   1007                                                           1007                              
+ SINGLRST                   Local  876      L(4)            4           scalar                                                      
+ SRFILE                     Local  992      CHAR            7           scalar                    1135,1137                         
+ TEMPCOM                    Common 850                                  6603768  SAVE                                               
+ TIMEF                      Func   988      R(8)            8           scalar                    1083,1084,1086,1092,1095,1100,1105
+                                                                                                  ,1107,1156,1158,1216,1227,1238,124
+                                                                                                  9,1255,1266,1273,1275,1277,1288,12
+                                                                                                  90,1292,1299,1310,1323,1335,1344,1
+                                                                                                  346,1348,1359,1361,1363,1370,1372,
+                                                                                                  1374,1385,1391,1393,1395,1406,1417
+                                                                                                  ,1428,1434,1437,1439,1450,1457,146
+                                                                                                  0,1462,1473,1475,1477,1481,1491,15
+                                                                                                  07,1509,1511,1522,1528,1539,1545,1
+                                                                                                  556,1562,1573,1579,1610,1617,1619,
+                                                                                                  1634                              
+
+Page 27          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ TIMING                     Common 990                                  16                                                          
+ TOPO                       Common 858                                  17478548 SAVE                                               
+ TOT2_TIM                   Local  1634     R(4)            4           scalar                    1634,1694                         
+ TOT_TIM                    Local  1635     R(4)            4           scalar                    1635,1645,1647,1649,1651,1653,1655
+                                                                                                  ,1657,1659,1661,1663,1665,1667,166
+                                                                                                  9,1671,1673,1675,1677,1679,1681,16
+                                                                                                  83,1685,1688,1691,1693            
+ TURBL                      Subr   1513                                                           1513                              
+ TURBL_TIM                  Local  1077     R(4)            4           scalar                    1077,1522,1638,1679,1680          
+ UPADJPPT                   Local  994                                  scalar                    1140,1141                         
+ VRBLS                      Common 896                                  13143060 SAVE                                               
+ VTADV                      Subr   1279                                                           1279                              
+ VTADV_TIM                  Local  1078     R(4)            4           scalar                    1078,1288,1636,1659,1660          
+ W3TAGB                     Subr   1017                                                           1017                              
+ W3TAGE                     Subr   1717                                                           1717                              
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     1292760  2     17955    COM                                                 
+ ACPREC                     R(4)            4     1220940  2     17955    COM                                                 
+ AETA2                      R(4)            4     264      1     45       COM                                                 
+ AFSI                       R(4)            4     5458320  2     17955    COM                                                 
+ AKHS                       R(4)            4     646380   2     17955    COM                                                 
+ AKMS                       R(4)            4     574560   2     17955    COM                                                 
+ ALBASE                     R(4)            4     1009004  2     17955    COM                                                 
+ ALBEDO                     R(4)            4     1080824  2     17955    COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CLDEFI                     R(4)            4     1077300  2     17955    COM                                                 
+ CNVBOT                     R(4)            4     721724   2     17955    COM                                                 
+ CNVTOP                     R(4)            4     649904   2     17955    COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CUPREC                     R(4)            4     1364580  2     17955    COM                                                 
+ CWM                        R(4)            4     0        3     807975   COM              1476                               
+ CZEN                       R(4)            4     434444   2     17955    COM                                                 
+ CZMEAN                     R(4)            4     1296284  2     17955    COM                                                 
+ DETA2                      R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DIV                        R(4)            4     6607440  3     807975   COM              1371                               
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM              1149,1150                          
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ EPSR                       R(4)            4     75344    2     17955    COM                                                 
+ ETADT                      R(4)            4     9839340  3     790020   COM              1274                               
+ EXCH_TIM                   R(4)            4     12             scalar   COM              1057,1275,1292,1346,1363,1372,1393 
+                                                                                           ,1437,1460,1477,1509,1639,1691,169 
+                                                                                           2                                  
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     12999420 2     17955    COM                                                 
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+
+Page 28          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ GFFC                       R(4)            4     865364   2     17955    COM                                                 
+ GLAT                       R(4)            4     290804   2     17955    COM                                                 
+ GLON                       R(4)            4     362624   2     17955    COM                                                 
+ HBM2                       R(4)            4     6751080  2     17955    COM                                                 
+ HBM3                       R(4)            4     6822900  2     17955    COM                                                 
+ HBOT                       R(4)            4     578084   2     17955    COM                                                 
+ HDAC                       R(4)            4     1152644  2     17955    COM                                                 
+ HDACV                      R(4)            4     1224464  2     17955    COM                                                 
+ HTM                        R(4)            4     287280   3     807975   COM                                                 
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ HTOP                       R(4)            4     506264   2     17955    COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     620      1     8        COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDTAD                      I(4)            4     72             scalar   COM              1272,1456                          
+ IE_GLB_TABLE               I(4)            4     32       1     8        COM                                                 
+ IE_LOC_TABLE               I(4)            4     556      1     8        COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1064     1     100      COM              1011                               
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IQUILT_GROUP               I(4)            4     1060           scalar   COM              1010,1702                          
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     8        COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     8        COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     96       1     8        COM                                                 
+ JE_LOC_TABLE               I(4)            4     588      1     8        COM                                                 
+ JS_GLB_TABLE               I(4)            4     64       1     8        COM                                                 
+ JS_LOC_TABLE               I(4)            4     524      1     8        COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+
+Page 29          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ LC                         I(4)            4     3304080  2     17955    COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ MPI_ARGVS_NULL             CHAR            1     0        2     1        COM                                                 
+ MPI_ARGV_NULL              CHAR            1     1        1     1        COM                                                 
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_COMM_COMP              I(4)            4     652            scalar   COM              1012                               
+ MPI_COMM_INTER             I(4)            4     656            scalar   COM              1013                               
+ MPI_COMM_INTER_ARRAY       I(4)            4     660      1     100      COM              1014,1704                          
+ MPI_ERRCODES_IGNORE        I(4)            4     20       1     1        COM                                                 
+ MPI_IN_PLACE               I(4)            4     4              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     0        2     5        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     8        1     5        COM                                                 
+ MPI_UNWEIGHTED             I(4)            4     0              scalar   COM                                                 
+ MPI_WEIGHTS_EMPTY          I(4)            4     0              scalar   COM                                                 
+ MXSNAL                     R(4)            4     3524     2     17955    COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM                                                 
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM                                                 
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM                                                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM                                                 
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+
+Page 30          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM                                                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM                                                 
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM              1008,1016,1038,1133,1149,1150,1222 
+                                                                                           ,1242,1260,1282,1304,1328,1354,138 
+                                                                                           0,1401,1423,1445,1467,1485,1517,15 
+                                                                                           33,1551,1567,1585,1594,1604,1644,1 
+                                                                                           701,1716                           
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+
+Page 31          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM              1544                               
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NHB_TIM                    R(4)            4     4              scalar   COM              1064                               
+ NPES                       I(4)            4     4              scalar   COM              1009,1038                          
+ NPHS                       I(4)            4     88             scalar   COM              1506,1527,1561,1578                
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM              1215                               
+ NRADS                      I(4)            4     96             scalar   COM              1215                               
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM              1155,1616                          
+ NTDDMP                     I(4)            4     64             scalar   COM              1369                               
+ NTSD                       I(4)            4     52             scalar   COM              1148,1149,1150,1155,1215,1236,1272 
+                                                                                           ,1369,1456,1506,1527,1544,1561,157 
+                                                                                           8,1616,1628                        
+ NTSTM                      I(4)            4     56             scalar   COM              1628                               
+ OMGALF                     R(4)            4     3375540  3     807975   COM                                                 
+ PD                         R(4)            4     0        2     17955    COM              1345,1508                          
+ PDSL                       R(4)            4     0        2     17955    COM              1362                               
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ PREC                       R(4)            4     1149120  2     17955    COM                                                 
+ PSDT                       R(4)            4     71820    2     17955    COM                                                 
+ PSHLTR                     R(4)            4     2154600  2     17955    COM                                                 
+ PT2                        R(4)            4     4              scalar   COM                                                 
+ PTBL                       R(4)            4     1439924  2     10184    COM                                                 
+ Q                          R(4)            4     9767520  3     807975   COM              1236,1291,1345,1435,1476,1508      
+ Q10                        R(4)            4     1795500  2     17955    COM                                                 
+ Q2                         R(4)            4     2226420  3     807975   COM              1291,1436,1459                     
+ Q30                        R(4)            4     1508220  2     17955    COM                                                 
+ QS                         R(4)            4     502740   2     17955    COM                                                 
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ QSHLTR                     R(4)            4     2082780  2     17955    COM                                                 
+ QWBS                       R(4)            4     861840   2     17955    COM                                                 
+ QZ0                        R(4)            4     359100   2     17955    COM                                                 
+ RADIN                      R(4)            4     147164   2     17955    COM                                                 
+ RADOT                      R(4)            4     218984   2     17955    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RES                        R(4)            4     13071240 2     17955    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM              1624,1625                          
+ RES_TIM                    R(4)            4     8              scalar   COM              1074                               
+ RF                         R(4)            4     718200   2     17955    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RTOP                       R(4)            4     143640   3     807975   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SI                         R(4)            4     1005480  2     17955    COM                                                 
+
+Page 32          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ SICE                       R(4)            4     215460   2     17955    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     1368104  2     17955    COM                                                 
+ SM                         R(4)            4     143640   2     17955    COM                                                 
+ SNO                        R(4)            4     933660   2     17955    COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SR                         R(4)            4     3375900  2     17955    COM                                                 
+ SST                        R(4)            4     937184   2     17955    COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+ SURFCE_TIM                 R(4)            4     0              scalar   COM              1076                               
+ T                          R(4)            4     71820    3     807975   COM              1223,1236,1243,1261,1283,1291,1305 
+                                                                                           ,1329,1345,1355,1371,1381,1402,142 
+                                                                                           4,1435,1446,1458,1468,1486,1508,15 
+                                                                                           18,1534,1552,1568,1586,1605        
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TG                         R(4)            4     793544   2     17955    COM                                                 
+ TH10                       R(4)            4     1723680  2     17955    COM                                                 
+ TH30                       R(4)            4     1436400  2     17955    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ THS                        R(4)            4     430920   2     17955    COM                                                 
+ THZ0                       R(4)            4     287280   2     17955    COM                                                 
+ TSHLTR                     R(4)            4     2010960  2     17955    COM                                                 
+ TTBL                       R(4)            4     1480660  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     1521396  2     66880    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+ TWBS                       R(4)            4     790020   2     17955    COM                                                 
+ U                          R(4)            4     3303720  3     807975   COM              1236,1291,1371,1392,1435,1458,1476 
+                                                                                           ,1508                              
+ U00                        R(4)            4     3231900  2     17955    COM                                                 
+ U10                        R(4)            4     1867320  2     17955    COM                                                 
+ U30                        R(4)            4     1580040  2     17955    COM                                                 
+ UL                         R(4)            4     3303720  1     90       COM                                                 
+ USTAR                      R(4)            4     71820    2     17955    COM                                                 
+
+Page 33          Source Listing                  EBU
+2022-02-15 16:36 Symbol Table                    EBU.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ UZ0                        R(4)            4     143640   2     17955    COM              1508                               
+ V                          R(4)            4     6535620  3     807975   COM              1236,1291,1371,1392,1435,1458,1476 
+                                                                                           ,1508                              
+ V10                        R(4)            4     1939140  2     17955    COM                                                 
+ V30                        R(4)            4     1651860  2     17955    COM                                                 
+ VBM2                       R(4)            4     0        2     17955    COM                                                 
+ VBM3                       R(4)            4     71820    2     17955    COM                                                 
+ VTM                        R(4)            4     3519180  3     807975   COM                                                 
+ VZ0                        R(4)            4     215460   2     17955    COM              1508                               
+ Z0                         R(4)            4     0        2     17955    COM                                                 
+
+Page 34          Source Listing                  EBU
+2022-02-15 16:36 Subprograms/Common Blocks       EBU.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CLDWTR                     Common 936                                  3447720  SAVE                                               
+ CONTIN                     Common 886                                  12999420 SAVE                                               
+ CTLBLK                     Common 878                                  112      SAVE                                               
+ EBU                        Prog   2                                                                                                
+ GLB_TABLE                  Common 845                                  128      SAVE                                               
+ MAPPINGS                   Common 864                                  5024     SAVE                                               
+ MASKS                      Common 973                                  6894720  SAVE                                               
+ MPIFCMB5                   Common 796                                  4        SAVE                                               
+ MPIFCMB9                   Common 797                                  4        SAVE                                               
+ MPIPRIV1                   Common 801                                  28       SAVE                                               
+ MPIPRIV2                   Common 803                                  24       SAVE                                               
+ MPIPRIVC                   Common 806                                  2        SAVE                                               
+ MPPCOM                     Common 809                                  1464     SAVE                                               
+ PHYS                       Common 947                                  1788916  SAVE                                               
+ PVRBLS                     Common 906                                  5530140  SAVE                                               
+ TEMPCOM                    Common 850                                  6603768  SAVE                                               
+ TIMING                     Common 990                                  16                                                          
+ TOPO                       Common 858                                  17478548 SAVE                                               
+ VRBLS                      Common 896                                  13143060 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+
+Page 35          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+
+Page 36          Source Listing                  EBU
+2022-02-15 16:36                                 EBU.F
+
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : EBU.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

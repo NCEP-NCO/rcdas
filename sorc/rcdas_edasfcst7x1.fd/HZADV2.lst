@@ -1,0 +1,1910 @@
+Page 1           Source Listing                  HZADV2
+2022-02-15 16:37                                 /tmp/ifortTWYW2s.i
+
+      1 # 1 "HZADV2.F"
+      2 C&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+      3                             SUBROUTINE HZADV2
+      4 C     ******************************************************************
+      5 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      6 C                .      .    .
+      7 C SUBPROGRAM:    HZADV2      HORIZONTAL ADVECTION OF VAPOR AND CLOUD
+      8 C   PRGRMMR: JANJIC          ORG: W/NP22     DATE: 96-07-19
+      9 C
+     10 C ABSTRACT:
+     11 C     HZADV2 CALCULATES THE CONTRIBUTION OF THE HORIZONTAL ADVECTION
+     12 C     TO THE TENDENCIES OF SPECIFIC HUMIDITY AND CLOUD WATER AND
+     13 C     THEN UPDATES THOSE VARIABLES.  AN ANTI-FILTERING TECHNIQUE
+     14 C     IS USED.
+     15 C
+     16 C PROGRAM HISTORY LOG:
+     17 C   96-07-19  JANJIC   - ORIGINATOR
+     18 C   98-11-02  BLACK    - MODIFIED FOR DISTRIBUTED MEMORY
+     19 C   99-03-17  TUCCILLO - INCORPORATED MPI_ALLREDUCE FOR GLOBAL SUM
+     20 C
+     21 C USAGE: CALL HZADV1 FROM MAIN PROGRAM EBU
+     22 C   INPUT ARGUMENT LIST:
+     23 C       NONE
+     24 C
+     25 C   OUTPUT ARGUMENT LIST
+     26 C       NONE
+     27 C
+     28 C   OUTPUT FILES:
+     29 C       NONE
+     30 C   SUBPROGRAMS CALLED:
+     31 C
+     32 C     UNIQUE: NONE
+     33 C
+     34 C     LIBRARY: NONE
+     35 C
+     36 C   COMMON BLOCKS: CTLBLK
+     37 C                  LOOPS
+     38 C                  MASKS
+     39 C                  DYNAM
+     40 C                  CONTIN
+     41 C                  VRBLS
+     42 C                  PVRBLS
+     43 C                  CLDWTR
+     44 C                  INDX
+     45 C
+     46 C ATTRIBUTES:
+     47 C   LANGUAGE: FORTRAN 90
+     48 C   MACHINE : IBM SP
+     49 C$$$
+     50 C***********************************************************************
+     51                              P A R A M E T E R
+     52      &(EPSQ=2.E-12,CLIMIT=1.E-20
+     53      &,FF1=0.52500,FF2=-0.64813,FF3=0.24520,FF4=-0.12189)
+     54 C-----------------------------------------------------------------------
+     55       INCLUDE "parmeta"
+     78       INCLUDE "mpp.h"
+    137       INCLUDE "mpif.h"
+
+Page 2           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+    138 # 1 "./sp.h" 1 
+    139 # 4
+    140 
+    141 # 58 "HZADV2.F" 2 
+    142 C-----------------------------------------------------------------------
+    704                              P A R A M E T E R
+    705      & (IM1=IM-1,JAM=6+2*(JM-10)
+    706      &, IMJM=IM*JM-JM/2
+    707      &, JAMD=(JAM*2-10)*3,LP1=LM+1) 
+    708 C-----------------------------------------------------------------------
+    709                              L O G I C A L
+    710      & RUN,FIRST,RESTRT,SIGMA
+    711 C-----------------------------------------------------------------------
+    712       INCLUDE "CTLBLK.comm"
+    713 C-----------------------------------------------------------------------
+    723       INCLUDE "LOOPS.comm"
+    724 C-----------------------------------------------------------------------
+    731       INCLUDE "MASKS.comm"
+    732 C-----------------------------------------------------------------------
+    743       INCLUDE "DYNAM.comm"
+    744 C-----------------------------------------------------------------------
+    760       INCLUDE "CONTIN.comm"
+    761 C-----------------------------------------------------------------------
+    771       INCLUDE "VRBLS.comm"
+    772 C-----------------------------------------------------------------------
+    782       INCLUDE "PVRBLS.comm"
+    783 C-----------------------------------------------------------------------
+    813       INCLUDE "CLDWTR.comm"
+    814 C-----------------------------------------------------------------------
+    822       INCLUDE "INDX.comm"
+    823 C-----------------------------------------------------------------------
+    835       INCLUDE "QFLX.comm"
+    836 C-----------------------------------------------------------------------
+    860                              D I M E N S I O N
+    861      & IFPA(IDIM1:IDIM2,JDIM1:JDIM2,LM),IFQA(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    862      &,IFPF(IDIM1:IDIM2,JDIM1:JDIM2,LM),IFQF(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    863      &,JFPA(IDIM1:IDIM2,JDIM1:JDIM2,LM),JFQA(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    864      &,JFPF(IDIM1:IDIM2,JDIM1:JDIM2,LM),JFQF(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    865      &,AFP (IDIM1:IDIM2,JDIM1:JDIM2,LM),AFQ (IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    866      &,Q1  (IDIM1:IDIM2,JDIM1:JDIM2,LM),DQST(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    867      &,W1  (IDIM1:IDIM2,JDIM1:JDIM2,LM),DWST(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    868      &,DARE(IDIM1:IDIM2,JDIM1:JDIM2),   DVOL(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    869      &,EMH (IDIM1:IDIM2,JDIM1:JDIM2)
+    870 c    &,QLIM(IDIM1:IDIM2,JDIM1:JDIM2),WLIM  (IDIM1:IDIM2,JDIM1:JDIM2)
+    871 C-----------------------------------------------------------------------
+    872                              R E A L
+    873      & GSUMS(4,LM),XSUMS(4,LM)
+    874 
+    875 C-----------------------------------------------------------------------
+    876                              I N T E G E R
+    877      & ISTAT(MPI_STATUS_SIZE)
+    878 C
+    879                              R E A L
+    880      & DPDE  (IDIM1:IDIM2,JDIM1:JDIM2)
+    881      &,ADPDNE(IDIM1:IDIM2,JDIM1:JDIM2),ADPDSE(IDIM1:IDIM2,JDIM1:JDIM2)
+    882      &,UDY   (IDIM1:IDIM2,JDIM1:JDIM2),VDX   (IDIM1:IDIM2,JDIM1:JDIM2)
+    883      &,FQNE(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+
+Page 3           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+    884      &,FQSE(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    885      &,FQNE1(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    886      &,FQSE1(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    887      &,FCNE(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    888      &,FCSE(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    889      &,FCNE1(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    890      &,FCSE1(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    891      &,QORIG(IDIM1:IDIM2,JDIM1:JDIM2,LM)
+    892 C***********************************************************************
+    893       ENH=FLOAT(IDTAD)*DT/(08.*DY)
+    894 C
+    895       DO J=MYJS_P2,MYJE_P2
+    896       DO I=MYIS_P1,MYIE_P1
+    897         EMH (I,J)=FLOAT(IDTAD)*DT/(08.*DX(I,J))
+    898         DARE(I,J)=HBM2(I,J)*DX(I,J)*DY
+    899       ENDDO
+    900       ENDDO
+    901 C
+    902 C***********************************************************************
+    903       CALL ZERO3(FQNE,LM)
+    904       CALL ZERO3(FQSE,LM)
+    905       CALL ZERO3(QORIG,LM)
+    906 C-----------------------------------------------------------------------
+    907 !$omp  parallel do
+    908 !$omp& private(dqstij,dvolp,dwstij,htmijl,jfp,jfq,pp,qp,
+    909 !$omp&         sumnq,sumnw,sumpq,sumpw,tta,ttb)
+    910 C
+    911 C-----------------------------------------------------------------------
+    912       DO L=1,LM
+    913 C-----------------------------------------------------------------------
+    914 C
+    915       CALL ZERO2(DPDE)
+    916       CALL ZERO2(UDY)
+    917       CALL ZERO2(VDX)
+    918 C
+    919         DO J=MYJS_P4,MYJE_P4
+    920         DO I=MYIS_P4,MYIE_P4
+    921         DPDE(I,J)=DETA(L)*PDSL(I,J)/9.8
+    922         ENDDO
+    923         ENDDO
+    924 C
+    925         DO J=MYJS_P4,MYJE_P4
+    926         DO I=MYIS_P4,MYIE_P4
+    927         ADPDNE(I,J)=0.5*(DPDE(I+IHE(J),J+1)+DPDE(I,J))
+    928         ENDDO
+    929         ENDDO
+    930 C
+    931         DO J=MYJS1_P4,MYJE_P4
+    932         DO I=MYIS_P4,MYIE1_P4
+    933         ADPDSE(I,J)=0.5*(DPDE(I+IHE(J),J-1)+DPDE(I,J))
+    934         ENDDO
+    935         ENDDO
+    936 C
+    937         DO J=MYJS1_P3,MYJE1_P3
+    938         DO I=MYIS_P3,MYIE_P3
+    939         UDY(I,J)=U(I,J,L)*DY
+    940         VDX(I,J)=V(I,J,L)*DX(I,J)
+
+Page 4           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+    941         ENDDO
+    942         ENDDO
+    943 C
+    944 C NE
+    945 C
+    946         DO J=MYJS1_P2,MYJE2_P2
+    947         DO I=MYIS_P2,MYIE1_P2
+    948         ALPHA=ATAN(DY/DX(I,J))
+    949         UNE=0.5*(VTM(I+IHE(J),J,L)*U(I+IHE(J),J,L)
+    950      &          +VTM(I,J+1,L)*U(I,J+1,L))
+    951         VNE=0.5*(VTM(I+IHE(J),J,L)*V(I+IHE(J),J,L)
+    952      &          +VTM(I,J+1,L)*V(I,J+1,L))
+    953         UNESEC=UNE*SIN(ALPHA)+VNE*COS(ALPHA)
+    954         IF (UNESEC.GT.0.0) THEN
+    955            QNE = Q(I,J,L)
+    956            CNE = CWM(I,J,L)
+    957         ELSE
+    958            QNE = Q(I+IHE(J),J+1,L)
+    959            CNE = CWM(I+IHE(J),J+1,L)
+    960         END IF
+    961         FQNE(I,J,L)=UNESEC*ADPDNE(I,J)*QNE*FLOAT(IDTAD)*DT
+    962         FCNE(I,J,L)=UNESEC*ADPDNE(I,J)*CNE*FLOAT(IDTAD)*DT
+    963         FQNE1(I,J,L)=FQNE(I,J,L)*SQRT(DX(I,J)*DX(I,J)+DY*DY)
+    964         FCNE1(I,J,L)=FCNE(I,J,L)*SQRT(DX(I,J)*DX(I,J)+DY*DY)
+    965         ENDDO
+    966         ENDDO
+    967 C
+    968 C SE
+    969 C
+    970         DO J=MYJS2_P2,MYJE1_P2
+    971         DO I=MYIS_P2,MYIE1_P2
+    972         ALPHA=ATAN(DY/DX(I,J))
+    973         USE=0.5*(VTM(I+IHE(J),J,L)*U(I+IHE(J),J,L)
+    974      &          +VTM(I,J-1,L)*U(I,J-1,L))
+    975         VSE=0.5*(VTM(I+IHE(J),J,L)*V(I+IHE(J),J,L)
+    976      &          +VTM(I,J-1,L)*V(I,J-1,L))
+    977         VSESEC=-USE*SIN(ALPHA)+VSE*COS(ALPHA)
+    978         IF (VSESEC.GT.0.0) THEN
+    979            QSE = Q(I+IHE(J),J-1,L)
+    980            CSE = CWM(I+IHE(J),J-1,L)
+    981         ELSE
+    982            QSE = Q(I,J,L)
+    983            CSE = CWM(I,J,L)
+    984         END IF
+    985         FQSE(I,J,L)=VSESEC*ADPDSE(I,J)*QSE*FLOAT(IDTAD)*DT
+    986         FCSE(I,J,L)=VSESEC*ADPDSE(I,J)*CSE*FLOAT(IDTAD)*DT
+    987         FQSE1(I,J,L)=FQSE(I,J,L)*SQRT(DX(I,J)*DX(I,J)+DY*DY)
+    988         FCSE1(I,J,L)=FCSE(I,J,L)*SQRT(DX(I,J)*DX(I,J)+DY*DY)
+    989         ENDDO
+    990         ENDDO
+    991 C
+    992         DO J=MYJS,MYJE
+    993         DO I=MYIS,MYIE
+    994           HTMIJL=HTM(I,J,L)
+    995           QORIG  (I,J,L)=AMAX1(Q  (I,J,L),EPSQ)*HTMIJL
+    996         ENDDO
+    997         ENDDO
+
+Page 5           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+    998 C-----------------------------------------------------------------------
+    999 C***********************************************************************
+   1000         DO 200 J=MYJS_P2,MYJE_P2
+   1001         DO 200 I=MYIS_P1,MYIE_P1
+   1002         DVOL(I,J,L)=DARE(I,J)*PDSL(I,J)*DETA(L)
+   1003         HTMIJL=HTM(I,J,L)
+   1004         Q  (I,J,L)=AMAX1(Q  (I,J,L),EPSQ)*HTMIJL
+   1005         CWM(I,J,L)=AMAX1(CWM(I,J,L),CLIMIT)*HTMIJL
+   1006 c         IF(CWM(I,J,L).GT.1.E-2)THEN
+   1007 c          print*,'early print'
+   1008 c          print*,'i,j,l,mype,cwm(i,j,l),climit,htmijl=',
+   1009 c    *       i,j,l,mype,cwm(i,j,l),climit,htmijl
+   1010 c         endif
+   1011         Q1  (I,J,L)=Q  (I,J,L)
+   1012         W1  (I,J,L)=CWM(I,J,L)
+   1013   200   CONTINUE
+   1014 C-----------------------------------------------------------------------
+   1015         SUMPQ=0.
+   1016         SUMNQ=0.
+   1017         SUMPW=0.
+   1018         SUMNW=0.
+   1019 C
+   1020         DO 300 J=MYJS2_P1,MYJE2_P1
+   1021         DO 300 I=MYIS1_P1,MYIE1_P1
+   1022 C
+   1023         DVOLP=DVOL(I,J,L)*HBM3(I,J)
+   1024         TTA=(U(I,J-1,L)+U(I+IHW(J),J,L)+U(I+IHE(J),J,L)+U(I,J+1,L))
+   1025      2     *HBM2(I,J)*EMH(I,J)
+   1026         TTB=(V(I,J-1,L)+V(I+IHW(J),J,L)+V(I+IHE(J),J,L)+V(I,J+1,L))
+   1027      2     *HBM2(I,J)*ENH
+   1028 C
+   1029         PP=-TTA-TTB
+   1030         QP= TTA-TTB
+   1031 C
+   1032         JFP=INT(SIGN(1.,PP))
+   1033         JFQ=INT(SIGN(1.,QP))
+   1034 C
+   1035         IFPA(I,J,L)=IHE(J)+I+( JFP-1  )/2
+   1036         IFQA(I,J,L)=IHE(J)+I+(-JFQ-1  )/2
+   1037 C
+   1038         JFPA(I,J,L)=       J+JFP
+   1039         JFQA(I,J,L)=       J+JFQ
+   1040 C
+   1041         IFPF(I,J,L)=IHE(J)+I+(-JFP-1  )/2
+   1042         IFQF(I,J,L)=IHE(J)+I+( JFQ-1  )/2
+   1043 C
+   1044         JFPF(I,J,L)=       J-JFP
+   1045         JFQF(I,J,L)=       J-JFQ
+   1046 C
+   1047         PP=ABS(PP)*HTM(I,J,L)*HTM(IFPA(I,J,L),JFPA(I,J,L),L)
+   1048         QP=ABS(QP)*HTM(I,J,L)*HTM(IFQA(I,J,L),JFQA(I,J,L),L)
+   1049 C
+   1050         AFP (I,J,L)=(((FF4*PP+FF3)*PP+FF2)*PP+FF1)*PP
+   1051         AFQ (I,J,L)=(((FF4*QP+FF3)*QP+FF2)*QP+FF1)*QP
+   1052 C
+   1053         DQSTIJ=(Q  (IFPA(I,J,L),JFPA(I,J,L),L)-Q  (I,J,L))*PP
+   1054      2        +(Q  (IFQA(I,J,L),JFQA(I,J,L),L)-Q  (I,J,L))*QP
+
+Page 6           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1055         DWSTIJ=(CWM(IFPA(I,J,L),JFPA(I,J,L),L)-CWM(I,J,L))*PP
+   1056      2        +(CWM(IFQA(I,J,L),JFQA(I,J,L),L)-CWM(I,J,L))*QP
+   1057 C
+   1058         DQST(I,J,L)=DQSTIJ
+   1059         DWST(I,J,L)=DWSTIJ
+   1060 C
+   1061   300   CONTINUE
+   1062 C***
+   1063 C***  GLOBAL SUM FOR CONSERVATION
+   1064 C***
+   1065         DO 310 J=MYJS2,MYJE2
+   1066         DO 310 I=MYIS1,MYIE1
+   1067 C
+   1068         DVOLP=DVOL(I,J,L)*HBM3(I,J)
+   1069         DQSTIJ=DQST(I,J,L)*DVOLP
+   1070         DWSTIJ=DWST(I,J,L)*DVOLP
+   1071 C
+   1072         IF(DQSTIJ.GT.0.)THEN
+   1073           SUMPQ=SUMPQ+DQSTIJ
+   1074         ELSE
+   1075           SUMNQ=SUMNQ+DQSTIJ
+   1076         ENDIF
+   1077 C
+   1078         IF(DWSTIJ.GT.0.)THEN
+   1079           SUMPW=SUMPW+DWSTIJ
+   1080         ELSE
+   1081           SUMNW=SUMNW+DWSTIJ
+   1082         ENDIF
+   1083 C
+   1084   310   CONTINUE
+   1085 C
+   1086 C-----------------------------------------------------------------------
+   1087         XSUMS(1,L)=SUMPQ
+   1088         XSUMS(2,L)=SUMNQ
+   1089         XSUMS(3,L)=SUMPW
+   1090         XSUMS(4,L)=SUMNW
+   1091 C
+   1092       ENDDO               ! END OF LM LOOP
+   1093 C-----------------------------------------------------------------------
+   1094 C
+   1095 C***  GLOBAL REDUCTION
+   1096 C
+   1097       CALL MPI_ALLREDUCE(XSUMS,GSUMS,4*LM,MPI_REAL,MPI_SUM,
+   1098      1                     MPI_COMM_COMP,IRECV)
+   1099 C
+   1100 C***  END OF GLOBAL REDUCTION
+   1101 C
+   1102 C-----------------------------------------------------------------------
+   1103 !$omp  parallel do
+   1104 !$omp& private(d2pqq,d2pqw,dqstij,dvolp,dwstij,
+   1105 !$omp&         q00,q0q,q1ij,qp0,qstij,rfacq,rfacw,
+   1106 !$omp&         rfqij,rfwij,sumnq,sumnw,sumpq,sumpw,
+   1107 !$omp&         w00,w0q,w1ij,wp0,wstij)
+   1108 C-----------------------------------------------------------------------
+   1109       DO L=1,LM
+   1110 C-----------------------------------------------------------------------
+   1111 C
+
+Page 7           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1112         SUMPQ=GSUMS(1,L)
+   1113         SUMNQ=GSUMS(2,L)
+   1114         SUMPW=GSUMS(3,L)
+   1115         SUMNW=GSUMS(4,L)
+   1116 C
+   1117 C--------------FIRST MOMENT CONSERVING FACTOR---------------------------
+   1118         IF(SUMPQ.GT.1.)THEN
+   1119           RFACQ=-SUMNQ/SUMPQ
+   1120         ELSE
+   1121           RFACQ=1.
+   1122         ENDIF
+   1123 C
+   1124         IF(SUMPW.GT.1.)THEN
+   1125           RFACW=-SUMNW/SUMPW
+   1126         ELSE
+   1127           RFACW=1.
+   1128         ENDIF
+   1129 C
+   1130         IF(RFACQ.LT.0.9.OR.RFACQ.GT.1.1)RFACQ=1.
+   1131         IF(RFACW.LT.0.9.OR.RFACW.GT.1.1)RFACW=1.
+   1132 C--------------IMPOSE CONSERVATION ON ADVECTION-------------------------
+   1133         IF(RFACQ.LT.1.)THEN
+   1134           DO J=MYJS2_P1,MYJE2_P1
+   1135           DO I=MYIS1_P1,MYIE1_P1
+   1136             DQSTIJ=DQST(I,J,L)
+   1137             RFQIJ=HBM3(I,J)*(RFACQ-1.)+1.
+   1138             IF(DQSTIJ.LT.0.)DQSTIJ=DQSTIJ/RFQIJ
+   1139             Q1(I,J,L)=Q(I,J,L)+DQSTIJ
+   1140           ENDDO
+   1141           ENDDO
+   1142         ELSE
+   1143           DO J=MYJS2_P1,MYJE2_P1
+   1144           DO I=MYIS1_P1,MYIE1_P1
+   1145             DQSTIJ=DQST(I,J,L)
+   1146             RFQIJ=HBM3(I,J)*(RFACQ-1.)+1.
+   1147             IF(DQSTIJ.GE.0.)DQSTIJ=DQSTIJ*RFQIJ
+   1148             Q1(I,J,L)=Q(I,J,L)+DQSTIJ
+   1149           ENDDO
+   1150           ENDDO
+   1151         ENDIF 
+   1152 C-----------------------------------------------------------------------
+   1153         IF(RFACW.LT.1.)THEN
+   1154           DO J=MYJS2_P1,MYJE2_P1
+   1155           DO I=MYIS1_P1,MYIE1_P1
+   1156             DWSTIJ=DWST(I,J,L)
+   1157             RFWIJ=HBM3(I,J)*(RFACW-1.)+1.
+   1158             IF(DWSTIJ.LT.0.)DWSTIJ=DWSTIJ/RFWIJ
+   1159             W1(I,J,L)=CWM(I,J,L)+DWSTIJ
+   1160           ENDDO
+   1161           ENDDO
+   1162         ELSE
+   1163           DO J=MYJS2_P1,MYJE2_P1
+   1164           DO I=MYIS1_P1,MYIE1_P1
+   1165             DWSTIJ=DWST(I,J,L)
+   1166             RFWIJ=HBM3(I,J)*(RFACW-1.)+1.
+   1167             IF(DWSTIJ.GE.0.)DWSTIJ=DWSTIJ*RFWIJ
+   1168             W1(I,J,L)=CWM(I,J,L)+DWSTIJ
+
+Page 8           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1169           ENDDO
+   1170           ENDDO
+   1171         ENDIF
+   1172 C--------------ANTI-FILTERING STEP--------------------------------------
+   1173         SUMPQ=0.
+   1174         SUMNQ=0.
+   1175         SUMPW=0.
+   1176         SUMNW=0.
+   1177 C--------------ANTI-FILTERING LIMITERS----------------------------------
+   1178         DO 330 J=MYJS2,MYJE2
+   1179         DO 330 I=MYIS1,MYIE1
+   1180 C
+   1181         DVOLP=DVOL(I,J,L)
+   1182         Q1IJ =Q1(I,J,L)
+   1183         W1IJ =W1(I,J,L)
+   1184 C
+   1185         D2PQQ=((Q1(IFPA(I,J,L),JFPA(I,J,L),L)-Q1IJ                   )
+   1186      2        -(Q1IJ                   -Q1(IFPF(I,J,L),JFPF(I,J,L),L))
+   1187      3        *HTM(IFPF(I,J,L),JFPF(I,J,L),L))*AFP(I,J,L)
+   1188      4       +((Q1(IFQA(I,J,L),JFQA(I,J,L),L)-Q1IJ                   )
+   1189      5        -(Q1IJ                   -Q1(IFQF(I,J,L),JFQF(I,J,L),L))
+   1190      6        *HTM(IFQF(I,J,L),JFQF(I,J,L),L))*AFQ(I,J,L)
+   1191 C
+   1192         D2PQW=((W1(IFPA(I,J,L),JFPA(I,J,L),L)-W1IJ                   )
+   1193      2        -(W1IJ                   -W1(IFPF(I,J,L),JFPF(I,J,L),L))
+   1194      3        *HTM(IFPF(I,J,L),JFPF(I,J,L),L))*AFP(I,J,L)
+   1195      4       +((W1(IFQA(I,J,L),JFQA(I,J,L),L)-W1IJ                   )
+   1196      5        -(W1IJ                   -W1(IFQF(I,J,L),JFQF(I,J,L),L))
+   1197      6        *HTM(IFQF(I,J,L),JFQF(I,J,L),L))*AFQ(I,J,L)
+   1198 C
+   1199         QSTIJ=Q1IJ-D2PQQ
+   1200         WSTIJ=W1IJ-D2PQW
+   1201 C
+   1202         Q00=Q  (I          ,J          ,L)
+   1203         QP0=Q  (IFPA(I,J,L),JFPA(I,J,L),L)
+   1204         Q0Q=Q  (IFQA(I,J,L),JFQA(I,J,L),L)
+   1205 C
+   1206         W00=CWM(I          ,J          ,L)
+   1207         WP0=CWM(IFPA(I,J,L),JFPA(I,J,L),L)
+   1208         W0Q=CWM(IFQA(I,J,L),JFQA(I,J,L),L)
+   1209 C
+   1210         QSTIJ=AMAX1(QSTIJ,AMIN1(Q00,QP0,Q0Q))
+   1211         QSTIJ=AMIN1(QSTIJ,AMAX1(Q00,QP0,Q0Q))
+   1212         WSTIJ=AMAX1(WSTIJ,AMIN1(W00,WP0,W0Q))
+   1213         WSTIJ=AMIN1(WSTIJ,AMAX1(W00,WP0,W0Q))
+   1214 C
+   1215         DQSTIJ=QSTIJ-Q1IJ
+   1216         DWSTIJ=WSTIJ-W1IJ
+   1217 C
+   1218         DQST(I,J,L)=DQSTIJ
+   1219         DWST(I,J,L)=DWSTIJ
+   1220 C
+   1221         DQSTIJ=DQSTIJ*DVOLP
+   1222         DWSTIJ=DWSTIJ*DVOLP
+   1223 C
+   1224         IF(DQSTIJ.GT.0.)THEN
+   1225           SUMPQ =SUMPQ+DQSTIJ
+
+Page 9           Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1226         ELSE
+   1227           SUMNQ =SUMNQ+DQSTIJ
+   1228         ENDIF
+   1229 C
+   1230         IF(DWSTIJ.GT.0.)THEN
+   1231           SUMPW =SUMPW+DWSTIJ
+   1232         ELSE
+   1233           SUMNW =SUMNW+DWSTIJ
+   1234         ENDIF
+   1235 C
+   1236   330   CONTINUE
+   1237 C-----------------------------------------------------------------------
+   1238         XSUMS(1,L)=SUMPQ
+   1239         XSUMS(2,L)=SUMNQ
+   1240         XSUMS(3,L)=SUMPW
+   1241         XSUMS(4,L)=SUMNW
+   1242 C
+   1243       ENDDO               ! END OF LM LOOP
+   1244 C-----------------------------------------------------------------------
+   1245 C
+   1246 C***  GLOBAL REDUCTION
+   1247 C
+   1248       CALL MPI_ALLREDUCE(XSUMS,GSUMS,4*LM,MPI_REAL,MPI_SUM,
+   1249      1                     MPI_COMM_COMP,IRECV)
+   1250 C
+   1251 C***  END OF GLOBAL REDUCTION
+   1252 C
+   1253 C-----------------------------------------------------------------------
+   1254 C
+   1255 !$omp  parallel do
+   1256 !$omp& private(dqstij,dwstij,htmijl,rfacq,rfacw,rfqij,rfwij,
+   1257 !$omp&         sumnw,sumnq,sumpq,sumpw)
+   1258 C-----------------------------------------------------------------------
+   1259       DO L=1,LM
+   1260 C
+   1261         SUMPQ=GSUMS(1,L)
+   1262         SUMNQ=GSUMS(2,L)
+   1263         SUMPW=GSUMS(3,L)
+   1264         SUMNW=GSUMS(4,L)
+   1265 C
+   1266 C--------------FIRST MOMENT CONSERVING FACTOR---------------------------
+   1267         IF(SUMPQ.GT.1.)THEN
+   1268           RFACQ=-SUMNQ/SUMPQ
+   1269         ELSE
+   1270           RFACQ=1.
+   1271         ENDIF
+   1272 C
+   1273         IF(SUMPW.GT.1.)THEN
+   1274           RFACW=-SUMNW/SUMPW
+   1275         ELSE
+   1276           RFACW=1.
+   1277         ENDIF
+   1278 C
+   1279         IF(RFACQ.LT.0.9.OR.RFACQ.GT.1.1)RFACQ=1.
+   1280         IF(RFACW.LT.0.9.OR.RFACW.GT.1.1)RFACW=1.
+   1281 C--------------IMPOSE CONSERVATION ON ANTI-FILTERING--------------------
+   1282         IF(RFACQ.LT.1.)THEN
+
+Page 10          Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1283           DO J=MYJS2,MYJE2
+   1284           DO I=MYIS1,MYIE1
+   1285             DQSTIJ=DQST(I,J,L)
+   1286             RFQIJ=HBM2(I,J)*(RFACQ-1.)+1.
+   1287             IF(DQSTIJ.GE.0.)   DQSTIJ=DQSTIJ*RFQIJ
+   1288             Q  (I,J,L)=Q1(I,J,L)+DQSTIJ
+   1289           ENDDO
+   1290           ENDDO
+   1291         ELSE
+   1292           DO J=MYJS2,MYJE2
+   1293           DO I=MYIS1,MYIE1
+   1294             DQSTIJ=DQST(I,J,L)
+   1295             RFQIJ=HBM2(I,J)*(RFACQ-1.)+1.
+   1296             IF(DQSTIJ.LT.0.)   DQSTIJ=DQSTIJ/RFQIJ
+   1297             Q  (I,J,L)=Q1(I,J,L)+DQSTIJ
+   1298           ENDDO
+   1299           ENDDO
+   1300         ENDIF
+   1301 C-----------------------------------------------------------------------
+   1302         IF(RFACW.LT.1.)THEN
+   1303           DO J=MYJS2,MYJE2
+   1304           DO I=MYIS1,MYIE1
+   1305             DWSTIJ=DWST(I,J,L)
+   1306             RFWIJ=HBM2(I,J)*(RFACW-1.)+1.
+   1307             IF(DWSTIJ.GE.0.)   DWSTIJ=DWSTIJ*RFWIJ
+   1308             CWM(I,J,L)=W1(I,J,L)+DWSTIJ
+   1309 c         IF(CWM(I,J,L).GT.1.E-2)THEN
+   1310 c          print*,'RFACW.lt.1'
+   1311 c          print*,'i,j,l,mype,cwm(i,j,l),climit,htmijl=',
+   1312 c    *       i,j,l,mype,cwm(i,j,l),climit,htmijl
+   1313 c         endif
+   1314           ENDDO
+   1315           ENDDO
+   1316         ELSE
+   1317           DO J=MYJS2,MYJE2
+   1318           DO I=MYIS1,MYIE1
+   1319             DWSTIJ=DWST(I,J,L)
+   1320             RFWIJ=HBM2(I,J)*(RFACW-1.)+1.
+   1321             IF(DWSTIJ.LT.0.)   DWSTIJ=DWSTIJ/RFWIJ
+   1322             CWM(I,J,L)=W1(I,J,L)+DWSTIJ
+   1323 c         IF(CWM(I,J,L).GT.1.E-2)THEN
+   1324 c          print*,'RFACW.not lt 1'
+   1325 c          print*,'i,j,l,mype,cwm(i,j,l),climit,htmijl=',
+   1326 c    *       i,j,l,mype,cwm(i,j,l),climit,htmijl
+   1327 c         endif
+   1328           ENDDO
+   1329           ENDDO
+   1330         ENDIF
+   1331 C
+   1332 C-----------------------------------------------------------------------
+   1333 C
+   1334         DO J=MYJS,MYJE
+   1335         DO I=MYIS,MYIE
+   1336           HTMIJL=HTM(I,J,L)
+   1337           Q  (I,J,L)=AMAX1(Q  (I,J,L),EPSQ)*HTMIJL
+   1338           CWM(I,J,L)=AMAX1(CWM(I,J,L),CLIMIT)*HTMIJL
+   1339 c         IF(CWM(I,J,L).GT.1.E-2)THEN
+
+Page 11          Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1340 c          print*,'late print'
+   1341 c          print*,'i,j,l,mype,cwm(i,j,l),climit,htmijl=',
+   1342 c    *       i,j,l,mype,cwm(i,j,l),climit,htmijl
+   1343 c         endif
+   1344         ENDDO
+   1345         ENDDO
+   1346 C-----------------------------------------------------------------------
+   1347         DO J=MYJS1_P2,MYJE2_P2
+   1348         DO I=MYIS_P2,MYIE1_P2
+   1349         FQNEV(I,J)=FQNEV(I,J)+FQNE(I,J,L)
+   1350         FCNEV(I,J)=FCNEV(I,J)+FCNE(I,J,L)
+   1351         FQNEV1(I,J)=FQNEV1(I,J)+FQNE1(I,J,L)
+   1352         PETAL=PDSL(I,J)*AETA(L)+PT
+   1353         IF (PETAL.GT.70000.) THEN
+   1354            FQNEV7(I,J)=FQNEV7(I,J)+FQNE(I,J,L)
+   1355            FCNEV7(I,J)=FCNEV7(I,J)+FCNE(I,J,L)
+   1356         END IF
+   1357         ENDDO
+   1358         ENDDO
+   1359 C
+   1360         DO J=MYJS2_P2,MYJE1_P2
+   1361         DO I=MYIS_P2,MYIE1_P2
+   1362         FQSEV(I,J)=FQSEV(I,J)+FQSE(I,J,L)
+   1363         FCSEV(I,J)=FCSEV(I,J)+FCSE(I,J,L)
+   1364         FQSEV1(I,J)=FQSEV1(I,J)+FQSE1(I,J,L)
+   1365         PETAL=PDSL(I,J)*AETA(L)+PT
+   1366         IF (PETAL.GT.70000.) THEN
+   1367            FQSEV7(I,J)=FQSEV7(I,J)+FQSE(I,J,L)
+   1368            FCSEV7(I,J)=FCSEV7(I,J)+FCSE(I,J,L)
+   1369         END IF
+   1370         ENDDO
+   1371         ENDDO
+   1372 C
+   1373         DO J=MYJS,MYJE
+   1374         DO I=MYIS,MYIE
+   1375 
+   1376         DQADV_OLD = DQADV(I,J)
+   1377         DZ = PDSL(I,J)*DETA(L)/9.8
+   1378         VOLUME = 2*DX(I,J)*DY*DZ
+   1379         DQADV(I,J)=DQADV(I,J)+VOLUME*(Q(I,J,L)-QORIG(I,J,L))
+   1380 
+   1381         DQFLX(I,J)=FQNEV(I+IHW(J),J-1)-FQNEV(I,J)+
+   1382      &             FQSEV(I,J)-FQSEV(I+IHW(J),J+1)
+   1383         DCFLX(I,J)=FCNEV(I+IHW(J),J-1)-FCNEV(I,J)+
+   1384      &             FCSEV(I,J)-FCSEV(I+IHW(J),J+1)
+   1385 
+   1386         DQFLX7(I,J)=FQNEV7(I+IHW(J),J-1)-FQNEV7(I,J)+
+   1387      &             FQSEV7(I,J)-FQSEV7(I+IHW(J),J+1)
+   1388         DCFLX7(I,J)=FCNEV7(I+IHW(J),J-1)-FCNEV7(I,J)+
+   1389      &             FCSEV7(I,J)-FCSEV7(I+IHW(J),J+1)
+   1390 
+   1391         ENDDO
+   1392         ENDDO
+   1393 C
+   1394       ENDDO       ! END OF LM LOOP
+   1395 C
+   1396 C-----------------------------------------------------------------------
+
+Page 12          Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+   1397 C
+   1398         DO J=MYJS,MYJE
+   1399         DO I=MYIS,MYIE
+   1400            ALPHA=ATAN(DY/DX(I,J))
+   1401            RFACT=1.0/(2.0*COS(ALPHA))
+   1402 C averaging in y'
+   1403            FQUP=0.5*(FQNEV(I,J)+FQNEV(I+IHW(J),J-1))
+   1404            FCUP=0.5*(FCNEV(I,J)+FCNEV(I+IHW(J),J-1))
+   1405            FQUP7=0.5*(FQNEV7(I,J)+FQNEV7(I+IHW(J),J-1))
+   1406            FCUP7=0.5*(FCNEV7(I,J)+FCNEV7(I+IHW(J),J-1))
+   1407 C averaging in x'
+   1408            FQVP=0.5*(FQSEV(I,J)+FQSEV(I+IHW(J),J+1))
+   1409            FCVP=0.5*(FCSEV(I,J)+FCSEV(I+IHW(J),J+1))
+   1410            FQVP7=0.5*(FQSEV7(I,J)+FQSEV7(I+IHW(J),J+1))
+   1411            FCVP7=0.5*(FCSEV7(I,J)+FCSEV7(I+IHW(J),J+1))
+   1412 C rotation to x and y directions
+   1413            FQU(I,J)=RFACT*(FQUP-FQVP)
+   1414            FQV(I,J)=RFACT*(FQUP+FQVP)
+   1415            FCU(I,J)=RFACT*(FCUP-FCVP)
+   1416            FCV(I,J)=RFACT*(FCUP+FCVP)
+   1417            FQU7(I,J)=RFACT*(FQUP7-FQVP7)
+   1418            FQV7(I,J)=RFACT*(FQUP7+FQVP7)
+   1419            FCU7(I,J)=RFACT*(FCUP7-FCVP7)
+   1420            FCV7(I,J)=RFACT*(FCUP7+FCVP7)
+   1421         ENDDO
+   1422         ENDDO
+   1423 CC
+   1424                              RETURN
+   1425                              END
+
+Page 13          Source Listing                  HZADV2
+2022-02-15 16:37 Entry Points                    HZADV2.F
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ hzadv2_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 200                        Label  1013                                                           1000,1001                         
+ 300                        Label  1061                                                           1020,1021                         
+ 310                        Label  1084                                                           1065,1066                         
+ 330                        Label  1236                                                           1178,1179                         
+ ABS                        Func   1047                                 scalar                    1047,1048                         
+ ADPDNE                     Local  881      R(4)            4     2     17955                     927,961,962                       
+ ADPDSE                     Local  881      R(4)            4     2     17955                     933,985,986                       
+ AFP                        Local  865      R(4)            4     3     807975                    1050,1187,1194                    
+ AFQ                        Local  865      R(4)            4     3     807975                    1051,1190,1197                    
+ ALPHA                      Local  948      R(4)            4           scalar                    948,953,972,977,1400,1401         
+ AMAX1                      Func   995                                  scalar                    995,1004,1005,1210,1211,1212,1213,
+                                                                                                  1337,1338                         
+ AMIN1                      Func   1210                                 scalar                    1210,1211,1212,1213               
+ ATAN                       Func   948                                  scalar                    948,972,1400                      
+ CLDWTR                     Common 816                                  3447720  SAVE                                               
+ CLIMIT                     Param  52       R(4)            4           scalar                    1005,1338                         
+ CNE                        Local  956      R(4)            4           scalar                    956,959,962                       
+ CONTIN                     Common 763                                  12999420 SAVE                                               
+ COS                        Func   953                                  scalar                    953,977,1401                      
+ CSE                        Local  980      R(4)            4           scalar                    980,983,986                       
+ CTLBLK                     Common 717                                  112      SAVE                                               
+ D2PQQ                      Local  1185     R(4)            4           scalar                    1185,1199                         
+ D2PQW                      Local  1192     R(4)            4           scalar                    1192,1200                         
+ DARE                       Local  868      R(4)            4     2     17955                     898,1002                          
+ DPDE                       Local  880      R(4)            4     2     17955                     915,921,927,933                   
+ DQADV_OLD                  Local  1376     R(4)            4           scalar                    1376                              
+ DQST                       Local  866      R(4)            4     3     807975                    1058,1069,1136,1145,1218,1285,1294
+ DQSTIJ                     Local  1053     R(4)            4           scalar                    1053,1058,1069,1072,1073,1075,1136
+                                                                                                  ,1138,1139,1145,1147,1148,1215,121
+                                                                                                  8,1221,1224,1225,1227,1285,1287,12
+                                                                                                  88,1294,1296,1297                 
+ DVOL                       Local  868      R(4)            4     3     807975                    1002,1023,1068,1181               
+ DVOLP                      Local  1023     R(4)            4           scalar                    1023,1068,1069,1070,1181,1221,1222
+ DWST                       Local  867      R(4)            4     3     807975                    1059,1070,1156,1165,1219,1305,1319
+ DWSTIJ                     Local  1055     R(4)            4           scalar                    1055,1059,1070,1078,1079,1081,1156
+                                                                                                  ,1158,1159,1165,1167,1168,1216,121
+                                                                                                  9,1222,1230,1231,1233,1305,1307,13
+                                                                                                  08,1319,1321,1322                 
+ DYNAM                      Common 746                                  725404   SAVE                                               
+ DZ                         Local  1377     R(4)            4           scalar                    1377,1378                         
+ EMH                        Local  869      R(4)            4     2     17955                     897,1025                          
+ ENH                        Local  893      R(4)            4           scalar                    893,1027                          
+ EPSQ                       Param  52       R(4)            4           scalar                    995,1004,1337                     
+ FCNE                       Local  887      R(4)            4     3     807975                    962,964,1350,1355                 
+
+Page 14          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ FCNE1                      Local  889      R(4)            4     3     807975                    964                               
+ FCSE                       Local  888      R(4)            4     3     807975                    986,988,1363,1368                 
+ FCSE1                      Local  890      R(4)            4     3     807975                    988                               
+ FCUP                       Local  1404     R(4)            4           scalar                    1404,1415,1416                    
+ FCUP7                      Local  1406     R(4)            4           scalar                    1406,1419,1420                    
+ FCVP                       Local  1409     R(4)            4           scalar                    1409,1415,1416                    
+ FCVP7                      Local  1411     R(4)            4           scalar                    1411,1419,1420                    
+ FF1                        Param  53       R(4)            4           scalar                    1050,1051                         
+ FF2                        Param  53       R(4)            4           scalar                    1050,1051                         
+ FF3                        Param  53       R(4)            4           scalar                    1050,1051                         
+ FF4                        Param  53       R(4)            4           scalar                    1050,1051                         
+ FLOAT                      Func   893                                  scalar                    893,897,961,962,985,986           
+ FQNE                       Local  883      R(4)            4     3     807975                    903,961,963,1349,1354             
+ FQNE1                      Local  885      R(4)            4     3     807975                    963,1351                          
+ FQSE                       Local  884      R(4)            4     3     807975                    904,985,987,1362,1367             
+ FQSE1                      Local  886      R(4)            4     3     807975                    987,1364                          
+ FQUP                       Local  1403     R(4)            4           scalar                    1403,1413,1414                    
+ FQUP7                      Local  1405     R(4)            4           scalar                    1405,1417,1418                    
+ FQVP                       Local  1408     R(4)            4           scalar                    1408,1413,1414                    
+ FQVP7                      Local  1410     R(4)            4           scalar                    1410,1417,1418                    
+ GLB_TABLE                  Common 115                                  128      SAVE                                               
+ GSUMS                      Local  873      R(4)            4     2     180                       1097,1112,1113,1114,1115,1248,1261
+                                                                                                  ,1262,1263,1264                   
+ HTMIJL                     Local  994      R(4)            4           scalar                    994,995,1003,1004,1005,1336,1337,1
+                                                                                                  338                               
+ HZADV2                     Subr   3                                                                                                
+ I                          Local  896      I(4)            4           scalar                    896,897,898,920,921,926,927,932,93
+                                                                                                  3,938,939,940,947,948,949,950,951,
+                                                                                                  952,955,956,958,959,961,962,963,96
+                                                                                                  4,971,972,973,974,975,976,979,980,
+                                                                                                  982,983,985,986,987,988,993,994,99
+                                                                                                  5,1001,1002,1003,1004,1005,1011,10
+                                                                                                  12,1021,1023,1024,1025,1026,1027,1
+                                                                                                  035,1036,1038,1039,1041,1042,1044,
+                                                                                                  1045,1047,1048,1050,1051,1053,1054
+                                                                                                  ,1055,1056,1058,1059,1066,1068,106
+                                                                                                  9,1070,1135,1136,1137,1139,1144,11
+                                                                                                  45,1146,1148,1155,1156,1157,1159,1
+                                                                                                  164,1165,1166,1168,1179,1181,1182,
+                                                                                                  1183,1185,1186,1187,1188,1189,1190
+                                                                                                  ,1192,1193,1194,1195,1196,1197,120
+                                                                                                  2,1203,1204,1206,1207,1208,1218,12
+                                                                                                  19,1284,1285,1286,1288,1293,1294,1
+                                                                                                  295,1297,1304,1305,1306,1308,1318,
+                                                                                                  1319,1320,1322,1335,1336,1337,1338
+                                                                                                  ,1348,1349,1350,1351,1352,1354,135
+                                                                                                  5,1361,1362,1363,1364,1365,1367,13
+                                                                                                  68,1374,1376,1377,1378,1379,1381,1
+                                                                                                  382,1383,1384,1386,1387,1388,1389,
+                                                                                                  1399,1400,1403,1404,1405,1406,1408
+                                                                                                  ,1409,1410,1411,1413,1414,1415,141
+                                                                                                  6,1417,1418,1419,1420             
+ IDIM1                      Param  74       I(4)            4           scalar                    728,735,736,738,739,740,752,753,75
+                                                                                                  4,755,756,757,764,765,766,767,768,
+                                                                                                  775,777,778,779,786,787,788,789,79
+
+Page 15          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  0,791,792,793,794,795,796,797,798,
+                                                                                                  799,800,801,802,804,809,817,819,82
+                                                                                                  8,838,839,841,842,844,845,846,847,
+                                                                                                  849,850,851,852,854,855,856,857,86
+                                                                                                  1,862,863,864,865,866,867,868,869,
+                                                                                                  880,881,882,883,884,885,886,887,88
+                                                                                                  8,889,890,891                     
+ IDIM2                      Param  74       I(4)            4           scalar                    728,735,736,738,739,740,752,753,75
+                                                                                                  4,755,756,757,764,765,766,767,768,
+                                                                                                  775,777,778,779,786,787,788,789,79
+                                                                                                  0,791,792,793,794,795,796,797,798,
+                                                                                                  799,800,801,802,804,809,817,819,82
+                                                                                                  8,838,839,841,842,844,845,846,847,
+                                                                                                  849,850,851,852,854,855,856,857,86
+                                                                                                  1,862,863,864,865,866,867,868,869,
+                                                                                                  880,881,882,883,884,885,886,887,88
+                                                                                                  8,889,890,891                     
+ IFPA                       Local  861      I(4)            4     3     807975                    1035,1047,1053,1055,1185,1192,1203
+                                                                                                  ,1207                             
+ IFPF                       Local  862      I(4)            4     3     807975                    1041,1186,1187,1193,1194          
+ IFQA                       Local  861      I(4)            4     3     807975                    1036,1048,1054,1056,1188,1195,1204
+                                                                                                  ,1208                             
+ IFQF                       Local  862      I(4)            4     3     807975                    1042,1189,1190,1196,1197          
+ IGSTL                      Param  69       I(4)            4           scalar                    74                                
+ IGSTR                      Param  69       I(4)            4           scalar                    74                                
+ IM                         Param  58       I(4)            4           scalar                    71,74,121,122,123,124,125,129,130,
+                                                                                                  135,705,706,832                   
+ IM1                        Param  705      I(4)            4           scalar                                                      
+ IMJM                       Param  706      I(4)            4           scalar                                                      
+ INDX                       Common 825                                  6564     SAVE                                               
+ INDXG                      Common 831                                  8084     SAVE                                               
+ INPES                      Param  66       I(4)            4           scalar                    71,74,105,106,107,116,117         
+ INT                        Func   1032                                 scalar                    1032,1033                         
+ IRECV                      Local  1098     I(4)            4           scalar                    1098,1249                         
+ ISTAT                      Local  877      I(4)            4     1     5                                                           
+ ITAIL                      Param  71       I(4)            4           scalar                                                      
+ J                          Local  895      I(4)            4           scalar                    895,897,898,919,921,925,927,931,93
+                                                                                                  3,937,939,940,946,948,949,950,951,
+                                                                                                  952,955,956,958,959,961,962,963,96
+                                                                                                  4,970,972,973,974,975,976,979,980,
+                                                                                                  982,983,985,986,987,988,992,994,99
+                                                                                                  5,1000,1002,1003,1004,1005,1011,10
+                                                                                                  12,1020,1023,1024,1025,1026,1027,1
+                                                                                                  035,1036,1038,1039,1041,1042,1044,
+                                                                                                  1045,1047,1048,1050,1051,1053,1054
+                                                                                                  ,1055,1056,1058,1059,1065,1068,106
+                                                                                                  9,1070,1134,1136,1137,1139,1143,11
+                                                                                                  45,1146,1148,1154,1156,1157,1159,1
+                                                                                                  163,1165,1166,1168,1178,1181,1182,
+                                                                                                  1183,1185,1186,1187,1188,1189,1190
+                                                                                                  ,1192,1193,1194,1195,1196,1197,120
+                                                                                                  2,1203,1204,1206,1207,1208,1218,12
+                                                                                                  19,1283,1285,1286,1288,1292,1294,1
+                                                                                                  295,1297,1303,1305,1306,1308,1317,
+                                                                                                  1319,1320,1322,1334,1336,1337,1338
+
+Page 16          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  ,1347,1349,1350,1351,1352,1354,135
+                                                                                                  5,1360,1362,1363,1364,1365,1367,13
+                                                                                                  68,1373,1376,1377,1378,1379,1381,1
+                                                                                                  382,1383,1384,1386,1387,1388,1389,
+                                                                                                  1398,1400,1403,1404,1405,1406,1408
+                                                                                                  ,1409,1410,1411,1413,1414,1415,141
+                                                                                                  6,1417,1418,1419,1420             
+ JAM                        Param  705      I(4)            4           scalar                    707,727,750                       
+ JAMD                       Param  707      I(4)            4           scalar                                                      
+ JDIM1                      Param  75       I(4)            4           scalar                    728,735,736,738,739,740,752,753,75
+                                                                                                  4,755,756,757,764,765,766,767,768,
+                                                                                                  775,777,778,779,786,787,788,789,79
+                                                                                                  0,791,792,793,794,795,796,797,798,
+                                                                                                  799,800,801,802,804,809,817,819,82
+                                                                                                  6,827,838,839,841,842,844,845,846,
+                                                                                                  847,849,850,851,852,854,855,856,85
+                                                                                                  7,861,862,863,864,865,866,867,868,
+                                                                                                  869,880,881,882,883,884,885,886,88
+                                                                                                  7,888,889,890,891                 
+ JDIM2                      Param  75       I(4)            4           scalar                    728,735,736,738,739,740,752,753,75
+                                                                                                  4,755,756,757,764,765,766,767,768,
+                                                                                                  775,777,778,779,786,787,788,789,79
+                                                                                                  0,791,792,793,794,795,796,797,798,
+                                                                                                  799,800,801,802,804,809,817,819,82
+                                                                                                  6,827,838,839,841,842,844,845,846,
+                                                                                                  847,849,850,851,852,854,855,856,85
+                                                                                                  7,861,862,863,864,865,866,867,868,
+                                                                                                  869,880,881,882,883,884,885,886,88
+                                                                                                  7,888,889,890,891                 
+ JFP                        Local  1032     I(4)            4           scalar                    1032,1035,1038,1041,1044          
+ JFPA                       Local  863      I(4)            4     3     807975                    1038,1047,1053,1055,1185,1192,1203
+                                                                                                  ,1207                             
+ JFPF                       Local  864      I(4)            4     3     807975                    1044,1186,1187,1193,1194          
+ JFQ                        Local  1033     I(4)            4           scalar                    1033,1036,1039,1042,1045          
+ JFQA                       Local  863      I(4)            4     3     807975                    1039,1048,1054,1056,1188,1195,1204
+                                                                                                  ,1208                             
+ JFQF                       Local  864      I(4)            4     3     807975                    1045,1189,1190,1196,1197          
+ JGSTL                      Param  70       I(4)            4           scalar                    75                                
+ JGSTR                      Param  70       I(4)            4           scalar                    75                                
+ JM                         Param  58       I(4)            4           scalar                    72,75,121,122,123,124,125,129,130,
+                                                                                                  135,705,706,832                   
+ JNPES                      Param  66       I(4)            4           scalar                    72,75,105,106,107,116,117         
+ JTAIL                      Param  72       I(4)            4           scalar                                                      
+ L                          Local  912      I(4)            4           scalar                    912,921,939,940,949,950,951,952,95
+                                                                                                  5,956,958,959,961,962,963,964,973,
+                                                                                                  974,975,976,979,980,982,983,985,98
+                                                                                                  6,987,988,994,995,1002,1003,1004,1
+                                                                                                  005,1011,1012,1023,1024,1026,1035,
+                                                                                                  1036,1038,1039,1041,1042,1044,1045
+                                                                                                  ,1047,1048,1050,1051,1053,1054,105
+                                                                                                  5,1056,1058,1059,1068,1069,1070,10
+                                                                                                  87,1088,1089,1090,1109,1112,1113,1
+                                                                                                  114,1115,1136,1139,1145,1148,1156,
+                                                                                                  1159,1165,1168,1181,1182,1183,1185
+                                                                                                  ,1186,1187,1188,1189,1190,1192,119
+
+Page 17          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  3,1194,1195,1196,1197,1202,1203,12
+                                                                                                  04,1206,1207,1208,1218,1219,1238,1
+                                                                                                  239,1240,1241,1259,1261,1262,1263,
+                                                                                                  1264,1285,1288,1294,1297,1305,1308
+                                                                                                  ,1319,1322,1336,1337,1338,1349,135
+                                                                                                  0,1351,1352,1354,1355,1362,1363,13
+                                                                                                  64,1365,1367,1368,1377,1379       
+ LM                         Param  58       I(4)            4           scalar                    130,707,738,739,748,765,766,767,76
+                                                                                                  8,777,778,804,817,818,857,861,862,
+                                                                                                  863,864,865,866,867,868,873,883,88
+                                                                                                  4,885,886,887,888,889,890,891,903,
+                                                                                                  904,905,912,1097,1109,1248,1259   
+ LOOPS                      Common 726                                  158840   SAVE                                               
+ LP1                        Param  707      I(4)            4           scalar                    748                               
+ LSM                        Param  58       I(4)            4           scalar                                                      
+ MAPPINGS                   Common 134                                  5024     SAVE                                               
+ MASKS                      Common 734                                  6894720  SAVE                                               
+ MPIFCMB5                   Common 692                                  4        SAVE                                               
+ MPIFCMB9                   Common 693                                  4        SAVE                                               
+ MPIPRIV1                   Common 697                                  28       SAVE                                               
+ MPIPRIV2                   Common 699                                  24       SAVE                                               
+ MPIPRIVC                   Common 702                                  2        SAVE                                               
+ MPI_2DOUBLE_PRECISION      Param  438      I(4)            4           scalar                                                      
+ MPI_2INT                   Param  522      I(4)            4           scalar                                                      
+ MPI_2INTEGER               Param  436      I(4)            4           scalar                                                      
+ MPI_2REAL                  Param  440      I(4)            4           scalar                                                      
+ MPI_ADDRESS_KIND           Param  474      I(4)            4           scalar                                                      
+ MPI_AINT                   Param  552      I(4)            4           scalar                                                      
+ MPI_ALLREDUCE              Subr   1097                                                           1097,1248                         
+ MPI_ANY_SOURCE             Param  404      I(4)            4           scalar                                                      
+ MPI_ANY_TAG                Param  406      I(4)            4           scalar                                                      
+ MPI_APPNUM                 Param  368      I(4)            4           scalar                                                      
+ MPI_ASYNC_PROTECTS_NONBLOC                                                                                                         
+ KING                       Param  674      L(4)            4           scalar                                                      
+ MPI_BAND                   Param  312      I(4)            4           scalar                                                      
+ MPI_BOR                    Param  316      I(4)            4           scalar                                                      
+ MPI_BSEND_OVERHEAD         Param  400      I(4)            4           scalar                                                      
+ MPI_BXOR                   Param  320      I(4)            4           scalar                                                      
+ MPI_BYTE                   Param  444      I(4)            4           scalar                                                      
+ MPI_CART                   Param  412      I(4)            4           scalar                                                      
+ MPI_CHAR                   Param  482      I(4)            4           scalar                                                      
+ MPI_CHARACTER              Param  442      I(4)            4           scalar                                                      
+ MPI_COMBINER_CONTIGUOUS    Param  570      I(4)            4           scalar                                                      
+ MPI_COMBINER_DARRAY        Param  592      I(4)            4           scalar                                                      
+ MPI_COMBINER_DUP           Param  568      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_COMPLEX   Param  596      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_INTEGER   Param  598      I(4)            4           scalar                                                      
+ MPI_COMBINER_F90_REAL      Param  594      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED      Param  582      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_BLOC                                                                                                         
+ K                          Param  602      I(4)            4           scalar                                                      
+ MPI_COMBINER_HINDEXED_INTE                                                                                                         
+ GER                        Param  580      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR       Param  576      I(4)            4           scalar                                                      
+ MPI_COMBINER_HVECTOR_INTEG                                                                                                         
+
+Page 18          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ER                         Param  574      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED       Param  578      I(4)            4           scalar                                                      
+ MPI_COMBINER_INDEXED_BLOCK Param  584      I(4)            4           scalar                                                      
+ MPI_COMBINER_NAMED         Param  566      I(4)            4           scalar                                                      
+ MPI_COMBINER_RESIZED       Param  600      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT        Param  588      I(4)            4           scalar                                                      
+ MPI_COMBINER_STRUCT_INTEGE                                                                                                         
+ R                          Param  586      I(4)            4           scalar                                                      
+ MPI_COMBINER_SUBARRAY      Param  590      I(4)            4           scalar                                                      
+ MPI_COMBINER_VECTOR        Param  572      I(4)            4           scalar                                                      
+ MPI_COMM_DUP_FN            Subr   681                                  scalar                                                      
+ MPI_COMM_NULL              Param  336      I(4)            4           scalar                                                      
+ MPI_COMM_NULL_COPY_FN      Subr   682                                  scalar                                                      
+ MPI_COMM_NULL_DELETE_FN    Subr   681                                  scalar                                                      
+ MPI_COMM_SELF              Param  332      I(4)            4           scalar                                                      
+ MPI_COMM_TYPE_SHARED       Param  620      I(4)            4           scalar                                                      
+ MPI_COMM_WORLD             Param  330      I(4)            4           scalar                                                      
+ MPI_COMPLEX                Param  424      I(4)            4           scalar                                                      
+ MPI_COMPLEX16              Param  470      I(4)            4           scalar                                                      
+ MPI_COMPLEX32              Param  472      I(4)            4           scalar                                                      
+ MPI_COMPLEX8               Param  468      I(4)            4           scalar                                                      
+ MPI_CONGRUENT              Param  284      I(4)            4           scalar                                                      
+ MPI_CONVERSION_FN_NULL     Subr   687                                  scalar                                                      
+ MPI_COUNT                  Param  556      I(4)            4           scalar                                                      
+ MPI_COUNT_KIND             Param  478      I(4)            4           scalar                                                      
+ MPI_CXX_BOOL               Param  558      I(4)            4           scalar                                                      
+ MPI_CXX_DOUBLE_COMPLEX     Param  562      I(4)            4           scalar                                                      
+ MPI_CXX_FLOAT_COMPLEX      Param  560      I(4)            4           scalar                                                      
+ MPI_CXX_LONG_DOUBLE_COMPLE                                                                                                         
+ X                          Param  564      I(4)            4           scalar                                                      
+ MPI_C_BOOL                 Param  542      I(4)            4           scalar                                                      
+ MPI_C_COMPLEX              Param  546      I(4)            4           scalar                                                      
+ MPI_C_DOUBLE_COMPLEX       Param  548      I(4)            4           scalar                                                      
+ MPI_C_FLOAT_COMPLEX        Param  544      I(4)            4           scalar                                                      
+ MPI_C_LONG_DOUBLE_COMPLEX  Param  550      I(4)            4           scalar                                                      
+ MPI_DATATYPE_NULL          Param  346      I(4)            4           scalar                    461,559,561,563,565               
+ MPI_DISPLACEMENT_CURRENT   Param  670      I(8)            8           scalar                                                      
+ MPI_DISTRIBUTE_BLOCK       Param  662      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_CYCLIC      Param  664      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_DFLT_DARG   Param  668      I(4)            4           scalar                                                      
+ MPI_DISTRIBUTE_NONE        Param  666      I(4)            4           scalar                                                      
+ MPI_DIST_GRAPH             Param  414      I(4)            4           scalar                                                      
+ MPI_DOUBLE                 Param  504      I(4)            4           scalar                                                      
+ MPI_DOUBLE_COMPLEX         Param  426      I(4)            4           scalar                                                      
+ MPI_DOUBLE_INT             Param  516      I(4)            4           scalar                                                      
+ MPI_DOUBLE_PRECISION       Param  432      I(4)            4           scalar                                                      
+ MPI_DUP_FN                 Subr   678                                  scalar                                                      
+ MPI_ERRHANDLER_NULL        Param  350      I(4)            4           scalar                                                      
+ MPI_ERROR                  Param  151      I(4)            4           scalar                                                      
+ MPI_ERRORS_ARE_FATAL       Param  278      I(4)            4           scalar                                                      
+ MPI_ERRORS_RETURN          Param  280      I(4)            4           scalar                                                      
+ MPI_ERR_ACCESS             Param  264      I(4)            4           scalar                                                      
+ MPI_ERR_AMODE              Param  230      I(4)            4           scalar                                                      
+ MPI_ERR_ARG                Param  240      I(4)            4           scalar                                                      
+ MPI_ERR_ASSERT             Param  174      I(4)            4           scalar                                                      
+
+Page 19          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_BAD_FILE           Param  236      I(4)            4           scalar                                                      
+ MPI_ERR_BASE               Param  274      I(4)            4           scalar                                                      
+ MPI_ERR_BUFFER             Param  192      I(4)            4           scalar                                                      
+ MPI_ERR_COMM               Param  272      I(4)            4           scalar                                                      
+ MPI_ERR_CONVERSION         Param  254      I(4)            4           scalar                                                      
+ MPI_ERR_COUNT              Param  184      I(4)            4           scalar                                                      
+ MPI_ERR_DIMS               Param  162      I(4)            4           scalar                                                      
+ MPI_ERR_DISP               Param  220      I(4)            4           scalar                                                      
+ MPI_ERR_DUP_DATAREP        Param  250      I(4)            4           scalar                                                      
+ MPI_ERR_FILE               Param  210      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_EXISTS        Param  262      I(4)            4           scalar                                                      
+ MPI_ERR_FILE_IN_USE        Param  256      I(4)            4           scalar                                                      
+ MPI_ERR_GROUP              Param  172      I(4)            4           scalar                                                      
+ MPI_ERR_INFO               Param  178      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_KEY           Param  208      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_NOKEY         Param  252      I(4)            4           scalar                                                      
+ MPI_ERR_INFO_VALUE         Param  200      I(4)            4           scalar                                                      
+ MPI_ERR_INTERN             Param  228      I(4)            4           scalar                                                      
+ MPI_ERR_IN_STATUS          Param  202      I(4)            4           scalar                                                      
+ MPI_ERR_IO                 Param  188      I(4)            4           scalar                                                      
+ MPI_ERR_KEYVAL             Param  232      I(4)            4           scalar                                                      
+ MPI_ERR_LASTCODE           Param  268      I(4)            4           scalar                                                      
+ MPI_ERR_LOCKTYPE           Param  248      I(4)            4           scalar                                                      
+ MPI_ERR_NAME               Param  168      I(4)            4           scalar                                                      
+ MPI_ERR_NOT_SAME           Param  186      I(4)            4           scalar                                                      
+ MPI_ERR_NO_MEM             Param  198      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SPACE           Param  190      I(4)            4           scalar                                                      
+ MPI_ERR_NO_SUCH_FILE       Param  260      I(4)            4           scalar                                                      
+ MPI_ERR_OP                 Param  164      I(4)            4           scalar                                                      
+ MPI_ERR_OTHER              Param  216      I(4)            4           scalar                                                      
+ MPI_ERR_PENDING            Param  204      I(4)            4           scalar                                                      
+ MPI_ERR_PORT               Param  194      I(4)            4           scalar                                                      
+ MPI_ERR_QUOTA              Param  166      I(4)            4           scalar                                                      
+ MPI_ERR_RANK               Param  270      I(4)            4           scalar                                                      
+ MPI_ERR_READ_ONLY          Param  212      I(4)            4           scalar                                                      
+ MPI_ERR_REQUEST            Param  214      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_ATTACH         Param  196      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_CONFLICT       Param  182      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_FLAVOR         Param  170      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_RANGE          Param  206      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SHARED         Param  266      I(4)            4           scalar                                                      
+ MPI_ERR_RMA_SYNC           Param  246      I(4)            4           scalar                                                      
+ MPI_ERR_ROOT               Param  234      I(4)            4           scalar                                                      
+ MPI_ERR_SERVICE            Param  258      I(4)            4           scalar                                                      
+ MPI_ERR_SIZE               Param  180      I(4)            4           scalar                                                      
+ MPI_ERR_SPAWN              Param  222      I(4)            4           scalar                                                      
+ MPI_ERR_TAG                Param  242      I(4)            4           scalar                                                      
+ MPI_ERR_TOPOLOGY           Param  244      I(4)            4           scalar                                                      
+ MPI_ERR_TRUNCATE           Param  218      I(4)            4           scalar                                                      
+ MPI_ERR_TYPE               Param  238      I(4)            4           scalar                                                      
+ MPI_ERR_UNKNOWN            Param  226      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_DATARE                                                                                                         
+ P                          Param  176      I(4)            4           scalar                                                      
+ MPI_ERR_UNSUPPORTED_OPERAT                                                                                                         
+ ION                        Param  224      I(4)            4           scalar                                                      
+
+Page 20          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_ERR_WIN                Param  276      I(4)            4           scalar                                                      
+ MPI_FILE_NULL              Param  340      I(4)            4           scalar                                                      
+ MPI_FLOAT                  Param  502      I(4)            4           scalar                                                      
+ MPI_FLOAT_INT              Param  514      I(4)            4           scalar                                                      
+ MPI_GRAPH                  Param  410      I(4)            4           scalar                                                      
+ MPI_GROUP_EMPTY            Param  334      I(4)            4           scalar                                                      
+ MPI_GROUP_NULL             Param  342      I(4)            4           scalar                                                      
+ MPI_HOST                   Param  358      I(4)            4           scalar                                                      
+ MPI_IDENT                  Param  282      I(4)            4           scalar                                                      
+ MPI_INFO_ENV               Param  354      I(4)            4           scalar                                                      
+ MPI_INFO_NULL              Param  352      I(4)            4           scalar                                                      
+ MPI_INT                    Param  494      I(4)            4           scalar                                                      
+ MPI_INT16_T                Param  528      I(4)            4           scalar                                                      
+ MPI_INT32_T                Param  530      I(4)            4           scalar                                                      
+ MPI_INT64_T                Param  532      I(4)            4           scalar                                                      
+ MPI_INT8_T                 Param  526      I(4)            4           scalar                                                      
+ MPI_INTEGER                Param  434      I(4)            4           scalar                                                      
+ MPI_INTEGER1               Param  452      I(4)            4           scalar                                                      
+ MPI_INTEGER16              Param  460      I(4)            4           scalar                                                      
+ MPI_INTEGER2               Param  454      I(4)            4           scalar                                                      
+ MPI_INTEGER4               Param  456      I(4)            4           scalar                                                      
+ MPI_INTEGER8               Param  458      I(4)            4           scalar                                                      
+ MPI_INTEGER_KIND           Param  480      I(4)            4           scalar                                                      
+ MPI_IO                     Param  360      I(4)            4           scalar                                                      
+ MPI_KEYVAL_INVALID         Param  398      I(4)            4           scalar                                                      
+ MPI_LAND                   Param  310      I(4)            4           scalar                                                      
+ MPI_LASTUSEDCODE           Param  366      I(4)            4           scalar                                                      
+ MPI_LB                     Param  448      I(4)            4           scalar                                                      
+ MPI_LOCK_EXCLUSIVE         Param  420      I(4)            4           scalar                                                      
+ MPI_LOCK_SHARED            Param  422      I(4)            4           scalar                                                      
+ MPI_LOGICAL                Param  428      I(4)            4           scalar                                                      
+ MPI_LONG                   Param  498      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE            Param  506      I(4)            4           scalar                                                      
+ MPI_LONG_DOUBLE_INT        Param  524      I(4)            4           scalar                                                      
+ MPI_LONG_INT               Param  518      I(4)            4           scalar                                                      
+ MPI_LONG_LONG              Param  512      I(4)            4           scalar                                                      
+ MPI_LONG_LONG_INT          Param  508      I(4)            4           scalar                                                      
+ MPI_LOR                    Param  314      I(4)            4           scalar                                                      
+ MPI_LXOR                   Param  318      I(4)            4           scalar                                                      
+ MPI_MAX                    Param  302      I(4)            4           scalar                                                      
+ MPI_MAXLOC                 Param  324      I(4)            4           scalar                                                      
+ MPI_MAX_DATAREP_STRING     Param  392      I(4)            4           scalar                                                      
+ MPI_MAX_ERROR_STRING       Param  380      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_KEY           Param  386      I(4)            4           scalar                                                      
+ MPI_MAX_INFO_VAL           Param  388      I(4)            4           scalar                                                      
+ MPI_MAX_LIBRARY_VERSION_ST                                                                                                         
+ RING                       Param  394      I(4)            4           scalar                                                      
+ MPI_MAX_OBJECT_NAME        Param  384      I(4)            4           scalar                                                      
+ MPI_MAX_PORT_NAME          Param  382      I(4)            4           scalar                                                      
+ MPI_MAX_PROCESSOR_NAME     Param  390      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NO_PROC        Param  624      I(4)            4           scalar                                                      
+ MPI_MESSAGE_NULL           Param  622      I(4)            4           scalar                                                      
+ MPI_MIN                    Param  304      I(4)            4           scalar                                                      
+ MPI_MINLOC                 Param  322      I(4)            4           scalar                                                      
+ MPI_MODE_APPEND            Param  648      I(4)            4           scalar                                                      
+
+Page 21          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_MODE_CREATE            Param  644      I(4)            4           scalar                                                      
+ MPI_MODE_DELETE_ON_CLOSE   Param  640      I(4)            4           scalar                                                      
+ MPI_MODE_EXCL              Param  646      I(4)            4           scalar                                                      
+ MPI_MODE_NOCHECK           Param  610      I(4)            4           scalar                                                      
+ MPI_MODE_NOPRECEDE         Param  616      I(4)            4           scalar                                                      
+ MPI_MODE_NOPUT             Param  614      I(4)            4           scalar                                                      
+ MPI_MODE_NOSTORE           Param  612      I(4)            4           scalar                                                      
+ MPI_MODE_NOSUCCEED         Param  618      I(4)            4           scalar                                                      
+ MPI_MODE_RDONLY            Param  634      I(4)            4           scalar                                                      
+ MPI_MODE_RDWR              Param  636      I(4)            4           scalar                                                      
+ MPI_MODE_SEQUENTIAL        Param  650      I(4)            4           scalar                                                      
+ MPI_MODE_UNIQUE_OPEN       Param  642      I(4)            4           scalar                                                      
+ MPI_MODE_WRONLY            Param  638      I(4)            4           scalar                                                      
+ MPI_NO_OP                  Param  328      I(4)            4           scalar                                                      
+ MPI_NULL_COPY_FN           Subr   678                                  scalar                                                      
+ MPI_NULL_DELETE_FN         Subr   678                                  scalar                                                      
+ MPI_OFFSET                 Param  554      I(4)            4           scalar                                                      
+ MPI_OFFSET_KIND            Param  476      I(4)            4           scalar                                                      
+ MPI_OP_NULL                Param  344      I(4)            4           scalar                                                      
+ MPI_ORDER_C                Param  658      I(4)            4           scalar                                                      
+ MPI_ORDER_FORTRAN          Param  660      I(4)            4           scalar                                                      
+ MPI_PACKED                 Param  450      I(4)            4           scalar                                                      
+ MPI_PROC_NULL              Param  402      I(4)            4           scalar                                                      
+ MPI_PROD                   Param  308      I(4)            4           scalar                                                      
+ MPI_REAL                   Param  430      I(4)            4           scalar                    1097,1248                         
+ MPI_REAL16                 Param  466      I(4)            4           scalar                                                      
+ MPI_REAL4                  Param  462      I(4)            4           scalar                                                      
+ MPI_REAL8                  Param  464      I(4)            4           scalar                                                      
+ MPI_REPLACE                Param  326      I(4)            4           scalar                                                      
+ MPI_REQUEST_NULL           Param  348      I(4)            4           scalar                                                      
+ MPI_ROOT                   Param  408      I(4)            4           scalar                                                      
+ MPI_SEEK_CUR               Param  654      I(4)            4           scalar                                                      
+ MPI_SEEK_END               Param  656      I(4)            4           scalar                                                      
+ MPI_SEEK_SET               Param  652      I(4)            4           scalar                                                      
+ MPI_SHORT                  Param  490      I(4)            4           scalar                                                      
+ MPI_SHORT_INT              Param  520      I(4)            4           scalar                                                      
+ MPI_SIGNED_CHAR            Param  484      I(4)            4           scalar                                                      
+ MPI_SIMILAR                Param  286      I(4)            4           scalar                                                      
+ MPI_SOURCE                 Param  151      I(4)            4           scalar                                                      
+ MPI_STATUS_SIZE            Param  153      I(4)            4           scalar                    155,156,877                       
+ MPI_SUBARRAYS_SUPPORTED    Param  672      L(4)            4           scalar                                                      
+ MPI_SUBVERSION             Param  418      I(4)            4           scalar                                                      
+ MPI_SUCCESS                Param  160      I(4)            4           scalar                                                      
+ MPI_SUM                    Param  306      I(4)            4           scalar                    1097,1248                         
+ MPI_TAG                    Param  151      I(4)            4           scalar                                                      
+ MPI_TAG_UB                 Param  356      I(4)            4           scalar                                                      
+ MPI_THREAD_FUNNELED        Param  628      I(4)            4           scalar                                                      
+ MPI_THREAD_MULTIPLE        Param  632      I(4)            4           scalar                                                      
+ MPI_THREAD_SERIALIZED      Param  630      I(4)            4           scalar                                                      
+ MPI_THREAD_SINGLE          Param  626      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_COMPLEX      Param  608      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_INTEGER      Param  606      I(4)            4           scalar                                                      
+ MPI_TYPECLASS_REAL         Param  604      I(4)            4           scalar                                                      
+ MPI_TYPE_DUP_FN            Subr   685                                  scalar                                                      
+ MPI_TYPE_NULL_COPY_FN      Subr   686                                  scalar                                                      
+
+Page 22          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ MPI_TYPE_NULL_DELETE_FN    Subr   685                                  scalar                                                      
+ MPI_UB                     Param  446      I(4)            4           scalar                                                      
+ MPI_UINT16_T               Param  536      I(4)            4           scalar                                                      
+ MPI_UINT32_T               Param  538      I(4)            4           scalar                                                      
+ MPI_UINT64_T               Param  540      I(4)            4           scalar                                                      
+ MPI_UINT8_T                Param  534      I(4)            4           scalar                                                      
+ MPI_UNDEFINED              Param  396      I(4)            4           scalar                                                      
+ MPI_UNEQUAL                Param  288      I(4)            4           scalar                                                      
+ MPI_UNIVERSE_SIZE          Param  364      I(4)            4           scalar                                                      
+ MPI_UNSIGNED               Param  496      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_CHAR          Param  486      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG          Param  500      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_LONG_LONG     Param  510      I(4)            4           scalar                                                      
+ MPI_UNSIGNED_SHORT         Param  492      I(4)            4           scalar                                                      
+ MPI_VERSION                Param  416      I(4)            4           scalar                                                      
+ MPI_WCHAR                  Param  488      I(4)            4           scalar                                                      
+ MPI_WIN_BASE               Param  370      I(4)            4           scalar                                                      
+ MPI_WIN_CREATE_FLAVOR      Param  376      I(4)            4           scalar                                                      
+ MPI_WIN_DISP_UNIT          Param  374      I(4)            4           scalar                                                      
+ MPI_WIN_DUP_FN             Subr   683                                  scalar                                                      
+ MPI_WIN_FLAVOR_ALLOCATE    Param  292      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_CREATE      Param  290      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_DYNAMIC     Param  294      I(4)            4           scalar                                                      
+ MPI_WIN_FLAVOR_SHARED      Param  296      I(4)            4           scalar                                                      
+ MPI_WIN_MODEL              Param  378      I(4)            4           scalar                                                      
+ MPI_WIN_NULL               Param  338      I(4)            4           scalar                                                      
+ MPI_WIN_NULL_COPY_FN       Subr   684                                  scalar                                                      
+ MPI_WIN_NULL_DELETE_FN     Subr   683                                  scalar                                                      
+ MPI_WIN_SEPARATE           Param  298      I(4)            4           scalar                                                      
+ MPI_WIN_SIZE               Param  372      I(4)            4           scalar                                                      
+ MPI_WIN_UNIFIED            Param  300      I(4)            4           scalar                                                      
+ MPI_WTICK                  Func   679      R(8)            8           scalar                                                      
+ MPI_WTIME                  Func   679      R(8)            8           scalar                                                      
+ MPI_WTIME_IS_GLOBAL        Param  362      I(4)            4           scalar                                                      
+ MPPCOM                     Common 79                                   1464     SAVE                                               
+ PETAL                      Local  1352     R(4)            4           scalar                    1352,1353,1365,1366               
+ PMPI_WTICK                 Func   680      R(8)            8           scalar                                                      
+ PMPI_WTIME                 Func   680      R(8)            8           scalar                                                      
+ PP                         Local  1029     R(4)            4           scalar                    1029,1032,1047,1050,1053,1055     
+ PVRBLS                     Common 785                                  5530140  SAVE                                               
+ Q00                        Local  1202     R(4)            4           scalar                    1202,1210,1211                    
+ Q0Q                        Local  1204     R(4)            4           scalar                    1204,1210,1211                    
+ Q1                         Local  866      R(4)            4     3     807975                    1011,1139,1148,1182,1185,1186,1188
+                                                                                                  ,1189,1288,1297                   
+ Q1IJ                       Local  1182     R(4)            4           scalar                    1182,1185,1186,1188,1189,1199,1215
+ QFLX                       Common 837                                  5027400  SAVE                                               
+ QNE                        Local  955      R(4)            4           scalar                    955,958,961                       
+ QORIG                      Local  891      R(4)            4     3     807975                    905,995,1379                      
+ QP                         Local  1030     R(4)            4           scalar                    1030,1033,1048,1051,1054,1056     
+ QP0                        Local  1203     R(4)            4           scalar                    1203,1210,1211                    
+ QSE                        Local  979      R(4)            4           scalar                    979,982,985                       
+ QSTIJ                      Local  1199     R(4)            4           scalar                    1199,1210,1211,1215               
+ RFACQ                      Local  1119     R(4)            4           scalar                    1119,1121,1130,1133,1137,1146,1268
+                                                                                                  ,1270,1279,1282,1286,1295         
+ RFACT                      Local  1401     R(4)            4           scalar                    1401,1413,1414,1415,1416,1417,1418
+
+Page 23          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  ,1419,1420                        
+ RFACW                      Local  1125     R(4)            4           scalar                    1125,1127,1131,1153,1157,1166,1274
+                                                                                                  ,1276,1280,1302,1306,1320         
+ RFQIJ                      Local  1137     R(4)            4           scalar                    1137,1138,1146,1147,1286,1287,1295
+                                                                                                  ,1296                             
+ RFWIJ                      Local  1157     R(4)            4           scalar                    1157,1158,1166,1167,1306,1307,1320
+                                                                                                  ,1321                             
+ SIGN                       Func   1032                                 scalar                    1032,1033                         
+ SIN                        Func   953                                  scalar                    953,977                           
+ SINGLRST                   Local  715      L(4)            4           scalar                                                      
+ SQRT                       Func   963                                  scalar                    963,964,987,988                   
+ SUMNQ                      Local  1016     R(4)            4           scalar                    1016,1075,1088,1113,1119,1174,1227
+                                                                                                  ,1239,1262,1268                   
+ SUMNW                      Local  1018     R(4)            4           scalar                    1018,1081,1090,1115,1125,1176,1233
+                                                                                                  ,1241,1264,1274                   
+ SUMPQ                      Local  1015     R(4)            4           scalar                    1015,1073,1087,1112,1118,1119,1173
+                                                                                                  ,1225,1238,1261,1267,1268         
+ SUMPW                      Local  1017     R(4)            4           scalar                    1017,1079,1089,1114,1124,1125,1175
+                                                                                                  ,1231,1240,1263,1273,1274         
+ TEMPCOM                    Common 120                                  6603768  SAVE                                               
+ TOPO                       Common 128                                  17478548 SAVE                                               
+ TTA                        Local  1024     R(4)            4           scalar                    1024,1029,1030                    
+ TTB                        Local  1026     R(4)            4           scalar                    1026,1029,1030                    
+ UDY                        Local  882      R(4)            4     2     17955                     916,939                           
+ UNE                        Local  949      R(4)            4           scalar                    949,953                           
+ UNESEC                     Local  953      R(4)            4           scalar                    953,954,961,962                   
+ USE                        Local  973      R(4)            4           scalar                    973,977                           
+ VDX                        Local  882      R(4)            4     2     17955                     917,940                           
+ VNE                        Local  951      R(4)            4           scalar                    951,953                           
+ VOLUME                     Local  1378     R(4)            4           scalar                    1378,1379                         
+ VRBLS                      Common 774                                  13143060 SAVE                                               
+ VSE                        Local  975      R(4)            4           scalar                    975,977                           
+ VSESEC                     Local  977      R(4)            4           scalar                    977,978,985,986                   
+ W00                        Local  1206     R(4)            4           scalar                    1206,1212,1213                    
+ W0Q                        Local  1208     R(4)            4           scalar                    1208,1212,1213                    
+ W1                         Local  867      R(4)            4     3     807975                    1012,1159,1168,1183,1192,1193,1195
+                                                                                                  ,1196,1308,1322                   
+ W1IJ                       Local  1183     R(4)            4           scalar                    1183,1192,1193,1195,1196,1200,1216
+ WP0                        Local  1207     R(4)            4           scalar                    1207,1212,1213                    
+ WSTIJ                      Local  1200     R(4)            4           scalar                    1200,1212,1213,1216               
+ XSUMS                      Local  873      R(4)            4     2     180                       1087,1088,1089,1090,1097,1238,1239
+                                                                                                  ,1240,1241,1248                   
+ ZERO2                      Subr   915                                                            915,916,917                       
+ ZERO3                      Subr   903                                                            903,904,905                       
+
+
+
+Page 24          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     1292760  2     17955    COM                                                 
+ ACPREC                     R(4)            4     1220940  2     17955    COM                                                 
+ AETA                       R(4)            4     396      1     45       COM              1352,1365                          
+ AFSI                       R(4)            4     5458320  2     17955    COM                                                 
+ AKHS                       R(4)            4     646380   2     17955    COM                                                 
+ AKMS                       R(4)            4     574560   2     17955    COM                                                 
+ CLDEFI                     R(4)            4     1077300  2     17955    COM                                                 
+ CPGFU                      R(4)            4     150844   2     17955    COM                                                 
+ CPGFV                      R(4)            4     4              scalar   COM                                                 
+ CUPREC                     R(4)            4     1364580  2     17955    COM                                                 
+ CURV                       R(4)            4     222664   2     17955    COM                                                 
+ CWM                        R(4)            4     0        3     807975   COM              956,959,980,983,1005,1012,1055,105 
+                                                                                           6,1159,1168,1206,1207,1208,1308,13 
+                                                                                           22,1338                            
+ DCFLX                      R(4)            4     1220940  2     17955    COM              1383                               
+ DCFLX7                     R(4)            4     1364580  2     17955    COM              1388                               
+ DDMPU                      R(4)            4     509944   2     17955    COM                                                 
+ DDMPV                      R(4)            4     581764   2     17955    COM                                                 
+ DETA                       R(4)            4     36       1     45       COM              921,1002,1377                      
+ DFL                        R(4)            4     940      1     46       COM                                                 
+ DIV                        R(4)            4     6607440  3     807975   COM                                                 
+ DQADV                      R(4)            4     1436400  2     17955    COM              1376,1379                          
+ DQFLX                      R(4)            4     1149120  2     17955    COM              1381                               
+ DQFLX7                     R(4)            4     1292760  2     17955    COM              1386                               
+ DT                         R(4)            4     48             scalar   COM              893,897,961,962,985,986            
+ DX                         R(4)            4     7204     2     17955    COM              897,898,940,948,963,964,972,987,98 
+                                                                                           8,1378,1400                        
+ DY                         R(4)            4     0              scalar   COM              893,898,939,948,963,964,972,987,98 
+                                                                                           8,1378,1400                        
+ EF4T                       R(4)            4     32             scalar   COM                                                 
+ EM                         R(4)            4     1124     1     760      COM                                                 
+ EMT                        R(4)            4     4164     1     760      COM                                                 
+ EN                         R(4)            4     8              scalar   COM                                                 
+ ENT                        R(4)            4     12             scalar   COM                                                 
+ ETA                        R(4)            4     756      1     46       COM                                                 
+ ETADT                      R(4)            4     9839340  3     790020   COM                                                 
+ F                          R(4)            4     438124   2     17955    COM                                                 
+ F4D                        R(4)            4     24             scalar   COM                                                 
+ F4Q                        R(4)            4     28             scalar   COM                                                 
+ F4Q2                       R(4)            4     576      1     45       COM                                                 
+ FAD                        R(4)            4     653584   2     17955    COM                                                 
+ FCNEV                      R(4)            4     287280   2     17955    COM              1350,1383,1404                     
+ FCNEV1                     R(4)            4     1651860  2     17955    COM                                                 
+ FCNEV7                     R(4)            4     430920   2     17955    COM              1355,1388,1406                     
+ FCP                        R(4)            4     294484   2     17955    COM                                                 
+ FCSEV                      R(4)            4     359100   2     17955    COM              1363,1384,1409                     
+ FCSEV1                     R(4)            4     1723680  2     17955    COM                                                 
+ FCSEV7                     R(4)            4     502740   2     17955    COM              1368,1389,1411                     
+ FCU                        R(4)            4     718200   2     17955    COM              1415                               
+ FCU7                       R(4)            4     1005480  2     17955    COM              1419                               
+ FCV                        R(4)            4     790020   2     17955    COM              1416                               
+ FCV7                       R(4)            4     1077300  2     17955    COM              1420                               
+ FDIV                       R(4)            4     366304   2     17955    COM                                                 
+
+Page 25          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     12999420 2     17955    COM                                                 
+ FQNEV                      R(4)            4     0        2     17955    COM              1349,1381,1403                     
+ FQNEV1                     R(4)            4     1508220  2     17955    COM              1351                               
+ FQNEV7                     R(4)            4     143640   2     17955    COM              1354,1386,1405                     
+ FQSEV                      R(4)            4     71820    2     17955    COM              1362,1382,1408                     
+ FQSEV1                     R(4)            4     1580040  2     17955    COM              1364                               
+ FQSEV7                     R(4)            4     215460   2     17955    COM              1367,1387,1410                     
+ FQU                        R(4)            4     574560   2     17955    COM              1413                               
+ FQU7                       R(4)            4     861840   2     17955    COM              1417                               
+ FQV                        R(4)            4     646380   2     17955    COM              1414                               
+ FQV7                       R(4)            4     933660   2     17955    COM              1418                               
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ HBM2                       R(4)            4     6751080  2     17955    COM              898,1025,1027,1286,1295,1306,1320  
+ HBM3                       R(4)            4     6822900  2     17955    COM              1023,1068,1137,1146,1157,1166      
+ HTM                        R(4)            4     287280   3     807975   COM              994,1003,1047,1048,1187,1190,1194, 
+                                                                                           1197,1336                          
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     620      1     8        COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDTAD                      I(4)            4     72             scalar   COM              893,897,961,962,985,986            
+ IE_GLB_TABLE               I(4)            4     32       1     8        COM                                                 
+ IE_LOC_TABLE               I(4)            4     556      1     8        COM                                                 
+ IHE                        I(4)            4     0        1     399      COM              927,933,949,951,958,959,973,975,97 
+                                                                                           9,980,1024,1026,1035,1036,1041,104 
+                                                                                           2                                  
+ IHEG                       I(4)            4     0        1     387      COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1596     1     399      COM              1024,1026,1381,1382,1383,1384,1386 
+                                                                                           ,1387,1388,1389,1403,1404,1405,140 
+                                                                                           6,1408,1409,1410,1411              
+ IHWG                       I(4)            4     1548     1     387      COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ INUMQ                      I(4)            4     1064     1     100      COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IQUILT_GROUP               I(4)            4     1060           scalar   COM                                                 
+ IRAD                       I(4)            4     6384     1     45       COM                                                 
+ IRADG                      I(4)            4     6192     1     473      COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     8        COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     8        COM                                                 
+
+Page 26          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ IVE                        I(4)            4     3192     1     399      COM                                                 
+ IVEG                       I(4)            4     3096     1     387      COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IVW                        I(4)            4     4788     1     399      COM                                                 
+ IVWG                       I(4)            4     4644     1     387      COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     96       1     8        COM                                                 
+ JE_LOC_TABLE               I(4)            4     588      1     8        COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JS_GLB_TABLE               I(4)            4     64       1     8        COM                                                 
+ JS_LOC_TABLE               I(4)            4     524      1     8        COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ LC                         I(4)            4     3304080  2     17955    COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     17955    COM                                                 
+ LMV                        I(4)            4     87020    2     17955    COM                                                 
+ MPI_ARGVS_NULL             CHAR            1     0        2     1        COM                                                 
+ MPI_ARGV_NULL              CHAR            1     1        1     1        COM                                                 
+ MPI_BOTTOM                 I(4)            4     0              scalar   COM                                                 
+ MPI_COMM_COMP              I(4)            4     652            scalar   COM              1098,1249                          
+ MPI_COMM_INTER             I(4)            4     656            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     660      1     100      COM                                                 
+ MPI_ERRCODES_IGNORE        I(4)            4     20       1     1        COM                                                 
+ MPI_IN_PLACE               I(4)            4     4              scalar   COM                                                 
+ MPI_STATUSES_IGNORE        I(4)            4     0        2     5        COM                                                 
+ MPI_STATUS_IGNORE          I(4)            4     8        1     5        COM                                                 
+ MPI_UNWEIGHTED             I(4)            4     0              scalar   COM                                                 
+ MPI_WEIGHTS_EMPTY          I(4)            4     0              scalar   COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM              993,1335,1374,1399                 
+ MYIE1                      I(4)            4     56             scalar   COM              1066,1179,1284,1293,1304,1318      
+ MYIE1_P1                   I(4)            4     120            scalar   COM              1021,1135,1144,1155,1164           
+ MYIE1_P2                   I(4)            4     124            scalar   COM              947,971,1348,1361                  
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM              932                                
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM              896,1001                           
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM              938                                
+ MYIE_P4                    I(4)            4     112            scalar   COM              920,926                            
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+
+Page 27          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYIS                       I(4)            4     40             scalar   COM              993,1335,1374,1399                 
+ MYIS1                      I(4)            4     44             scalar   COM              1066,1179,1284,1293,1304,1318      
+ MYIS1_P1                   I(4)            4     84             scalar   COM              1021,1135,1144,1155,1164           
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM              896,1001                           
+ MYIS_P2                    I(4)            4     68             scalar   COM              947,971,1348,1361                  
+ MYIS_P3                    I(4)            4     72             scalar   COM              938                                
+ MYIS_P4                    I(4)            4     76             scalar   COM              920,926,932                        
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM              992,1334,1373,1398                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM              970,1360                           
+ MYJE1_P3                   I(4)            4     288            scalar   COM              937                                
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM              1065,1178,1283,1292,1303,1317      
+ MYJE2_P1                   I(4)            4     296            scalar   COM              1020,1134,1143,1154,1163           
+ MYJE2_P2                   I(4)            4     300            scalar   COM              946,1347                           
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM              895,1000                           
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM              919,925,931                        
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM              992,1334,1373,1398                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM              946,1347                           
+ MYJS1_P3                   I(4)            4     192            scalar   COM              937                                
+ MYJS1_P4                   I(4)            4     196            scalar   COM              931                                
+ MYJS2                      I(4)            4     148            scalar   COM              1065,1178,1283,1292,1303,1317      
+ MYJS2_P1                   I(4)            4     200            scalar   COM              1020,1134,1143,1154,1163           
+ MYJS2_P2                   I(4)            4     204            scalar   COM              970,1360                           
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+
+Page 28          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM              895,1000                           
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM              919,925                            
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM                                                 
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     76             scalar   COM                                                 
+ NCNVC                      I(4)            4     92             scalar   COM                                                 
+ NCP                        I(4)            4     84             scalar   COM                                                 
+ NEST                       I(4)            4     108            scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ NPHS                       I(4)            4     88             scalar   COM                                                 
+ NPREC                      I(4)            4     68             scalar   COM                                                 
+ NRADL                      I(4)            4     100            scalar   COM                                                 
+ NRADS                      I(4)            4     96             scalar   COM                                                 
+ NSHDE                      I(4)            4     80             scalar   COM                                                 
+ NSTART                     I(4)            4     60             scalar   COM                                                 
+ NTDDMP                     I(4)            4     64             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ OMGALF                     R(4)            4     3375540  3     807975   COM                                                 
+ PD                         R(4)            4     0        2     17955    COM                                                 
+ PDSL                       R(4)            4     0        2     17955    COM              921,1002,1352,1365,1377            
+ PREC                       R(4)            4     1149120  2     17955    COM                                                 
+ PSDT                       R(4)            4     71820    2     17955    COM                                                 
+ PSHLTR                     R(4)            4     2154600  2     17955    COM                                                 
+ PT                         R(4)            4     20             scalar   COM              1352,1365                          
+ Q                          R(4)            4     9767520  3     807975   COM              955,958,979,982,995,1004,1011,1053 
+                                                                                           ,1054,1139,1148,1202,1203,1204,128 
+                                                                                           8,1297,1337,1379                   
+ Q10                        R(4)            4     1795500  2     17955    COM                                                 
+ Q2                         R(4)            4     2226420  3     807975   COM                                                 
+ Q30                        R(4)            4     1508220  2     17955    COM                                                 
+ QOLD                       R(4)            4     1795500  3     807975   COM                                                 
+ QS                         R(4)            4     502740   2     17955    COM                                                 
+ QSHLTR                     R(4)            4     2082780  2     17955    COM                                                 
+
+Page 29          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ QWBS                       R(4)            4     861840   2     17955    COM                                                 
+ QZ0                        R(4)            4     359100   2     17955    COM                                                 
+ R                          R(4)            4     16             scalar   COM                                                 
+ RDETA                      R(4)            4     216      1     45       COM                                                 
+ RES                        R(4)            4     13071240 2     17955    COM                                                 
+ RESTRT                     L(4)            4     28             scalar   COM                                                 
+ RF                         R(4)            4     718200   2     17955    COM                                                 
+ RTOP                       R(4)            4     143640   3     807975   COM                                                 
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SI                         R(4)            4     1005480  2     17955    COM                                                 
+ SICE                       R(4)            4     215460   2     17955    COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SM                         R(4)            4     143640   2     17955    COM                                                 
+ SNO                        R(4)            4     933660   2     17955    COM                                                 
+ SR                         R(4)            4     3375900  2     17955    COM                                                 
+ SUBPOST                    L(4)            4     104            scalar   COM                                                 
+ T                          R(4)            4     71820    3     807975   COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TH10                       R(4)            4     1723680  2     17955    COM                                                 
+ TH30                       R(4)            4     1436400  2     17955    COM                                                 
+ THS                        R(4)            4     430920   2     17955    COM                                                 
+ THZ0                       R(4)            4     287280   2     17955    COM                                                 
+ TSHLTR                     R(4)            4     2010960  2     17955    COM                                                 
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+ TWBS                       R(4)            4     790020   2     17955    COM                                                 
+ U                          R(4)            4     3303720  3     807975   COM              939,949,950,973,974,1024           
+ U00                        R(4)            4     3231900  2     17955    COM                                                 
+ U10                        R(4)            4     1867320  2     17955    COM                                                 
+ U30                        R(4)            4     1580040  2     17955    COM                                                 
+ UL                         R(4)            4     3303720  1     90       COM                                                 
+ USTAR                      R(4)            4     71820    2     17955    COM                                                 
+ UZ0                        R(4)            4     143640   2     17955    COM                                                 
+ V                          R(4)            4     6535620  3     807975   COM              940,951,952,975,976,1026           
+ V10                        R(4)            4     1939140  2     17955    COM                                                 
+ V30                        R(4)            4     1651860  2     17955    COM                                                 
+ VBM2                       R(4)            4     0        2     17955    COM                                                 
+ VBM3                       R(4)            4     71820    2     17955    COM                                                 
+ VTM                        R(4)            4     3519180  3     807975   COM              949,950,951,952,973,974,975,976    
+ VZ0                        R(4)            4     215460   2     17955    COM                                                 
+
+Page 30          Source Listing                  HZADV2
+2022-02-15 16:37 Symbol Table                    HZADV2.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ WPDAR                      R(4)            4     79024    2     17955    COM                                                 
+ Z0                         R(4)            4     0        2     17955    COM                                                 
+
+Page 31          Source Listing                  HZADV2
+2022-02-15 16:37 Subprograms/Common Blocks       HZADV2.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CLDWTR                     Common 816                                  3447720  SAVE                                               
+ CONTIN                     Common 763                                  12999420 SAVE                                               
+ CTLBLK                     Common 717                                  112      SAVE                                               
+ DYNAM                      Common 746                                  725404   SAVE                                               
+ GLB_TABLE                  Common 115                                  128      SAVE                                               
+ HZADV2                     Subr   3                                                                                                
+ INDX                       Common 825                                  6564     SAVE                                               
+ INDXG                      Common 831                                  8084     SAVE                                               
+ LOOPS                      Common 726                                  158840   SAVE                                               
+ MAPPINGS                   Common 134                                  5024     SAVE                                               
+ MASKS                      Common 734                                  6894720  SAVE                                               
+ MPIFCMB5                   Common 692                                  4        SAVE                                               
+ MPIFCMB9                   Common 693                                  4        SAVE                                               
+ MPIPRIV1                   Common 697                                  28       SAVE                                               
+ MPIPRIV2                   Common 699                                  24       SAVE                                               
+ MPIPRIVC                   Common 702                                  2        SAVE                                               
+ MPPCOM                     Common 79                                   1464     SAVE                                               
+ PVRBLS                     Common 785                                  5530140  SAVE                                               
+ QFLX                       Common 837                                  5027400  SAVE                                               
+ TEMPCOM                    Common 120                                  6603768  SAVE                                               
+ TOPO                       Common 128                                  17478548 SAVE                                               
+ VRBLS                      Common 774                                  13143060 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+
+Page 32          Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+
+Page 33          Source Listing                  HZADV2
+2022-02-15 16:37                                 HZADV2.F
+
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : HZADV2.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

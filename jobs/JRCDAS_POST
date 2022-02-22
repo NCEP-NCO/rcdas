@@ -1,0 +1,155 @@
+#!/bin/sh
+##########################################################################
+#
+# RCDAS Postprocessing
+#
+# 1. make e-grid grib files
+# 2. make AWIPS grib files
+# 3. make merged files
+# 4. (not working) make molts (bufr files from analyses)
+# 5. compress restart and prepout files
+#
+# input: restart files
+# output: egrid-grib, AWIPS, merged AWIPS files
+#
+# runs in 12 hour chunks
+#
+# runs on 1 CPU (no mpi)
+#
+# Usage:
+#
+#      rcdas_post.sh [YYYYMMDDHH]
+#
+# If no date code is given, the code tries to to the next 12 hour chunk.
+# If a date code is given, the HH (hour) must either be 00 or 12.
+#
+#
+# calls $HOMErcdas/scripts/rcdas_post.sh
+#
+###########################################################################
+
+export RUN_ENVIR=${RUN_ENVIR:-prod}
+
+export PS4='$SECONDS + '
+date
+set -x
+
+##############################
+# Set up the UTILITIES
+##############################
+fatal() {
+  msg="fatal error $*"
+  postmsg "$msg"
+  exit 8
+}
+
+####################################
+# obtain unique process id (pid) and make temp directory
+####################################
+export pid=$$
+export job=${job:-JOB}
+export outid=${outid:-OUTID}
+export DATA=${DATA:-$DATAROOT/${job}.${pid}}
+mkdir -p $DATA
+cd $DATA || fatal "could not cd to $DATA"
+
+export cycle=t${cyc}z
+
+####################################
+# Specify NET and RUN Name and model
+# SENDCOM  - Copy Files From TMPDIR to $COMOUT
+# SENDDBN  - Issue DBNet Client Calls
+####################################
+export NET=${NET:-rcdas}
+export RUN=${RUN:-rcdas}
+export model=${model:-rcdas}
+export version=${version:-$rcdas_ver}
+export KEEPDATA=${KEEPDATA:-NO}
+
+if [ $envir = "prod" ]
+then
+   export SENDDBN=${SENDDBN:-YES}
+else
+   export SENDDBN=${SENDDBN:-NO}
+fi
+export SENDCOM=${SENDCOM:-'YES'}
+
+####################################
+# Determine Job Output Name on System
+####################################
+export outid="LL$job"
+export jobid="${outid}.o${pid}"
+export pgmout="OUTPUT.${pid}"
+export pgmerr=errfile
+
+####################################
+# Specify Execution Areas
+####################################
+export HOMErcdas=$PACKAGEROOT/${model}.${version}
+export EXECrcdas=${HOMErcdas}/exec
+export PARMrcdas=${HOMErcdas}/parm
+export USHrcdas=${HOMErcdas}/ush
+export FIXrcdas=${HOMErcdas}/fix
+
+##############################
+# Run setpdy and initialize PDY variables
+##############################
+setpdy.sh
+. ./PDY
+
+##############################
+# set DATE 
+##############################
+if [ $cyc = 00 ]
+then
+   DATE=${DATE:-"$PDYm2$cyc"}
+else
+   DATE=${DATE:-"$PDYm3$cyc"}
+fi
+export DATE
+
+CDATE=`echo $DATE | cut -c1-8`
+HR=`echo $DATE | cut -c9-10`
+[ "$HR" -ne 0 -a "$HR" -ne 12 ] && fatal "HR must be 00 or 12 not $HR"
+export HR
+
+export DATE_M12=`$NDATE -12 $DATE`
+export CDATM12=`echo $DATE_M12 | cut -c1-8`
+
+##############################################
+# Define COM directories
+##############################################
+set -x
+export COMrcdas=${COMrcdas:-$(compath.py ${envir}/com/${NET}/${version})}
+
+export COMIN=$COMrcdas/${RUN}.$CDATE
+export COMOUT=$COMrcdas/${RUN}.$CDATE
+export COMOUT_M12=$COMrcdas/${RUN}.$CDATM12
+
+mkdir -p $COMOUT $COMOUT_M12
+
+msg="HAS BEGUN on `hostname`"
+postmsg "$msg"
+env
+#############################################################
+# Execute the script
+${HOMErcdas}/scripts/exrcdas_post.sh
+#############################################################
+err=$?
+if [ $err -eq 0 ] ; then
+  msg="ENDED NORMALLY."
+else
+  msg="ERROR."
+fi
+postmsg "$msg"
+
+##############################
+# Remove the Temporary working directory
+##############################
+if [ $KEEPDATA != YES ] ; then
+   cd $DATA || fatal "could not cd to $DATA"
+   cd ..
+   rm -r $DATA
+fi
+
+exit $err

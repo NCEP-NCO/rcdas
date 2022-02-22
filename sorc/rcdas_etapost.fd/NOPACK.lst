@@ -1,0 +1,576 @@
+Page 1           Source Listing                                                                
+2022-02-15 16:39                                 NOPACK.f
+
+NOPACK.f(185): remark #8291: Recommended relationship between field width 'W' and the number of fractional digits 'D' in this edi...
+ 1040 FORMAT('NOPACK:',I3,1X,A20,1X,3(G12.6,1X),I5,1X,L1)
+---------------------------------------^
+NOPACK.f(151): remark #8291: Recommended relationship between field width 'W' and the number of fractional digits 'D' in this edi...
+ 1030       FORMAT(4(G12.6,1X))
+----------------------^
+
+Page 2           Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+      1       SUBROUTINE NOPACK(IFLD,ILVL,GRID,IMOUT,JMOUT)
+      2 C
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    NOPACK      POST FIELDS IN CRAY BINARY
+      6 C   PRGRMMR: TREADON         ORG: W/NP2 
+      7 C     
+      8 C ABSTRACT:
+      9 C     THIS ROUTINE POSTS THE DATA IN THE PASSED ARRAY GRID
+     10 C     TO THE OUTPUT FILE AS AN UNFORMATTED CRAY BINARY FILE.
+     11 C   .     
+     12 C     
+     13 C PROGRAM HISTORY LOG:
+     14 C   92-12-22  RUSS TREADON
+     15 C     
+     16 C USAGE:    CALL NOPACK(IFLD,ILVL,GRID,IMOUT,JMOUT)
+     17 C   INPUT ARGUMENT LIST:
+     18 C     IFLD     - FIELD ID TAG.
+     19 C     ILVL     - INTEGER TAG FOR LEVEL OF FIELD.
+     20 C     GRID     - FIELD TO BE POSTED IN CRAY BINARY.
+     21 C     IMOUT    - FIRST DIMENSION OF OUTPUT GRID.
+     22 C     JMOUT    - SECOND DIMENSION OF OUTPUT GRID.
+     23 C
+     24 C   OUTPUT ARGUMENT LIST: 
+     25 C     
+     26 C   OUTPUT FILES:
+     27 C     STDOUT  - RUN TIME STANDARD OUT.
+     28 C     LUNOUT  - UNIT DATA IS POSTED TO.
+     29 C     
+     30 C   SUBPROGRAMS CALLED:
+     31 C     UTILITIES:
+     32 C       MINMAX   - DETERMINES MIN/MAX VALUES IN AN ARRAY.
+     33 C     LIBRARY:
+     34 C       COMMON   - CTLBLK
+     35 C                  MAPOT
+     36 C                  RQSTFLD
+     37 C                  IOUNIT
+     38 C                  OUTGRD
+     39 C     
+     40 C   ATTRIBUTES:
+     41 C     LANGUAGE: FORTRAN
+     42 C     MACHINE : CRAY C-90
+     43 C$$$  
+     44 C
+     45 C
+     46 C
+     47 C     INCLUDE ETA GRID DIMENSIONS.  SET/DERIVE PARAMETERS.
+     48 C
+     49       INCLUDE "parmeta"
+     67       INCLUDE "parmout"
+     71       PARAMETER (LP1=LM+1,D50=0.5E0)
+     72 C     
+     73 C     DECLARE VARIABLES.
+     74 C     
+     75       LOGICAL RUN,FIRST,RESRT,SIGMA,OLDRD,STDRD
+     76       LOGICAL NORTH,HEADER
+     77       CHARACTER*4  RESTHR
+
+Page 3           Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+     78       CHARACTER*6  PROJ,BLANK
+     79       CHARACTER*8  DESCR2
+     80       CHARACTER*50 ENVAR
+     81       CHARACTER*80 FNAME
+     82       REAL GRID(IMOUT,JMOUT)
+     83 C     
+     84 C     INCLUDE COMMON BLOCKS.
+     85       INCLUDE "CTLBLK.comm"
+    100       INCLUDE "MAPOT.comm"
+    113       INCLUDE "IOUNIT.comm"
+    121       INCLUDE "RQSTFLD.comm"
+    134       INCLUDE "OUTGRD.comm"
+    139       DATA BLANK/'      '/
+    140 C     
+    141 C
+    142 C****************************************************************************
+    143 C     START NOPACK HERE.
+    144 C
+    145 C     SET OUTPUT GRID TYPE.  WE ASSUME KGYTPE HOLDS THE ON84
+    146 C     ID FOR THE OUTPUT GRID.
+    147 C     UNIQUE ON84 LABELS FOR VARIOUS ETA DOMAINS BELOW:
+    148 C              90 = STAGGERED 80KM E-GRID 
+    149 C              91 = FILLED    80KM E-GRID
+    150 C              92 = STAGGERED 40KM E-GRID
+    151 C              93 = FILLED    40KM E-GRID
+    152 C              94 = STAGGERED 30KM E-GRID
+    153 C              95 = FILLED    30KM E-GRID
+    154 C              96 = STAGGERED "BIG" 40KM E-GRID (EDAS)
+    155 C     
+    156       KGTYP = KGTYPE
+    157 C     IF NEED BE, OPEN A UNIT TO THE OUTPUT FILE.  IF REQUESTED,
+    158 C     WRITE DATE AND GRID INFO IF REQUESTED.
+    159 C     
+    160       IF (RITEHD) THEN
+    161 C
+    162 C        APPEND FORECAST HOUR TO SUFFIX FOR SEQUENTIAL BINARY FILE.
+    163          IHR = NTSD/TSPH + 0.5
+    164 C     
+    165 C        GET FULL PATH FOR OUTPUT FILE FROM ENVIRONMENT VARIABLE
+    166 C        COMSP WHICH IS SET IN THE SCRIPT RUNNING THE MODEL.
+    167 C     
+    168 C        CONSTRUCT FULL PATH-FILENAME FOR OUTPUT FILE
+    169          ENVAR = ' '
+    170          CALL get_environment_variable('COMSP',ENVAR)
+    171          IF (ENVAR(1:6).EQ.BLANK) THEN
+    172           WRITE(DESCR2,1000) IHR
+    173  1000     FORMAT('.SbinF',I2.2)
+    174           KDAT = INDEX(DATSET,' ') -1
+    175           IF (KDAT.LE.0) KDAT = LEN(DATSET)
+    176           FNAME = DATSET(1:KDAT) // DESCR2
+    177          ELSE
+    178           CALL get_environment_variable('tmmark',RESTHR)
+    179           WRITE(DESCR2,1011) IHR
+    180  1011     FORMAT(I2.2)
+    181           KENV = INDEX(ENVAR,' ') -1
+    182           IF (KENV.LE.0) KENV = LEN(ENVAR)
+    183           KDAT = INDEX(DATSET,' ') -1
+
+Page 4           Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+    184           IF (KDAT.LE.0) KDAT = LEN(DATSET)
+    185           FNAME = ENVAR(1:KENV) // DATSET(1:KDAT) // DESCR2(1:2)
+    186      &              //'.'// RESTHR
+    187          ENDIF
+    188 C
+    189 C        ASSIGN AND OPEN UNIT FOR DATA FILE.
+    190          CLOSE(LUNOUT)
+    191 C        CALL ASNUNIT(LUNOUT,'-F cos -N ibm',ier)
+    192 C        IF (IER.NE.0) WRITE(STDOUT,*)
+    193 C    X        'NOPACK:  ASNUNIT ERROR IER=',IER
+    194          OPEN(LUNOUT,FILE=FNAME,FORM='UNFORMATTED')
+    195          REWIND(LUNOUT)
+    196 C
+    197          RITEHD = .FALSE.
+    198          WRITE(STDOUT,*)'NOPACK:  OPENED ',LUNOUT,' ',FNAME,
+    199      X        ' ',DATSET
+    200 C      
+    201 C        IF REQUESTED, THE FIRST TWO "RECORDS" INCLUDE DATE 
+    202 C        AND OUTPUT GRID INFORMATION.  WE WRITE THEM ONLY 
+    203 C        ONCE TO EACH OUTPUT GRID.  
+    204 C     
+    205          IF (INDEX(DATSET,'NOHEAD').EQ.0) THEN
+    206             IHH = NTSD/TSPH+D50
+    207             IYY = IDAT(3)-1900
+    208             IMM = IDAT(1)
+    209             IDD = IDAT(2)
+    210             WRITE(LUNOUT) IHRST,IMM,IDD,IYY,IHH
+    211             WRITE(LUNOUT) KGTYP,PROJ,NORTH,IMOUT,JMOUT,
+    212      X           POLEI,POLEJ,ALATVT,ALONVT,XMESHL
+    213             WRITE(STDOUT,*)'NOPACK:  WROTE DATE AND GRID INFO'
+    214             WRITE(STDOUT,1010) IHRST,IMM,IDD,IYY,IHH
+    215             WRITE(STDOUT,1020) KGTYP,PROJ,NORTH,IMOUT,JMOUT
+    216             WRITE(STDOUT,1030) POLEI,POLEJ,ALATVT,ALONVT
+    217             WRITE(STDOUT,1030) XMESHL
+    218  1010       FORMAT(5(I5,1X))
+    219  1020       FORMAT(I5,1X,A6,1X,L1,1X,I5,1X,I5)
+    220  1030       FORMAT(4(G12.6,1X))
+	......................1         
+(1) Recommended relationship between field width 'W' and the number of fractional digits 'D' in this edit descriptor is 'W>=D+7'.
+
+    221          ENDIF
+    222       ENDIF
+    223 C     
+    224 C     SET SURFACE VALUE FOR DATA.
+    225 C
+    226       SFC = 0.
+    227       IF (IS(IDENT(IFLD)).EQ.8) THEN
+    228          SFC = SPL(ILVL)
+    229       ELSEIF (IS(IDENT(IFLD)).EQ.149) THEN
+    230 C
+    231 C   TKE IS ON THE ETA INTERFACE AT THE BOTTOM OF THE LAYER ILVL
+    232 C
+    233          SFC = AETA(ILVL)
+    234          IF (IQ(IDENT(IFLD)).EQ.158) SFC = ETA(ILVL+1)
+    235       ENDIF
+    236 C
+    237 C     IF DATSET CONTAINS "NOHEAD" WE SKIP THE HEADER STUFF 
+
+Page 5           Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+    238 C     THAT FOLLOWS AND GO DIRECTLY TO THE DATA.  A USER 
+    239 C     WOULD USED THIS OPTION IF (S)HE WANTS TO DIRECTLY
+    240 C     CONTOUR DATA USING NMCIDAS.
+    241 C     
+    242       HEADER = .FALSE.
+    243       IF (INDEX(DATSET,'NOHEAD').NE.0) GOTO 10
+    244       WRITE(LUNOUT) FIELD(IFLD),SFC
+    245       HEADER = .TRUE.
+    246 C     
+    247 C     WRITE DATA TO OUTPUT FILE.
+    248 C     
+    249  10   CONTINUE
+    250       WRITE(LUNOUT) GRID
+    251       CALL MINMAX(GRID,IMOUT,JMOUT,FMIN,FMAX)
+    252       WRITE(STDOUT,1040) IFLD,FIELD(IFLD),SFC,FMIN,FMAX,
+    253      X     KGTYP,HEADER
+    254  1040 FORMAT('NOPACK:',I3,1X,A20,1X,3(G12.6,1X),I5,1X,L1)
+	.......................................1                  
+(1) Recommended relationship between field width 'W' and the number of fractional digits 'D' in this edit descriptor is 'W>=D+7'.
+
+    255 C     
+    256 C     END OF ROUTINE.
+    257 C     
+    258       RETURN
+    259       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ nopack_             
+
+Page 6           Source Listing                  NOPACK
+2022-02-15 16:39 Symbol Table                    NOPACK.f
+
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  249                                                            243                               
+ 1000                       Label  173                                                            172                               
+ 1010                       Label  218                                                            214                               
+ 1011                       Label  180                                                            179                               
+ 1020                       Label  219                                                            215                               
+ 1030                       Label  220                                                            216,217                           
+ 1040                       Label  254                                                            252                               
+ BLANK                      Local  78       CHAR            6           scalar                    139,171                           
+ CTLBLK                     Common 87                                   96       SAVE                                               
+ D50                        Param  71       R(4)            4           scalar                    206                               
+ DESCR2                     Local  79       CHAR            8           scalar                    172,176,179,185                   
+ ENVAR                      Local  80       CHAR            50          scalar                    169,170,171,181,182,185           
+ FMAX                       Local  251      R(4)            4           scalar                    251,252                           
+ FMIN                       Local  251      R(4)            4           scalar                    251,252                           
+ FNAME                      Local  81       CHAR            80          scalar                    176,185,194,198                   
+ GET_ENVIRONMENT_VARIABLE   Intrin 170                                                            170,178                           
+ GRID                       Dummy  1        R(4)            4     2     0        ARG,INOUT        250,251                           
+ HEADER                     Local  76       L(4)            4           scalar                    242,245,253                       
+ IDD                        Local  209      I(4)            4           scalar                    209,210,214                       
+ IDIM1                      Param  63       I(4)            4           scalar                                                      
+ IDIM2                      Param  63       I(4)            4           scalar                                                      
+ IFLD                       Dummy  1        I(4)            4           scalar   ARG,INOUT        227,229,234,244,252               
+ IGSTL                      Param  58       I(4)            4           scalar                    63                                
+ IGSTR                      Param  58       I(4)            4           scalar                    63                                
+ IHH                        Local  206      I(4)            4           scalar                    206,210,214                       
+ IHR                        Local  163      I(4)            4           scalar                    163,172,179                       
+ ILVL                       Dummy  1        I(4)            4           scalar   ARG,INOUT        228,233,234                       
+ IM                         Param  52       I(4)            4           scalar                    60,63,70                          
+ IMM                        Local  208      I(4)            4           scalar                    208,210,214                       
+ IMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        82,211,215,251                    
+ IMX                        Param  70       I(4)            4           scalar                                                      
+ INDEX                      Func   174                                  scalar                    174,181,183,205,243               
+ INPES                      Param  55       I(4)            4           scalar                    60,63                             
+ IOUNIT                     Common 117                                  20       SAVE                                               
+ ITAIL                      Param  60       I(4)            4           scalar                                                      
+ IYY                        Local  207      I(4)            4           scalar                    207,210,214                       
+ JDIM1                      Param  64       I(4)            4           scalar                                                      
+ JDIM2                      Param  64       I(4)            4           scalar                                                      
+ JGSTL                      Param  59       I(4)            4           scalar                    64                                
+ JGSTR                      Param  59       I(4)            4           scalar                    64                                
+ JM                         Param  52       I(4)            4           scalar                    61,64,70                          
+ JMOUT                      Dummy  1        I(4)            4           scalar   ARG,INOUT        82,211,215,251                    
+ JMX                        Param  70       I(4)            4           scalar                                                      
+ JNPES                      Param  55       I(4)            4           scalar                    61,64                             
+ JTAIL                      Param  61       I(4)            4           scalar                                                      
+ KDAT                       Local  174      I(4)            4           scalar                    174,175,176,183,184,185           
+ KENV                       Local  181      I(4)            4           scalar                    181,182,185                       
+ KGTYP                      Local  156      I(4)            4           scalar                    156,211,215,253                   
+ LEN                        Func   175                                  scalar                    175,182,184                       
+ LM                         Param  52       I(4)            4           scalar                    70,71,108                         
+ LP1                        Param  71       I(4)            4           scalar                    108                               
+
+Page 7           Source Listing                  NOPACK
+2022-02-15 16:39 Symbol Table                    NOPACK.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LSM                        Param  52       I(4)            4           scalar                    107                               
+ MAPOT                      Common 102                                  1448     SAVE                                               
+ MINMAX                     Subr   251                                                            251                               
+ MXFLD                      Param  70       I(4)            4           scalar                    123,129,130,131,132               
+ MXLVL                      Param  70       I(4)            4           scalar                    131                               
+ NOPACK                     Subr   1                                                                                                
+ OLDRD                      Local  75       L(4)            4           scalar                                                      
+ OUTGRD                     Common 136                                  50       SAVE                                               
+ PARALLEL                   Common 94                                   8240                                                        
+ RESRT                      Local  75       L(4)            4           scalar                                                      
+ RESTHR                     Local  77       CHAR            4           scalar                    178,186                           
+ RQSTFLD                    Common 128                                  64130                                                       
+ SFC                        Local  226      R(4)            4           scalar                    226,228,233,234,244,252           
+ STDRD                      Local  75       L(4)            4           scalar                                                      
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     808      1     45       COM              233                                
+ ALATVT                     R(4)            4     0              scalar   COM              212,216                            
+ ALONVT                     R(4)            4     4              scalar   COM              212,216                            
+ ALSL                       R(4)            4     472      1     39       COM                                                 
+ AVBL                       CHAR            20    59130    1     250      COM                                                 
+ CMLD                       R(4)            4     292            scalar   COM                                                 
+ CPHI0                      R(4)            4     1420           scalar   COM                                                 
+ DATSET                     CHAR            6     54124          scalar   COM              174,175,176,183,184,185,199,205,24 
+                                                                                           3                                  
+ DEC                        R(4)            4     1016     1     250      COM                                                 
+ DETA                       R(4)            4     628      1     45       COM                                                 
+ DISLP                      R(4)            4     308            scalar   COM                                                 
+ DLMD                       R(4)            4     284            scalar   COM                                                 
+ DP30                       R(4)            4     296            scalar   COM                                                 
+ DPHD                       R(4)            4     288            scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ ERLAM0                     R(4)            4     1416           scalar   COM                                                 
+ ETA                        R(4)            4     988      1     46       COM              234                                
+ FIELD                      CHAR            20    54130    1     250      COM              244,252                            
+ FIRST                      L(4)            4     24             scalar   COM                                                 
+ GI2                        R(4)            4     36             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ ID                         I(4)            4     54016    1     25       COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM              207,208,209                        
+ IDENT                      I(4)            4     52016    1     250      COM              227,229,234                        
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFILV                      I(4)            4     53016    1     250      COM                                                 
+ IGET                       I(4)            4     16       1     250      COM                                                 
+ IGOUT                      I(4)            4     20             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM              210,214                            
+ IMDLTY                     I(4)            4     28             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IOUTYP                     I(4)            4     4              scalar   COM                                                 
+
+Page 8           Source Listing                  NOPACK
+2022-02-15 16:39 Symbol Table                    NOPACK.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IQ                         I(4)            4     2016     1     250      COM              234                                
+ IS                         I(4)            4     3016     1     250      COM              227,229                            
+ ISHDE                      I(4)            4     12       1     61       COM                                                 
+ ISMFUL                     I(4)            4     5016     1     250      COM                                                 
+ ISMOUT                     I(4)            4     6016     1     250      COM                                                 
+ ISMSTG                     I(4)            4     4016     1     250      COM                                                 
+ IUNIT                      I(4)            4     1440           scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IXM                        I(4)            4     4              scalar   COM                                                 
+ IYM                        I(4)            4     8              scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM                                                 
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JGOUT                      I(4)            4     24             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM                                                 
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KGTYPE                     I(4)            4     0              scalar   COM              156                                
+ KUNIT                      I(4)            4     1428           scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LSL                        I(4)            4     0              scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM                                                 
+ LUNIT                      I(4)            4     1432           scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM                                                 
+ LUNOUT                     I(4)            4     16             scalar   COM              190,194,195,198,210,211,244,250    
+ LVLS                       I(4)            4     7016     2     11250    COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ MUNIT                      I(4)            4     1436           scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NFLD                       I(4)            4     12             scalar   COM                                                 
+ NORTH                      L(4)            4     40             scalar   COM              211,215                            
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM              163,206                            
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ NUNIT                      I(4)            4     1444           scalar   COM                                                 
+ POLEI                      R(4)            4     8              scalar   COM              212,216                            
+ POLEJ                      R(4)            4     12             scalar   COM              212,216                            
+ PROJ                       CHAR            6     44             scalar   COM              211,215                            
+ PT                         R(4)            4     260            scalar   COM                                                 
+ R                          R(4)            4     256            scalar   COM                                                 
+ RE                         R(4)            4     32             scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RITE2                      L(4)            4     54120          scalar   COM                                                 
+
+Page 9           Source Listing                  NOPACK
+2022-02-15 16:39 Symbol Table                    NOPACK.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ RITEHD                     L(4)            4     54116          scalar   COM              160,197                            
+ RUN                        L(4)            4     4              scalar   COM                                                 
+ SBD                        R(4)            4     272            scalar   COM                                                 
+ SIGMA                      L(4)            4     0              scalar   COM                                                 
+ SPHI0                      R(4)            4     1424           scalar   COM                                                 
+ SPL                        R(4)            4     316      1     39       COM              228                                
+ STDOUT                     I(4)            4     0              scalar   COM              198,213,214,215,216,217,252        
+ SVALUE                     R(4)            4     8              scalar   COM                                                 
+ TLM0D                      R(4)            4     276            scalar   COM                                                 
+ TPH0D                      R(4)            4     280            scalar   COM                                                 
+ TSHDE                      R(4)            4     1172     1     61       COM                                                 
+ TSPH                       R(4)            4     264            scalar   COM              163,206                            
+ WBD                        R(4)            4     268            scalar   COM                                                 
+ X1P                        R(4)            4     300            scalar   COM                                                 
+ XMESHL                     R(4)            4     16             scalar   COM              212,217                            
+ Y1P                        R(4)            4     304            scalar   COM                                                 
+ Z0SLP                      R(4)            4     312            scalar   COM                                                 
+
+Page 10          Source Listing                  NOPACK
+2022-02-15 16:39 Subprograms/Common Blocks       NOPACK.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 87                                   96       SAVE                                               
+ IOUNIT                     Common 117                                  20       SAVE                                               
+ MAPOT                      Common 102                                  1448     SAVE                                               
+ NOPACK                     Subr   1                                                                                                
+ OUTGRD                     Common 136                                  50       SAVE                                               
+ PARALLEL                   Common 94                                   8240                                                        
+ RQSTFLD                    Common 128                                  64130                                                       
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+
+Page 11          Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+
+Page 12          Source Listing                  NOPACK
+2022-02-15 16:39                                 NOPACK.f
+
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : NOPACK.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

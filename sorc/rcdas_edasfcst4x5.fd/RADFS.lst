@@ -1,0 +1,1540 @@
+Page 1           Source Listing                  RADFS
+2022-02-15 16:38                                 /tmp/ifortURQcK7.i
+
+      1 # 1 "RADFS.F"
+      2                         SUBROUTINE RADFS 
+      3 C     *****************************************************************
+      4 C     *                                                               *
+      5 C     *   THE INTERNAL DRIVE FOR GFDL RADIATION                       *
+      6 C     *   THIS SUBROUTINE WAS FROM Y.H AND K.A.C (1993)               *
+      7 C     *   AND MODIFIED BY Q. ZHAO FOR USE IN THE ETA MODEL            *
+      8 C     *                   NOV. 18,  1993                              *
+      9 C     *                                                               *
+     10 C     * UPDATE: THIS SUBROUTINE WAS MODIFIED TO USE CLOUD FRACTION    *
+     11 C     *         ON EACH MODEL LAYER.                                  *
+     12 C     *                                QINGYUN  ZHAO   95-3-22        *
+     13 C     *                                                               *
+     14 C     * UPDATE: R1 HAS BEEN ADDED TO THE INPUTS FROM RADTN TO         *
+     15 C     *         COMPUTE THE VARIATION OF SOLAR CONSTANT AT THE TOP    *
+     16 C     *         OF ATMOSPHERE WITH JULIAN DAY IN A YEAR.              *
+     17 C     *                                QINGYUN  ZHAO   96-7-23        *
+     18 C     *****************************************************************
+     19 C***
+     20 C***  REQUIRED INPUT:
+     21 C***
+     22      1          (QS,PP,PPI,QQH2O,TT,O3QO3,TSFC,SLMSK,ALBEDO,XLAT
+     23      2,          CAMT,ITYP,KTOP,KBTM,NCLDS,EMCLD,RRCL,TTCL
+     24      3,          COSZRO,TAUDAR,IBEG
+     25      4,          KO3,KALB
+     26      5,          SLMRF,SLYMRF,ITIMSW,ITIMLW
+     27 C***************************************************************************
+     28 C*              IX IS THE LENGTH OF A ROW IN THE DOMAIN
+     29 C
+     30 C*   QS(IX):		THE SURFACE PRESSURE (PA)
+     31 C*   PP(IX,L):		THE MIDLAYER PRESSURES (PA)  (L IS THE VERT. DIMEN.)
+     32 C*   PPI(IX,LP1)	THE INTERFACE PRESSURES (PA)
+     33 C*   QQH2O(IX,L):	THE MIDLAYER WATER VAPOR MIXING RATIO (KG/KG)
+     34 C*   TT(IX,L):		THE MIDLAYER TEMPERATURE (K)
+     35 C*   O3QO3(IX,L):	THE MIDLAYER OZONE MIXING RATIO
+     36 C*   TSFC(IX):		THE SKIN TEMP. (K); NEGATIVE OVER WATER
+     37 C*   SLMSK(IX):		THE SEA MASK (LAND=0,SEA=1)
+     38 C*   ALBEDO(IX):	THE SURFACE ALBEDO (EXPRESSED AS A FRACTION)
+     39 C*   XLAT(IX):		THE GEODETIC LATITUDES OF EACH COLUMN IN DEGREES
+     40 C*				(N.H.> 0)
+     41 C* THE FOLLOWING ARE CLOUD INFORMATION FOR EACH CLOUD LAYER
+     42 C*                      LAYER=1:SURFACE
+     43 C*                      LAYER=2:FIRST LAYER ABOVE GROUND, AND SO ON
+     44 C*   CAMT(IX,LP1):      CLOUD FRACTION OF EACH CLOUD LAYER
+     45 C*   ITYP(IX,LP1):      CLOUD TYPE(=1: STRATIFORM, =2:CONVECTIVE)
+     46 C*   KTOP(IX,LP1):      HEIGHT OF CLOUD TOP OF EACH CLOUD LAYER (IN ETA LEVEL)
+     47 C*   KBTM(IX,LP1):      BOTTOM OF EACH CLOUD LAYER
+     48 C*   NCLDS(IX):         NUMBER OF CLOUD LAYERS
+     49 C*   EMCLD(IX,LP1):     CLOUD EMISSIVITY
+     50 C*   RRCL(IX,NB,LP1)    CLOUD REFLECTTANCES FOR SW SPECTRAL BANDS
+     51 C*   TTCL(IX,NB,LP1)    CLOUD TRANSMITANCES FOR SW SPECTRAL BANDS
+     52 C* THE ABOVE ARE CLOUD INFORMATION FOR EACH CLOUD LAYER
+     53 C*
+     54 C*   COSZRO(IX):	THE COSINE OF THE SOLAR ZENITH ANGLE
+     55 C*   TAUDAR:		=1.0
+     56 C*   IBEG:		=1
+     57 C*   KO3:		=1 ( READ IN THE QZONE DATA)
+
+Page 2           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+     58 C*   KALB:		=0
+     59 C*   SLMRF(LP1):	THE INTERFACE'S ETA (LP1=L+1)
+     60 C*   SLYMRF(L):		THE MIDLAYER ETA
+     61 C*   ITIMSW:		=1/0 (SHORTWAVE CALC. ARE DESIRED/NOT DESIRED)
+     62 C*   ITIMLW:		=1/0 (LONGWAVE CALC. ARE DESIRED/NOT DESIRED)
+     63 C************************************************************************
+     64 C***
+     65 C*** THE FOLLOWING ARE ADDITIONAL FOR ETA MODEL
+     66 C***
+     67      6,          JD,R1,GMT
+     68 C**************************************************************************
+     69 C*   JD: JULIAN DAY IN A YEAR
+     70 C*   R1: THE NON-DIMENSIONAL SUN-EARTH DISTANCE
+     71 C*   GMT:HOUR
+     72 C**************************************************************************
+     73 C***
+     74 C*** GENERATED OUTPUT REQUIRED BY THE ETA MODEL
+     75 C***
+     76      7,          SWH,HLW
+     77      8,          FLWUP,FSWUP,FSWDN,FSWDNS,FSWUPS,FLWDNS,FLWUPS)
+     78 C************************************************************************
+     79 C*    SWH: ATMOSPHERIC SHORTWAVE HEATING RATES IN K/S.
+     80 C*         SWH IS A REAL ARRAY DIMENSIONED (NCOL X LM).
+     81 C*    HLW: ATMOSPHERIC LONGWAVE HEATING RATES IN K/S.
+     82 C*         HLW IS A REAL ARRAY DIMENSIONED (NCOL X LM).
+     83 C*  FLWUP: UPWARD LONGWAVE FLUX AT TOP OF THE ATMOSPHERE IN W/M**2.
+     84 C*         FLWUP IS A REAL ARRAY DIMENSIONED (NCOL).
+     85 C*  FSWUP: UPWARD SHORTWAVE FLUX AT TOP OF THE ATMOSPHERE IN W/M**2.
+     86 C*         FSWUP IS A REAL ARRAY DIMENSIONED (NCOL).
+     87 C*  FSWDN: DOWNWARD SHORTWAVE FLUX AT TOP OF THE ATMOSPHERE IN W/M**2.
+     88 C*         FSWDN IS A REAL ARRAY DIMENSIONED (NCOL).
+     89 C* FSWDNS: DOWNWARD SHORTWAVE FLUX AT THE SURFACE IN W/M**2.
+     90 C*         FSWDNS IS A REAL ARRAY DIMENSIONED (NCOL).
+     91 C* FSWUPS: UPWARD SHORTWAVE FLUX AT THE SURFACE IN W/M**2.
+     92 C*         FSWUPS IS A REAL ARRAY DIMENSIONED (NCOL).
+     93 C* FLWDNS: DOWNWARD LONGWAVE FLUX AT THE SURFACE IN W/M**2.
+     94 C*         FLWDNS IS A REAL ARRAY DIMENSIONED (NCOL).
+     95 C* FLWUPS: UPWARD LONGWAVE FLUX AT THE SURFACE IN W/M**2.
+     96 C*         FLWUPS IS A REAL ARRAY DIMENSIONED (NCOL).
+     97 C************************************************************************
+     98 C***
+     99 C*** THE FOLLOWING OUTPUTS ARE NOT REQUIRED BY THE ETA MODEL
+    100 C***
+    101 C----------------------------------------------------------------------
+    102        INCLUDE "parmeta"
+    126        INCLUDE "mpp.h"
+    127 # 1 "./sp.h" 1 
+    128 # 4
+    129 
+    130 # 104 "RADFS.F" 2 
+    131 C----------------------------------------------------------------------
+    132 C      ****************************************************************
+    133 C      *  GENERALIZED FOR PLUG-COMPATIBILITY -                        *
+    134 C      *    ORIGINAL CODE WAS CLEANED-UP GFDL CODE...K.CAMPANA MAR89..*
+    135 C......*  EXAMPLE FOR MRF:                                            *
+    136 C      *    KO3  =0  AND O3QO3=DUMMY ARRAY.   (GFDL CLIMO O3 USED)    *
+    137 C      *    KEMIS=0  AND HI CLD EMIS COMPUTED HERE (CEMIS=DUMMY INPUT)*
+
+Page 3           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    138 C      *    KALB =0  AND SFC ALBEDO OVER OPEN WATER COMPUTED BELOW... *
+    139 C      *    KCCO2=0,CO2 OBTAINED FROM BLOCK DATA                      *
+    140 C      *         =1,CO2 COMPUTED IN HERE --- NOT AVAILABLE YET...     *
+    141 C      *    SLMRF = INTERFACE (LEVELS) SIGMA                          *
+    142 C      *    SLYMRF= LAYER SIGMA                                       *
+    143 C      *  UPDATED FOR YUTAI HOU SIB SW RADIATION....KAC 6 MAR 92      *
+    144 C      *    OCEAN ALBEDO FOR BEAM SET TO BULK SFCALB, SINCE           *
+    145 C      *       COSINE ZENITH ANGLE EFFECTS ALREADY THERE(REF:PAYNE)   *
+    146 C      *       SLMSK = 0.                                             *
+    147 C      *    SNOW ICE ALBEDO FOR BEAM NOT ENHANCED VIA COSINE ZENITH   *
+    148 C      *       ANGLE EITHER CAUSE VALU ALREADY HIGH (WE SEE POLAR     *
+    149 C      *       COOLING IF WE DO BEAM CALCULATION)....KAC 17MAR92      *
+    150 C      *       ALBEDO GE .5                                           *
+    151 C      *   UPDATED TO OBTAIN CLEAR SKY FLUXES "ON THE FLY" FOR        *
+    152 C      *       CLOUD FORCING DIAGNOSTICS ELSEWHERE...KAC 7AUG92       *
+    153 C      *       SEE ##CLR LINES...RADFS,LWR88,FST88,SPA88 .......      *
+    154 C      *  UPDATED FOR USE NEW CLD SCHEME      ......YH  DEC 92        *
+    155 C      *    INPUT CLD MAY BE AS ORIGINAL IN 3 DOMAIN (CLD,MTOP,MBOT)  *
+    156 C      *       OR IN A VERTICAL ARRAY OF 18 MDL LAYERS (CLDARY)       *
+    157 C      *    IEMIS=0  USE THE ORG. CLD EMIS SCHEME                     *
+    158 C      *         =1  USE TEMP DEP. CLD EMIS SCHEME                    *
+    159 C      *  UPDATED TO COMPUTE CLD LAYER REFLECTTANCE AND TRANSMITTANCE *
+    160 C      *    INPUT CLD EMISSIVITY AND OPTICAL THICKNESS 'EMIS0,TAUC0'  *
+    161 C      *                                      ......YH FEB 93         *
+    162 C      ****************************************************************
+    163 C
+    222       INCLUDE "HCON.comm" 
+    270       INCLUDE "rdparm" 
+    302       PARAMETER (LNGTH=37*L)
+    303       INCLUDE "RNDDTA.comm" 
+    414       INCLUDE "CO2DTA.comm" 
+    496       INCLUDE "TABCOM.comm" 
+    497 C
+    498 C......................................................................
+    499 C        *********************************************
+    500 C====>   *   INPUT FROM FROM CALLING PROGRAM         *
+    501 C        *********************************************
+    531        DIMENSION
+    532      1  QS(IDIM1:IDIM2),PP(IDIM1:IDIM2,L),QQH2O(IDIM1:IDIM2,L)
+    533      2, TT(IDIM1:IDIM2,L),TSFC(IDIM1:IDIM2),SLMSK(IDIM1:IDIM2)
+    534      3, ALBEDO(IDIM1:IDIM2),XLAT(IDIM1:IDIM2),ITYP(IDIM1:IDIM2,LP1)
+    535      4, COSZRO(IDIM1:IDIM2),TAUDAR(IDIM1:IDIM2),PPI(IDIM1:IDIM2,LP1)
+    536      5, NCLDS(IDIM1:IDIM2),CAMT(IDIM1:IDIM2,LP1)
+    537      6, KTOP(IDIM1:IDIM2,LP1),KBTM(IDIM1:IDIM2,LP1)
+    538      7, EMCLD(IDIM1:IDIM2,LP1)
+    539      8, RRCL(IDIM1:IDIM2,NB,LP1),TTCL(IDIM1:IDIM2,NB,LP1)
+    540 C
+    541       DIMENSION SLMRF(LP1),SLYMRF(L)
+    542 C
+    543 C        *********************************************
+    544 C====>   *   POSSIBLE INPUT FROM CALLING PROGRAM     *
+    545 C        *********************************************
+    546       DIMENSION
+    547      1  O3QO3(IDIM1:IDIM2,L)
+    548       DIMENSION
+    549      1  ALVBR(IDIM1:IDIM2),ALNBR(IDIM1:IDIM2)
+    550      2, ALVDR(IDIM1:IDIM2),ALNDR(IDIM1:IDIM2)
+
+Page 4           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    551 C        *********************************************
+    552 C====>   *   OUTPUT TO CALLING PROGRAM               *
+    553 C        *********************************************
+    554       DIMENSION SWH(IDIM1:IDIM2,L),HLW(IDIM1:IDIM2,L)
+    555       DIMENSION FSWUP(IDIM1:IDIM2),FSWUPS(IDIM1:IDIM2)
+    556      1,         FSWDN(IDIM1:IDIM2),FSWDNS(IDIM1:IDIM2)
+    557      2,         FLWUP(IDIM1:IDIM2),FLWUPS(IDIM1:IDIM2)
+    558      3,         FLWDNS(IDIM1:IDIM2)
+    559 C        *********************************************
+    560 C====>   *   POSSIBLE OUTPUT TO CALLING PROGRAM      *
+    561 C        *********************************************
+    562 C...... DOWNWARD SW FLUXES FOR THE SIB PARAMETERIZATION
+    563       DIMENSION
+    564      1  GDFVBR(IDIM1:IDIM2),GDFNBR(IDIM1:IDIM2)
+    565      2, GDFVDR(IDIM1:IDIM2),GDFNDR(IDIM1:IDIM2)
+    566 C        ************************************************************
+    567 C====>   *   ARRAYS NEEDED BY SWR91SIB..FOR CLEAR SKY DATA(EG.FSWL) *
+    568 C        ************************************************************
+    569       DIMENSION
+    570      1  FSWL(IDIM1:IDIM2,LP1),HSWL(IDIM1:IDIM2,LP1)
+    571      2, UFL(IDIM1:IDIM2,LP1),DFL(IDIM1:IDIM2,LP1)
+    572 C        ******************************************************
+    573 C====>   *   ARRAYS NEEDED BY CLO88, LWR88, SWR89 OR SWR91SIB *
+    574 C        ******************************************************
+    575       DIMENSION EQCMT(IDIM1:IDIM2,LP1)
+    576       DIMENSION CLDFAC(IDIM1:IDIM2,LP1,LP1)
+    577       DIMENSION PRESS(IDIM1:IDIM2,LP1),TEMP(IDIM1:IDIM2,LP1)
+    578      1,         RH2O(IDIM1:IDIM2,L),QO3(IDIM1:IDIM2,L)
+    579       DIMENSION HEATRA(IDIM1:IDIM2,L),GRNFLX(IDIM1:IDIM2)
+    580      1,         TOPFLX(IDIM1:IDIM2)
+    581       DIMENSION FSW(IDIM1:IDIM2,LP1),HSW(IDIM1:IDIM2,LP1)
+    582      1,         GRDFLX(IDIM1:IDIM2)
+    583      2,         UF(IDIM1:IDIM2,LP1),DF(IDIM1:IDIM2,LP1)
+    584       DIMENSION COSZEN(IDIM1:IDIM2),TAUDA(IDIM1:IDIM2)
+    585 C..... ADD PRESSURE INTERFACE
+    586       COMMON /SWRSAV/ ABCFF(NB),PWTS(NB),CFCO2,CFO3,REFLO3,RRAYAV
+    587 C        *********************************************
+    588 C====>   *   VECTOR TEMPORARIES FOR CLOUD CALC.      *
+    589 C        *********************************************
+    590       DIMENSION
+    591      1  JJROW(IDIM1:IDIM2),DO3V(IDIM1:IDIM2)
+    592      2, DO3VP(IDIM1:IDIM2),TTHAN(IDIM1:IDIM2)
+    593 C====>    **************************************************************
+    594 C--     SEASONAL CLIMATOLOGIES OF O3 (OBTAINED FROM A PREVIOUSLY RUN
+    595 C             CODE WHICH INTERPOLATES O3 TO USER VERTICAL COORDINATE).
+    596 C         DEFINED AS 5 DEG LAT MEANS N.P.->S.P.
+    597       COMMON /SAVMEM/
+    598 C-       ...WINTER....  ...SPRING....  ...SUMMER....  ....FALL.....
+    599      1   DDUO3N(37,L), DDO3N2(37,L), DDO3N3(37,L), DDO3N4(37,L)
+    600       DIMENSION RAD1(LNGTH), RAD2(LNGTH), RAD3(LNGTH), RAD4(LNGTH)
+    601       EQUIVALENCE (RAD1(1),DDUO3N(1,1)),(RAD2(1),DDO3N2(1,1))
+    602       EQUIVALENCE (RAD3(1),DDO3N3(1,1)),(RAD4(1),DDO3N4(1,1))
+    603 C====>    **************************************************************
+    604 C
+    605       COMMON / SSALB /
+    606      2   ALBD(21,20),        ZA(20),             TRN(21),
+    607      3   DZA(19)
+
+Page 5           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    608 C
+    609 C    ***********************************************************
+    610 C    ***********************************************************
+    611 C
+    612       DIMENSION
+    613      1  ALVB(IDIM1:IDIM2),ALNB(IDIM1:IDIM2)
+    614      2, ALVD(IDIM1:IDIM2),ALND(IDIM1:IDIM2)
+    615      3, GDFVB(IDIM1:IDIM2),GDFNB(IDIM1:IDIM2)
+    616      4, GDFVD(IDIM1:IDIM2),GDFND(IDIM1:IDIM2)
+    617       DIMENSION  SFCALB(IDIM1:IDIM2)
+    618       DIMENSION XAMT(IDIM1:IDIM2,LP1),MTOPSW(IDIM1:IDIM2,LP1)
+    619      1,         MBTMSW(IDIM1:IDIM2,LP1)
+    620       COMMON /RDFSAV/ EMISP,EMIST,XLATT,XLATP,Q19001,HP98,H3M6,
+    621      *     HP75,H6M2,HP537,H74E1,H15E1,Q14330,HP2,TWENTY,HNINE,
+    622      *     DEGRAD,HSIGMA,DAYSEC,RCO2,
+    623      *     CAO3SW(5),CAH2SW(5),CBSW(5)
+    624       COMMON /ASTSAV/ SOLC,RSIN1,RCOS1,RCOS2
+    625 C====>    BEGIN HERE             .......................
+    626 C
+    627 C         SOLC,THE SOLAR CONSTANT IS SCALED TO A MORE CURRENT VALUE.
+    628 C          I.E. IF SOLC=2.0 LY/MIN THEN SSOLAR=1.96 LY/MIN.
+    629 C..     RE-COMPUTED CAUSE SSOLAR OVERWRITTEN AS PART OF SCRATCH COMMON
+    630 C
+    631 C******ZHAO
+    632 C  NOTE: XLAT IS IN DEGREE HERE
+    633 C*****ZHAO
+    634       YEAR=365.25
+    635       RLAG=14.8125
+    636       TPI=6.283185308
+    637       PI=3.1415927
+    638       SC=2.
+    639       SOLC=SC/(R1*R1)
+    640 C*****************************
+    641 C Special note: The solar constant is reduced extra 3 percent to account
+    642 C               for the lack of aerosols in the shortwave radiation
+    643 C               parameterization.       Q. Zhao    96-7-23
+    644 C****************************
+    645       SSOLAR=SOLC*HP98
+    646       SSOLAR=SSOLAR*0.97
+    647       DATE=JD+GMT/24.0
+    648       RANG=TPI*(DATE-RLAG)/YEAR
+    649       RSIN1=SIN(RANG)
+    650       RCOS1=COS(RANG)
+    651       RCOS2=COS(2.0*RANG)
+    652       DO 40 I=MYIS,MYIE
+    653         IR = I + IBEG - 1
+    654         TH2=HP2*XLAT(IR)
+    655         JJROW(I)=Q19001-TH2
+    656         TTHAN(I)=(19-JJROW(I))-TH2
+    657 C.....  NOTE THAT THE NMC VARIABLES ARE IN MKS (THUS PRESSURE IS IN
+    658 C          CENTIBARS)WHILE ALL GFDL VARIABLES ARE IN CGS UNITS
+    659         SFCALB(I) = ALBEDO(IR)
+    660 C.....  NOW PUT SFC TEMP,PRESSURES, ZENITH ANGLE INTO SW COMMON BLOCK...
+    661 C***ZHAO
+    662 C  NOTE: ALL PRESSURES INPUT FROM THE ETA MODEL ARE IN PA
+    663 C        THE UNIT FOR PRESS IS MICRO BAR
+    664 C        SURFACE TEMPERATURE ARE NEGATIVE OVER OCEANS IN THE ETA MODEL
+
+Page 6           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    665 C***ZHAO
+    666         PRESS(I,LP1)=QS(IR)*10.0
+    667         TEMP(I,LP1)=ABS(TSFC(IR))
+    668 c       if(mype.eq.13.and.i.eq.40) then
+    669 c       if(mype.eq.13) then
+    670 c         print*,'ir,i,lp1=',ir,i,lp1
+    671 c         print*,'tsfc(ir)=',tsfc(ir)
+    672 c       endif
+    673         COSZEN(I) = COSZRO(IR)
+    674         TAUDA(I) = TAUDAR(IR)
+    675    40 CONTINUE
+    676 C***ZHAO
+    677 C.....  ALL GFDL VARIABLES HAVE K=1 AT THE TOP OF THE ATMOSPHERE.NMC
+    678 C       ETA MODEL HAS THE SAME STRUCTURE
+    679 C***ZHAO
+    680       DO 50 K=1,L
+    681        DO 50 I=MYIS,MYIE
+    682         IR = I + IBEG - 1
+    683 C.....  NOW PUT TEMP,PRESSURES, INTO SW COMMON BLOCK..........
+    684         TEMP(I,K) = TT(IR,K)
+    685         PRESS(I,K) = 10.0 * PP(IR,K)
+    686 C.... STORE LYR MOISTURE AND ADD TO SW COMMON BLOCK
+    687         RH2O(I,K)=QQH2O(IR,K)
+    688         IF(RH2O(I,K).LT.H3M6) RH2O(I,K)=H3M6
+    689    50 CONTINUE
+    690 C...    *************************
+    691       IF (KO3.EQ.0) GO TO 65
+    692 C...    *************************
+    693       DO 60 K=1,L
+    694        DO 60 I=MYIS,MYIE
+    695         QO3(I,K) = O3QO3(I+IBEG-1,K)
+    696    60 CONTINUE
+    697    65 CONTINUE
+    698 C...   ************************************
+    699       IF (KALB.GT.0) GO TO 110
+    700 C...   ************************************
+    701 C..... THE FOLLOWING CODE GETS ALBEDO FROM PAYNE,1972 TABLES IF
+    702 C         1) OPEN SEA POINT (SLMSK=1);2) KALB=0
+    703       IQ=INT(TWENTY*HP537+ONE)
+    704       DO 105 I=MYIS,MYIE
+    705          IF(COSZEN(I).GT.0.0 .AND. SLMSK(I+IBEG-1).GT.0.5) THEN
+    706            ZEN=DEGRAD*ACOS(MAX(COSZEN(I),0.0))
+    707            IF(ZEN.GE.H74E1) JX=INT(HAF*(HNINETY-ZEN)+ONE)
+    708            IF(ZEN.LT.H74E1.AND.ZEN.GE.FIFTY)
+    709      1        JX=INT(QUARTR*(H74E1-ZEN)+HNINE)
+    710            IF(ZEN.LT.FIFTY) JX=INT(HP1*(FIFTY-ZEN)+H15E1)
+    711            DZEN=-(ZEN-ZA(JX))/DZA(JX)
+    712            ALB1=ALBD(IQ,JX)+DZEN*(ALBD(IQ,JX+1)-ALBD(IQ,JX))
+    713            ALB2=ALBD(IQ+1,JX)+DZEN*(ALBD(IQ+1,JX+1)-ALBD(IQ+1,JX))
+    714            SFCALB(I)=ALB1+TWENTY*(ALB2-ALB1)*(HP537-TRN(IQ))
+    715          ENDIF
+    716   105 CONTINUE
+    717   110 CONTINUE
+    718 C        **********************************
+    719       IF (KO3.GT.0) GO TO 135
+    720 C        **********************************
+    721 C.... COMPUTE CLIMATOLOGICAL ZONAL MEAN OZONE,
+
+Page 7           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    722 C....   SEASONAL AND SPATIAL INTERPOLATION DONE BELOW.
+    723       DO 130 K=1,L
+    724         DO 125 I=MYIS,MYIE
+    725           DO3V(I)  = DDUO3N(JJROW(I),K) + RSIN1*DDO3N2(JJROW(I),K)
+    726      1                +RCOS1*DDO3N3(JJROW(I),K)
+    727      2                +RCOS2*DDO3N4(JJROW(I),K)
+    728           DO3VP(I) = DDUO3N(JJROW(I)+1,K) + RSIN1*DDO3N2(JJROW(I)+1,K)
+    729      1               +RCOS1*DDO3N3(JJROW(I)+1,K)
+    730      2               +RCOS2*DDO3N4(JJROW(I)+1,K)
+    731 C...   NOW LATITUDINAL INTERPOLATION, AND
+    732 C          CONVERT O3 INTO MASS MIXING RATIO(ORIGINAL DATA MPY BY 1.E4)
+    733           QO3(I,K) = H1M4 * (DO3V(I)+TTHAN(I)*(DO3VP(I)-DO3V(I)))
+    734   125   CONTINUE
+    735   130 CONTINUE
+    736   135 CONTINUE
+    737 C.............
+    738       DO 195 I=MYIS,MYIE
+    739 C.....     VISIBLE AND NEAR IR DIFFUSE ALBEDO
+    740         ALVD(I) = SFCALB(I)
+    741         ALND(I) = SFCALB(I)
+    742 C.....     VISIBLE AND NEAR IR DIRECT BEAM ALBEDO
+    743         ALVB(I) = SFCALB(I)
+    744         ALNB(I) = SFCALB(I)
+    745 C.....     VISIBLE AND NEAR IR DIRECT BEAM ALBEDO,IF NOT OCEAN NOR SNOW
+    746 C            ..FUNCTION OF COSINE SOLAR ZENITH ANGLE..
+    747         IF (SLMSK(I+IBEG-1).LT.0.5) THEN
+    748          IF (SFCALB(I).LE.0.5) THEN
+    749           ALBD0 = -18.0 * (0.5 - ACOS(COSZEN(I))/PI)
+    750           ALBD0 = EXP (ALBD0)
+    751           ALVD1 = (ALVD(I) - 0.054313) / 0.945687
+    752           ALND1 = (ALND(I) - 0.054313) / 0.945687
+    753           ALVB(I) = ALVD1 + (1.0 - ALVD1) * ALBD0
+    754           ALNB(I) = ALND1 + (1.0 - ALND1) * ALBD0
+    755          END IF
+    756         END IF
+    757   195 CONTINUE
+    758 C.....SURFACE VALUES OF RRCL AND TTCL
+    759       DO 200 N=1,2
+    760         DO 200 I=MYIS,MYIE
+    761       RRCL(I,N,1)=ALVD(I)
+    762       TTCL(I,N,1)=ZERO
+    763   200 CONTINUE
+    764       DO 220 N=3,NB
+    765       DO 220 I=MYIS,MYIE
+    766          RRCL(I,N,1)=ALND(I)
+    767          TTCL(I,N,1)=ZERO
+    768   220 CONTINUE
+    769 C...     **************************
+    770 C...     *  END OF CLOUD SECTION  *
+    771 C...     **************************
+    772 C... THE FOLLOWING CODE CONVERTS RRVCO2,THE VOLUME MIXING RATIO OF CO2
+    773 C   INTO RRCO2,THE MASS MIXING RATIO.
+    774       RRVCO2=RCO2
+    775       RRCO2=RRVCO2*RATCO2MW
+    776   250 IF(ITIMLW .EQ. 0) GO TO 300
+    777 C
+    778 C             ***********************
+
+Page 8           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    779 C====>        * LONG WAVE RADIATION *
+    780 C             ***********************
+    781 C
+    782 C....     ACCOUNT FOR REDUCED EMISSIVITY OF ANY CLDS
+    783       DO 240 K=1,LP1
+    784       DO 240 I=MYIS,MYIE
+    785         EQCMT(I,K)=CAMT(I,K)*EMCLD(I,K)
+    786   240 CONTINUE
+    787 C....    GET CLD FACTOR FOR LW CALCULATIONS
+    788 C....
+    789       CALL CLO89(CLDFAC,EQCMT,NCLDS,KBTM,KTOP)
+    790 C===>        LONG WAVE RADIATION
+    791       CALL LWR88(HEATRA,GRNFLX,TOPFLX,
+    792      1           PRESS,TEMP,RH2O,QO3,CLDFAC,
+    793      2           EQCMT,NCLDS,KTOP,KBTM)
+    794 C....
+    795       DO 280 I=MYIS,MYIE
+    796         IR = I + IBEG - 1
+    797         FLWUP(IR) = TOPFLX(I) * .001E0
+    798         GRNFLX(I)=Q14330*(HSIGMA*TEMP(I,LP1)**4-GRNFLX(I))
+    799 C.... GET LW FLUX DOWN AND UP AT GROUND(WATTS/M**2) - GRNFLX=LW DOWN.
+    800         FLWDNS(IR)=GRNFLX(I)/(1.43306E-06*1000.E0)
+    801         FLWUPS(IR)=HSIGMA*.001E0 * TEMP(I,LP1)**4
+    802   280 CONTINUE
+    803 C....      CONVERT HEATING RATES TO DEG/SEC
+    804       DO 290 K=1,L
+    805         DO 290 I=MYIS,MYIE
+    806 c         if(mype.eq.13.and.(i+ibeg-1).eq.40.and.j.eq.77) then
+    807 c         if(mype.eq.13) then
+    808 c            print*,'ibeg,i,i+ibeg-1=',ibeg,i,i+ibeg-1
+    809 c            print*,'i,k,heatra(i,k)=',i,k,heatra(i,k)
+    810 c         endif
+    811           HLW(I+IBEG-1,K)=HEATRA(I,K)*DAYSEC
+    812   290 CONTINUE
+    813   300 CONTINUE
+    814       IF(ITIMSW .EQ. 0) GO TO 350
+    815 CSW
+    816       CALL SWR93(FSW,HSW,UF,DF,FSWL,HSWL,UFL,DFL,
+    817      1           PRESS,COSZEN,TAUDA,RH2O,RRCO2,SSOLAR,QO3,
+    818      2           NCLDS,KTOP,KBTM,CAMT,RRCL,TTCL,
+    819      3           ALVB,ALNB,ALVD,ALND,GDFVB,GDFNB,GDFVD,GDFND)
+    820 CSW
+    821 C
+    822 C.....    GET SW FLUXES IN WATTS/M**2
+    823       DO 320 I=MYIS,MYIE
+    824        IR = I + IBEG - 1
+    825        FSWUP(IR) = UF(I,1) * 1.E-3
+    826        FSWDN(IR) = DF(I,1) * 1.E-3
+    827        FSWUPS(IR) = UF(I,LP1) * 1.E-3
+    828 CC..COUPLE W/M2 DIFF, IF FSWDNS(IR)=DF(I,LP1)*1.#E-3
+    829        FSWDNS(IR) = (GDFVB(I)+GDFNB(I)+GDFVD(I)+GDFND(I)) * 1.E-3
+    830 C...    DOWNWARD SFC FLUX FOR THE SIB PARAMETERATION
+    831 C.....     VISIBLE AND NEAR IR DIFFUSE
+    832        GDFVDR(IR) = GDFVD(I) * 1.E-3
+    833        GDFNDR(IR) = GDFND(I) * 1.E-3
+    834 C.....     VISIBLE AND NEAR IR DIRECT BEAM
+    835        GDFVBR(IR) = GDFVB(I) * 1.E-3
+
+Page 9           Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+    836        GDFNBR(IR) = GDFNB(I) * 1.E-3
+    837   320 CONTINUE
+    838 C....      CONVERT HEATING RATES TO DEG/SEC
+    839       DO 330 K=1,L
+    840         DO 330 I=MYIS,MYIE
+    841           SWH(I+IBEG-1,K)=HSW(I,K)*DAYSEC
+    842   330 CONTINUE
+    843   350 CONTINUE
+    844       RETURN
+    845  1000 FORMAT(1H ,' YOU ARE CALLING GFDL RADIATION CODE FOR',I5,' PTS',
+    846      1           'AND',I4,' LYRS,WITH KDAPRX,KO3,KCZ,KEMIS,KALB = ',5I2)
+    847       END
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ radfs_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 1000                       Label  845                                                                                              
+ 105                        Label  716                                                            704                               
+ 110                        Label  717                                                            699                               
+ 125                        Label  734                                                            724                               
+ 130                        Label  735                                                            723                               
+ 135                        Label  736                                                            719                               
+ 195                        Label  757                                                            738                               
+ 200                        Label  763                                                            759,760                           
+ 220                        Label  768                                                            764,765                           
+ 240                        Label  786                                                            783,784                           
+ 250                        Label  776                                                                                              
+ 280                        Label  802                                                            795                               
+ 290                        Label  812                                                            804,805                           
+ 300                        Label  813                                                            776                               
+ 320                        Label  837                                                            823                               
+ 330                        Label  842                                                            839,840                           
+ 350                        Label  843                                                            814                               
+ 40                         Label  675                                                            652                               
+ 50                         Label  689                                                            680,681                           
+ 60                         Label  696                                                            693,694                           
+ 65                         Label  697                                                            691                               
+ ABS                        Func   667                                  scalar                    667                               
+ ACOS                       Func   706                                  scalar                    706,749                           
+ ALB1                       Local  712      R(4)            4           scalar                    712,714                           
+ ALB2                       Local  713      R(4)            4           scalar                    713,714                           
+ ALBD0                      Local  749      R(4)            4           scalar                    749,750,753,754                   
+ ALBEDO                     Dummy  22       R(4)            4     1     71       ARG,INOUT        659                               
+ ALNB                       Local  613      R(4)            4     1     71                        744,754,819                       
+ ALNBR                      Local  549      R(4)            4     1     71                                                          
+ ALND                       Local  614      R(4)            4     1     71                        741,752,766,819                   
+ ALND1                      Local  752      R(4)            4           scalar                    752,754                           
+ ALNDR                      Local  550      R(4)            4     1     71                                                          
+
+Page 10          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ALVB                       Local  613      R(4)            4     1     71                        743,753,819                       
+ ALVBR                      Local  549      R(4)            4     1     71                                                          
+ ALVD                       Local  614      R(4)            4     1     71                        740,751,761,819                   
+ ALVD1                      Local  751      R(4)            4           scalar                    751,753                           
+ ALVDR                      Local  550      R(4)            4     1     71                                                          
+ ASTSAV                     Common 624                                  16                                                          
+ BANDTA                     Common 337                                  5900     SAVE                                               
+ BDCOMB                     Common 408                                  736      SAVE                                               
+ BDWIDE                     Common 367                                  56       SAVE                                               
+ CAMT                       Dummy  23       R(4)            4     2     3266     ARG,INOUT        785,818                           
+ CLDFAC                     Local  576      R(4)            4     3     150236                    789,792                           
+ CLO89                      Subr   789                                                            789                               
+ CO2BD2                     Common 466                                  1104     SAVE                                               
+ CO2BD3                     Common 448                                  52248    SAVE                                               
+ CO2BD4                     Common 482                                  1104     SAVE                                               
+ CO2BD5                     Common 493                                  368      SAVE                                               
+ COS                        Func   650                                  scalar                    650,651                           
+ COSZEN                     Local  584      R(4)            4     1     71                        673,705,706,749,817               
+ COSZRO                     Dummy  24       R(4)            4     1     71       ARG,INOUT        673                               
+ DATE                       Local  647      R(4)            4           scalar                    647,648                           
+ DF                         Local  583      R(4)            4     2     3266                      816,826                           
+ DFL                        Local  571      R(4)            4     2     3266                      816                               
+ DO3V                       Local  591      R(4)            4     1     71                        725,733                           
+ DO3VP                      Local  592      R(4)            4     1     71                        728,733                           
+ DZEN                       Local  711      R(4)            4           scalar                    711,712,713                       
+ EMCLD                      Dummy  23       R(4)            4     2     3266     ARG,INOUT        785                               
+ EQCMT                      Local  575      R(4)            4     2     3266                      785,789,793                       
+ EXP                        Func   750                                  scalar                    750                               
+ FLWDNS                     Dummy  77       R(4)            4     1     71       ARG,INOUT        800                               
+ FLWUP                      Dummy  77       R(4)            4     1     71       ARG,INOUT        797                               
+ FLWUPS                     Dummy  77       R(4)            4     1     71       ARG,INOUT        801                               
+ FSW                        Local  581      R(4)            4     2     3266                      816                               
+ FSWDN                      Dummy  77       R(4)            4     1     71       ARG,INOUT        826                               
+ FSWDNS                     Dummy  77       R(4)            4     1     71       ARG,INOUT        829                               
+ FSWL                       Local  570      R(4)            4     2     3266                      816                               
+ FSWUP                      Dummy  77       R(4)            4     1     71       ARG,INOUT        825                               
+ FSWUPS                     Dummy  77       R(4)            4     1     71       ARG,INOUT        827                               
+ GDFNB                      Local  615      R(4)            4     1     71                        819,829,836                       
+ GDFNBR                     Local  564      R(4)            4     1     71                        836                               
+ GDFND                      Local  616      R(4)            4     1     71                        819,829,833                       
+ GDFNDR                     Local  565      R(4)            4     1     71                        833                               
+ GDFVB                      Local  615      R(4)            4     1     71                        819,829,835                       
+ GDFVBR                     Local  564      R(4)            4     1     71                        835                               
+ GDFVD                      Local  616      R(4)            4     1     71                        819,829,832                       
+ GDFVDR                     Local  565      R(4)            4     1     71                        832                               
+ GLB_TABLE                  Common 200                                  336      SAVE                                               
+ GMT                        Dummy  67       R(4)            4           scalar   ARG,INOUT        647                               
+ GRDFLX                     Local  582      R(4)            4     1     71                                                          
+ GRNFLX                     Local  579      R(4)            4     1     71                        791,798,800                       
+ HCON                       Common 229                                  872      SAVE                                               
+ HEATRA                     Local  579      R(4)            4     2     3195                      791,811                           
+ HLW                        Dummy  76       R(4)            4     2     3195     ARG,INOUT        811                               
+ HSW                        Local  581      R(4)            4     2     3266                      816,841                           
+ HSWL                       Local  570      R(4)            4     2     3266                      816                               
+ I                          Local  652      I(4)            4           scalar                    652,653,655,656,659,666,667,673,67
+
+Page 11          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  4,681,682,684,685,687,688,694,695,
+                                                                                                  704,705,706,714,724,725,726,727,72
+                                                                                                  8,729,730,733,738,740,741,743,744,
+                                                                                                  747,748,749,751,752,753,754,760,76
+                                                                                                  1,762,765,766,767,784,785,795,796,
+                                                                                                  797,798,800,801,805,811,823,824,82
+                                                                                                  5,826,827,829,832,833,835,836,840,
+                                                                                                  841                               
+ IBEG                       Dummy  24       I(4)            4           scalar   ARG,INOUT        653,682,695,705,747,796,811,824,84
+                                                                                                  1                                 
+ IDIM1                      Param  122      I(4)            4           scalar                    532,533,534,535,536,537,538,539,54
+                                                                                                  7,549,550,554,555,556,557,558,564,
+                                                                                                  565,570,571,575,576,577,578,579,58
+                                                                                                  0,581,582,583,584,591,592,613,614,
+                                                                                                  615,616,617,618,619               
+ IDIM2                      Param  122      I(4)            4           scalar                    532,533,534,535,536,537,538,539,54
+                                                                                                  7,549,550,554,555,556,557,558,564,
+                                                                                                  565,570,571,575,576,577,578,579,58
+                                                                                                  0,581,582,583,584,591,592,613,614,
+                                                                                                  615,616,617,618,619               
+ IGSTL                      Param  117      I(4)            4           scalar                    122                               
+ IGSTR                      Param  117      I(4)            4           scalar                    122                               
+ IM                         Param  105      I(4)            4           scalar                    119,122,206,207,208,209,210,214,21
+                                                                                                  5,220,285                         
+ IMAX                       Param  285      I(4)            4           scalar                    298,524                           
+ INLTE                      Param  297      I(4)            4           scalar                    297                               
+ INLTEP                     Param  297      I(4)            4           scalar                                                      
+ INPES                      Param  114      I(4)            4           scalar                    119,122,190,191,192,201,202       
+ INT                        Func   703                                  scalar                    703,707,709,710                   
+ IQ                         Local  703      I(4)            4           scalar                    703,712,713,714                   
+ IR                         Local  653      I(4)            4           scalar                    653,654,659,666,667,673,674,682,68
+                                                                                                  4,685,687,796,797,800,801,824,825,
+                                                                                                  826,827,829,832,833,835,836       
+ ITAIL                      Param  119      I(4)            4           scalar                                                      
+ ITIMLW                     Dummy  26       I(4)            4           scalar   ARG,INOUT        776                               
+ ITIMSW                     Dummy  26       I(4)            4           scalar   ARG,INOUT        814                               
+ ITYP                       Dummy  23       I(4)            4     2     3266     ARG,INOUT                                          
+ JD                         Dummy  67       I(4)            4           scalar   ARG,INOUT        647                               
+ JDIM1                      Param  123      I(4)            4           scalar                                                      
+ JDIM2                      Param  123      I(4)            4           scalar                                                      
+ JGSTL                      Param  118      I(4)            4           scalar                    123                               
+ JGSTR                      Param  118      I(4)            4           scalar                    123                               
+ JJROW                      Local  591      I(4)            4     1     71                        655,656,725,726,727,728,729,730   
+ JM                         Param  105      I(4)            4           scalar                    120,123,206,207,208,209,210,214,21
+                                                                                                  5,220                             
+ JNPES                      Param  114      I(4)            4           scalar                    120,123,190,191,192,201,202       
+ JTAIL                      Param  120      I(4)            4           scalar                                                      
+ JX                         Local  707      I(4)            4           scalar                    707,709,710,711,712,713           
+ K                          Local  680      I(4)            4           scalar                    680,684,685,687,688,693,695,723,72
+                                                                                                  5,726,727,728,729,730,733,783,785,
+                                                                                                  804,811,839,841                   
+ KALB                       Dummy  25       I(4)            4           scalar   ARG,INOUT        699                               
+ KBTM                       Dummy  23       I(4)            4     2     3266     ARG,INOUT        789,793,818                       
+ KO2                        Param  300      I(4)            4           scalar                    301                               
+ KO21                       Param  301      I(4)            4           scalar                                                      
+
+Page 12          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ KO2M                       Param  301      I(4)            4           scalar                                                      
+ KO3                        Dummy  25       I(4)            4           scalar   ARG,INOUT        691,719                           
+ KTOP                       Dummy  23       I(4)            4     2     3266     ARG,INOUT        789,793,818                       
+ L                          Param  284      I(4)            4           scalar                    288,289,290,293,295,302,449,450,53
+                                                                                                  2,533,541,547,554,578,579,599,680,
+                                                                                                  693,723,804,839                   
+ LL                         Param  290      I(4)            4           scalar                    290,291                           
+ LL3P                       Param  295      I(4)            4           scalar                    298                               
+ LL3PI                      Param  298      I(4)            4           scalar                                                      
+ LLM1                       Param  291      I(4)            4           scalar                                                      
+ LLM2                       Param  291      I(4)            4           scalar                                                      
+ LLM3                       Param  291      I(4)            4           scalar                                                      
+ LLP1                       Param  290      I(4)            4           scalar                    298                               
+ LLP1I                      Param  298      I(4)            4           scalar                                                      
+ LLP2                       Param  290      I(4)            4           scalar                                                      
+ LLP3                       Param  290      I(4)            4           scalar                                                      
+ LM                         Param  105      I(4)            4           scalar                    215,284                           
+ LM1                        Param  289      I(4)            4           scalar                                                      
+ LM2                        Param  289      I(4)            4           scalar                                                      
+ LM3                        Param  289      I(4)            4           scalar                                                      
+ LNGTH                      Param  302      I(4)            4           scalar                    600                               
+ LP1                        Param  288      I(4)            4           scalar                    292,293,294,298,448,449,451,466,46
+                                                                                                  7,482,483,493,524,534,535,536,537,
+                                                                                                  538,539,541,570,571,575,576,577,58
+                                                                                                  1,583,618,619,666,667,783,798,801,
+                                                                                                  827                               
+ LP121                      Param  294      I(4)            4           scalar                                                      
+ LP1I                       Param  298      I(4)            4           scalar                                                      
+ LP1M                       Param  292      I(4)            4           scalar                    292                               
+ LP1M1                      Param  292      I(4)            4           scalar                                                      
+ LP1V                       Param  293      I(4)            4           scalar                    524                               
+ LP2                        Param  288      I(4)            4           scalar                                                      
+ LP3                        Param  288      I(4)            4           scalar                                                      
+ LSM                        Param  105      I(4)            4           scalar                                                      
+ LWR88                      Subr   791                                                            791                               
+ MAPPINGS                   Common 219                                  5024     SAVE                                               
+ MAX                        Func   706                                  scalar                    706                               
+ MBTMSW                     Local  619      I(4)            4     2     3266                                                        
+ MPPCOM                     Common 164                                  1724     SAVE                                               
+ MTOPSW                     Local  618      I(4)            4     2     3266                                                        
+ N                          Local  759      I(4)            4           scalar                    759,761,762,764,766,767           
+ NB                         Param  296      I(4)            4           scalar                    299,539,586,764                   
+ NB1                        Param  299      I(4)            4           scalar                                                      
+ NBLM                       Param  287      I(4)            4           scalar                                                      
+ NBLW                       Param  286      I(4)            4           scalar                    337,338,339                       
+ NBLX                       Param  286      I(4)            4           scalar                                                      
+ NBLY                       Param  286      I(4)            4           scalar                    287,294,408,409,410,527,528       
+ NCLDS                      Dummy  23       I(4)            4     1     71       ARG,INOUT        789,793,818                       
+ NNLTE                      Param  297      I(4)            4           scalar                                                      
+ O3QO3                      Dummy  22       R(4)            4     2     3195     ARG,INOUT        695                               
+ PHYCON                     Common 223                                  80       SAVE                                               
+ PI                         Local  637      R(4)            4           scalar                    637,749                           
+ PP                         Dummy  22       R(4)            4     2     3195     ARG,INOUT        685                               
+ PPI                        Dummy  22       R(4)            4     2     3266     ARG,INOUT                                          
+ PRESS                      Local  577      R(4)            4     2     3266                      666,685,792,817                   
+
+Page 13          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ QO3                        Local  578      R(4)            4     2     3195                      695,733,792,817                   
+ QQH2O                      Dummy  22       R(4)            4     2     3195     ARG,INOUT        687                               
+ QS                         Dummy  22       R(4)            4     1     71       ARG,INOUT        666                               
+ R1                         Dummy  67       R(4)            4           scalar   ARG,INOUT        639                               
+ RADFS                      Subr   2                                                                                                
+ RANG                       Local  648      R(4)            4           scalar                    648,649,650,651                   
+ RDFSAV                     Common 620                                  140                                                         
+ RH2O                       Local  578      R(4)            4     2     3195                      687,688,792,817                   
+ RLAG                       Local  635      R(4)            4           scalar                    635,648                           
+ RRCL                       Dummy  23       R(4)            4     3     39192    ARG,INOUT        761,766,818                       
+ RRCO2                      Local  775      R(4)            4           scalar                    775,817                           
+ RRVCO2                     Local  774      R(4)            4           scalar                    774,775                           
+ SAVMEM                     Common 597                                  26640                                                       
+ SC                         Local  638      R(4)            4           scalar                    638,639                           
+ SFCALB                     Local  617      R(4)            4     1     71                        659,714,740,741,743,744,748       
+ SIN                        Func   649                                  scalar                    649                               
+ SLMRF                      Dummy  26       R(4)            4     1     46       ARG,INOUT                                          
+ SLMSK                      Dummy  22       R(4)            4     1     71       ARG,INOUT        705,747                           
+ SLYMRF                     Dummy  26       R(4)            4     1     45       ARG,INOUT                                          
+ SSALB                      Common 605                                  1920                                                        
+ SSOLAR                     Local  645      R(4)            4           scalar                    645,646,817                       
+ SWH                        Dummy  76       R(4)            4     2     3195     ARG,INOUT        841                               
+ SWR93                      Subr   816                                                            816                               
+ SWRSAV                     Common 586                                  112                                                         
+ TABCOM                     Common 524                                  133920   SAVE                                               
+ TAUDA                      Local  584      R(4)            4     1     71                        674,817                           
+ TAUDAR                     Dummy  24       R(4)            4     1     71       ARG,INOUT        674                               
+ TEMP                       Local  577      R(4)            4     2     3266                      667,684,792,798,801               
+ TEMPCOM                    Common 205                                  6603768  SAVE                                               
+ TH2                        Local  654      R(4)            4           scalar                    654,655,656                       
+ TOPFLX                     Local  580      R(4)            4     1     71                        791,797                           
+ TOPO                       Common 213                                  17478548 SAVE                                               
+ TPI                        Local  636      R(4)            4           scalar                    636,648                           
+ TSFC                       Dummy  22       R(4)            4     1     71       ARG,INOUT        667                               
+ TT                         Dummy  22       R(4)            4     2     3195     ARG,INOUT        684                               
+ TTCL                       Dummy  23       R(4)            4     3     39192    ARG,INOUT        762,767,818                       
+ TTHAN                      Local  592      R(4)            4     1     71                        656,733                           
+ UF                         Local  583      R(4)            4     2     3266                      816,825,827                       
+ UFL                        Local  571      R(4)            4     2     3266                      816                               
+ XAMT                       Local  618      R(4)            4     2     3266                                                        
+ XLAT                       Dummy  22       R(4)            4     1     71       ARG,INOUT        654                               
+ YEAR                       Local  634      R(4)            4           scalar                    634,648                           
+ ZEN                        Local  706      R(4)            4           scalar                    706,707,708,709,710,711           
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AB15                       R(4)            4     5892     1     2        COM                                                 
+ AB15CM                     R(4)            4     728      1     2        COM                                                 
+ AB15WD                     R(4)            4     40             scalar   COM                                                 
+ ABCFF                      R(4)            4     0        1     12       COM                                                 
+ ACOMB                      R(4)            4     160      1     15       COM                                                 
+ ALBD                       R(4)            4     0        2     420      COM              712,713                            
+
+Page 14          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AMOLWT                     R(4)            4     0              scalar   COM                                                 
+ AO3CM                      R(4)            4     704      1     3        COM                                                 
+ AO3RND                     R(4)            4     5868     1     3        COM                                                 
+ AP                         R(4)            4     1956     1     163      COM                                                 
+ APCM                       R(4)            4     340      1     15       COM                                                 
+ APWD                       R(4)            4     12             scalar   COM                                                 
+ ARNDM                      R(4)            4     0        1     163      COM                                                 
+ ATP                        R(4)            4     3260     1     163      COM                                                 
+ ATPCM                      R(4)            4     460      1     15       COM                                                 
+ ATPWD                      R(4)            4     20             scalar   COM                                                 
+ AWIDE                      R(4)            4     0              scalar   COM                                                 
+ B0                         R(4)            4     52232          scalar   COM                                                 
+ B1                         R(4)            4     52236          scalar   COM                                                 
+ B2                         R(4)            4     52240          scalar   COM                                                 
+ B3                         R(4)            4     52244          scalar   COM                                                 
+ BANDHI                     R(4)            4     5216     1     163      COM                                                 
+ BANDLO                     R(4)            4     4564     1     163      COM                                                 
+ BCOMB                      R(4)            4     220      1     15       COM                                                 
+ BDHICM                     R(4)            4     640      1     15       COM                                                 
+ BDHIWD                     R(4)            4     32             scalar   COM                                                 
+ BDLOCM                     R(4)            4     580      1     15       COM                                                 
+ BDLOWD                     R(4)            4     28             scalar   COM                                                 
+ BETACM                     R(4)            4     280      1     15       COM                                                 
+ BETAD                      R(4)            4     1304     1     163      COM                                                 
+ BETAWD                     R(4)            4     8              scalar   COM                                                 
+ BETINC                     R(4)            4     700            scalar   COM                                                 
+ BETINW                     R(4)            4     36             scalar   COM                                                 
+ BO3CM                      R(4)            4     716      1     3        COM                                                 
+ BO3RND                     R(4)            4     5880     1     3        COM                                                 
+ BP                         R(4)            4     2608     1     163      COM                                                 
+ BPCM                       R(4)            4     400      1     15       COM                                                 
+ BPWD                       R(4)            4     16             scalar   COM                                                 
+ BRNDM                      R(4)            4     652      1     163      COM                                                 
+ BTP                        R(4)            4     3912     1     163      COM                                                 
+ BTPCM                      R(4)            4     520      1     15       COM                                                 
+ BTPWD                      R(4)            4     24             scalar   COM                                                 
+ BWIDE                      R(4)            4     4              scalar   COM                                                 
+ C2D31                      R(4)            4     736      1     46       COM                                                 
+ C2D38                      R(4)            4     920      1     46       COM                                                 
+ C2D51                      R(4)            4     33856    2     2116     COM                                                 
+ C2D58                      R(4)            4     42320    2     2116     COM                                                 
+ C2D71                      R(4)            4     736      1     46       COM                                                 
+ C2D78                      R(4)            4     920      1     46       COM                                                 
+ C2DM51                     R(4)            4     51504    1     45       COM                                                 
+ C2DM58                     R(4)            4     51684    1     45       COM                                                 
+ CAH2SW                     R(4)            4     100      1     5        COM                                                 
+ CAO3SW                     R(4)            4     80       1     5        COM                                                 
+ CBSW                       R(4)            4     120      1     5        COM                                                 
+ CDT31                      R(4)            4     368      1     46       COM                                                 
+ CDT38                      R(4)            4     552      1     46       COM                                                 
+ CDT51                      R(4)            4     16928    2     2116     COM                                                 
+ CDT58                      R(4)            4     25392    2     2116     COM                                                 
+ CDT71                      R(4)            4     368      1     46       COM                                                 
+ CDT78                      R(4)            4     552      1     46       COM                                                 
+ CDTM51                     R(4)            4     51144    1     45       COM                                                 
+
+Page 15          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ CDTM58                     R(4)            4     51324    1     45       COM                                                 
+ CFCO2                      R(4)            4     96             scalar   COM                                                 
+ CFO3                       R(4)            4     100            scalar   COM                                                 
+ CO211                      R(4)            4     0        1     46       COM                                                 
+ CO218                      R(4)            4     184      1     46       COM                                                 
+ CO231                      R(4)            4     0        1     46       COM                                                 
+ CO238                      R(4)            4     184      1     46       COM                                                 
+ CO251                      R(4)            4     0        2     2116     COM                                                 
+ CO258                      R(4)            4     8464     2     2116     COM                                                 
+ CO271                      R(4)            4     0        1     46       COM                                                 
+ CO278                      R(4)            4     184      1     46       COM                                                 
+ CO2M51                     R(4)            4     50784    1     45       COM                                                 
+ CO2M58                     R(4)            4     50964    1     45       COM                                                 
+ CSUBP                      R(4)            4     4              scalar   COM                                                 
+ DAYSEC                     R(4)            4     72             scalar   COM              811,841                            
+ DDO3N2                     R(4)            4     6660     2     1665     COM              725,728                            
+ DDO3N3                     R(4)            4     13320    2     1665     COM              726,729                            
+ DDO3N4                     R(4)            4     19980    2     1665     COM              727,730                            
+ DDUO3N                     R(4)            4     0        2     1665     COM              725,728                            
+ DEGRAD                     R(4)            4     64             scalar   COM              706                                
+ DIFFCTR                    R(4)            4     8              scalar   COM                                                 
+ DSRCE                      R(4)            4     132240   2     420      COM                                                 
+ DZA                        R(4)            4     1844     1     19       COM              711                                
+ EIGHT                      R(4)            4     20             scalar   COM                                                 
+ EM1                        R(4)            4     9600     2     5040     COM                                                 
+ EM1WDE                     R(4)            4     29760    2     5040     COM                                                 
+ EM3                        R(4)            4     110400   2     5040     COM                                                 
+ EMISP                      R(4)            4     0              scalar   COM                                                 
+ EMIST                      R(4)            4     4              scalar   COM                                                 
+ FIFTY                      R(4)            4     12             scalar   COM              708,710                            
+ FIVE                       R(4)            4     24             scalar   COM                                                 
+ FOUR                       R(4)            4     28             scalar   COM                                                 
+ G                          R(4)            4     12             scalar   COM                                                 
+ G2LI                       I(4)            4     0        1     239      COM                                                 
+ G2LJ                       I(4)            4     1912     1     389      COM                                                 
+ GINV                       R(4)            4     68             scalar   COM                                                 
+ GP0INV                     R(4)            4     76             scalar   COM                                                 
+ GRAVDR                     R(4)            4     16             scalar   COM                                                 
+ GTEMP                      R(4)            4     52048    1     46       COM                                                 
+ H101M16                    R(4)            4     808            scalar   COM                                                 
+ H102M5                     R(4)            4     784            scalar   COM                                                 
+ H1036E2                    R(4)            4     756            scalar   COM                                                 
+ H114M11                    R(4)            4     384            scalar   COM                                                 
+ H1174M7                    R(4)            4     268            scalar   COM                                                 
+ H11M10                     R(4)            4     296            scalar   COM                                                 
+ H11M11                     R(4)            4     388            scalar   COM                                                 
+ H1224E3                    R(4)            4     112            scalar   COM                                                 
+ H1226E1                    R(4)            4     652            scalar   COM                                                 
+ H128M5                     R(4)            4     240            scalar   COM                                                 
+ H129M2                     R(4)            4     732            scalar   COM                                                 
+ H12M12                     R(4)            4     472            scalar   COM                                                 
+ H12M13                     R(4)            4     492            scalar   COM                                                 
+ H12M31                     R(4)            4     560            scalar   COM                                                 
+ H135M13                    R(4)            4     488            scalar   COM                                                 
+ H1386E2                    R(4)            4     748            scalar   COM                                                 
+
+Page 16          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ H1439M5                    R(4)            4     236            scalar   COM                                                 
+ H14M10                     R(4)            4     292            scalar   COM                                                 
+ H14M11                     R(4)            4     380            scalar   COM                                                 
+ H14M12                     R(4)            4     468            scalar   COM                                                 
+ H14M14                     R(4)            4     508            scalar   COM                                                 
+ H14M30                     R(4)            4     548            scalar   COM                                                 
+ H15E1                      R(4)            4     44             scalar   COM              710                                
+ H15E2                      R(4)            4     136            scalar   COM                                                 
+ H15M11                     R(4)            4     376            scalar   COM                                                 
+ H15M14                     R(4)            4     504            scalar   COM                                                 
+ H15M5                      R(4)            4     824            scalar   COM                                                 
+ H161E1                     R(4)            4     800            scalar   COM                                                 
+ H165E5                     R(4)            4     84             scalar   COM                                                 
+ H16E1                      R(4)            4     792            scalar   COM                                                 
+ H16M12                     R(4)            4     464            scalar   COM                                                 
+ H181E1                     R(4)            4     148            scalar   COM                                                 
+ H18E1                      R(4)            4     152            scalar   COM                                                 
+ H18E3                      R(4)            4     832            scalar   COM                                                 
+ H18M11                     R(4)            4     372            scalar   COM                                                 
+ H1E11                      R(4)            4     72             scalar   COM                                                 
+ H1E13                      R(4)            4     68             scalar   COM                                                 
+ H1E15                      R(4)            4     64             scalar   COM                                                 
+ H1E4                       R(4)            4     96             scalar   COM                                                 
+ H1E6                       R(4)            4     612            scalar   COM                                                 
+ H1E8                       R(4)            4     76             scalar   COM                                                 
+ H1M10                      R(4)            4     300            scalar   COM                                                 
+ H1M11                      R(4)            4     392            scalar   COM                                                 
+ H1M13                      R(4)            4     496            scalar   COM                                                 
+ H1M16                      R(4)            4     856            scalar   COM                                                 
+ H1M17                      R(4)            4     512            scalar   COM                                                 
+ H1M18                      R(4)            4     516            scalar   COM                                                 
+ H1M19                      R(4)            4     520            scalar   COM                                                 
+ H1M2                       R(4)            4     620            scalar   COM                                                 
+ H1M20                      R(4)            4     524            scalar   COM                                                 
+ H1M21                      R(4)            4     528            scalar   COM                                                 
+ H1M22                      R(4)            4     532            scalar   COM                                                 
+ H1M23                      R(4)            4     536            scalar   COM                                                 
+ H1M24                      R(4)            4     540            scalar   COM                                                 
+ H1M3                       R(4)            4     208            scalar   COM                                                 
+ H1M4                       R(4)            4     220            scalar   COM              733                                
+ H1M5                       R(4)            4     244            scalar   COM                                                 
+ H1M6                       R(4)            4     260            scalar   COM                                                 
+ H1M60                      R(4)            4     584            scalar   COM                                                 
+ H1M8                       R(4)            4     284            scalar   COM                                                 
+ H1P082                     R(4)            4     740            scalar   COM                                                 
+ H1P25892                   R(4)            4     180            scalar   COM                                                 
+ H1P4                       R(4)            4     176            scalar   COM                                                 
+ H1P41819                   R(4)            4     704            scalar   COM                                                 
+ H1P4387                    R(4)            4     172            scalar   COM                                                 
+ H1P8                       R(4)            4     168            scalar   COM                                                 
+ H2075E3                    R(4)            4     108            scalar   COM                                                 
+ H20788E3                   R(4)            4     104            scalar   COM                                                 
+ H2118M2                    R(4)            4     760            scalar   COM                                                 
+ H21M12                     R(4)            4     460            scalar   COM                                                 
+ H21M31                     R(4)            4     556            scalar   COM                                                 
+
+Page 17          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ H235M3                     R(4)            4     724            scalar   COM                                                 
+ H23E2                      R(4)            4     132            scalar   COM                                                 
+ H23M10                     R(4)            4     288            scalar   COM                                                 
+ H23M11                     R(4)            4     364            scalar   COM                                                 
+ H24E3                      R(4)            4     100            scalar   COM                                                 
+ H24M11                     R(4)            4     360            scalar   COM                                                 
+ H24M12                     R(4)            4     456            scalar   COM                                                 
+ H25452M6                   R(4)            4     256            scalar   COM                                                 
+ H257M8                     R(4)            4     280            scalar   COM                                                 
+ H25E2                      R(4)            4     816            scalar   COM                                                 
+ H25M31                     R(4)            4     552            scalar   COM                                                 
+ H26E2                      R(4)            4     696            scalar   COM                                                 
+ H26M30                     R(4)            4     544            scalar   COM                                                 
+ H28571M2                   R(4)            4     852            scalar   COM                                                 
+ H285M4                     R(4)            4     216            scalar   COM                                                 
+ H28E1                      R(4)            4     868            scalar   COM                                                 
+ H28M11                     R(4)            4     356            scalar   COM                                                 
+ H28M12                     R(4)            4     452            scalar   COM                                                 
+ H29316E2                   R(4)            4     648            scalar   COM                                                 
+ H2945E2                    R(4)            4     128            scalar   COM                                                 
+ H29M12                     R(4)            4     448            scalar   COM                                                 
+ H2E2                       R(4)            4     688            scalar   COM                                                 
+ H2E6                       R(4)            4     616            scalar   COM                                                 
+ H2M11                      R(4)            4     368            scalar   COM                                                 
+ H2P5                       R(4)            4     164            scalar   COM                                                 
+ H2P8                       R(4)            4     160            scalar   COM                                                 
+ H2P9                       R(4)            4     156            scalar   COM                                                 
+ H3082E2                    R(4)            4     120            scalar   COM                                                 
+ H3116E1                    R(4)            4     656            scalar   COM                                                 
+ H323M4                     R(4)            4     768            scalar   COM                                                 
+ H327M8                     R(4)            4     276            scalar   COM                                                 
+ H32M11                     R(4)            4     348            scalar   COM                                                 
+ H35E1                      R(4)            4     140            scalar   COM                                                 
+ H35M11                     R(4)            4     344            scalar   COM                                                 
+ H36M13                     R(4)            4     484            scalar   COM                                                 
+ H37412M5                   R(4)            4     232            scalar   COM                                                 
+ H37M11                     R(4)            4     340            scalar   COM                                                 
+ H37M12                     R(4)            4     440            scalar   COM                                                 
+ H38M12                     R(4)            4     436            scalar   COM                                                 
+ H391M7                     R(4)            4     264            scalar   COM                                                 
+ H394M5                     R(4)            4     228            scalar   COM                                                 
+ H3E2                       R(4)            4     124            scalar   COM                                                 
+ H3M11                      R(4)            4     352            scalar   COM                                                 
+ H3M12                      R(4)            4     444            scalar   COM                                                 
+ H3M14                      R(4)            4     500            scalar   COM                                                 
+ H3M3                       R(4)            4     804            scalar   COM                                                 
+ H3M4                       R(4)            4     860            scalar   COM                                                 
+ H3M6                       R(4)            4     24             scalar   COM              688                                
+ H3P5                       R(4)            4     828            scalar   COM                                                 
+ H3P6                       R(4)            4     144            scalar   COM                                                 
+ H41666M2                   R(4)            4     636            scalar   COM                                                 
+ H42M11                     R(4)            4     336            scalar   COM                                                 
+ H42M2                      R(4)            4     764            scalar   COM                                                 
+ H44194M2                   R(4)            4     700            scalar   COM                                                 
+ H44871M2                   R(4)            4     200            scalar   COM                                                 
+
+Page 18          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ H44M11                     R(4)            4     332            scalar   COM                                                 
+ H44M12                     R(4)            4     428            scalar   COM                                                 
+ H451M6                     R(4)            4     788            scalar   COM                                                 
+ H45M12                     R(4)            4     424            scalar   COM                                                 
+ H45M32                     R(4)            4     572            scalar   COM                                                 
+ H46M13                     R(4)            4     480            scalar   COM                                                 
+ H488E4                     R(4)            4     92             scalar   COM                                                 
+ H48M11                     R(4)            4     328            scalar   COM                                                 
+ H4999M6                    R(4)            4     252            scalar   COM                                                 
+ H4E5                       R(4)            4     80             scalar   COM                                                 
+ H4M12                      R(4)            4     432            scalar   COM                                                 
+ H4M33                      R(4)            4     576            scalar   COM                                                 
+ H53M11                     R(4)            4     324            scalar   COM                                                 
+ H559M3                     R(4)            4     204            scalar   COM                                                 
+ H55M32                     R(4)            4     568            scalar   COM                                                 
+ H5725E4                    R(4)            4     88             scalar   COM                                                 
+ H5E2                       R(4)            4     116            scalar   COM                                                 
+ H625M2                     R(4)            4     668            scalar   COM                                                 
+ H62M12                     R(4)            4     416            scalar   COM                                                 
+ H62M34                     R(4)            4     580            scalar   COM                                                 
+ H658M2                     R(4)            4     752            scalar   COM                                                 
+ H65M12                     R(4)            4     412            scalar   COM                                                 
+ H67390E2                   R(4)            4     772            scalar   COM                                                 
+ H6938M5                    R(4)            4     224            scalar   COM                                                 
+ H69766E5                   R(4)            4     720            scalar   COM                                                 
+ H6M12                      R(4)            4     420            scalar   COM                                                 
+ H6M2                       R(4)            4     32             scalar   COM                                                 
+ H6P08108                   R(4)            4     836            scalar   COM                                                 
+ H71E26                     R(4)            4     60             scalar   COM                                                 
+ H72M11                     R(4)            4     320            scalar   COM                                                 
+ H74E1                      R(4)            4     40             scalar   COM              707,708,709                        
+ H74M12                     R(4)            4     408            scalar   COM                                                 
+ H75826M4                   R(4)            4     736            scalar   COM                                                 
+ H77M11                     R(4)            4     316            scalar   COM                                                 
+ H77M12                     R(4)            4     404            scalar   COM                                                 
+ H7M6                       R(4)            4     248            scalar   COM                                                 
+ H8121E1                    R(4)            4     684            scalar   COM                                                 
+ H82M11                     R(4)            4     308            scalar   COM                                                 
+ H83E26                     R(4)            4     56             scalar   COM                                                 
+ H83M11                     R(4)            4     304            scalar   COM                                                 
+ H8725M8                    R(4)            4     272            scalar   COM                                                 
+ H8M11                      R(4)            4     312            scalar   COM                                                 
+ H8M13                      R(4)            4     476            scalar   COM                                                 
+ H93M12                     R(4)            4     400            scalar   COM                                                 
+ H96M12                     R(4)            4     396            scalar   COM                                                 
+ H987M4                     R(4)            4     212            scalar   COM                                                 
+ H9M32                      R(4)            4     564            scalar   COM                                                 
+ H9P94                      R(4)            4     660            scalar   COM                                                 
+ HAF                        R(4)            4     44             scalar   COM              707                                
+ HM13EZ                     R(4)            4     592            scalar   COM                                                 
+ HM1597E1                   R(4)            4     812            scalar   COM                                                 
+ HM161E1                    R(4)            4     796            scalar   COM                                                 
+ HM1797E1                   R(4)            4     680            scalar   COM                                                 
+ HM181E1                    R(4)            4     604            scalar   COM                                                 
+ HM19EZ                     R(4)            4     596            scalar   COM                                                 
+
+Page 19          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ HM1E1                      R(4)            4     600            scalar   COM                                                 
+ HM1E2                      R(4)            4     608            scalar   COM                                                 
+ HM1EZ                      R(4)            4     692            scalar   COM                                                 
+ HM2M2                      R(4)            4     644            scalar   COM                                                 
+ HM6666M2                   R(4)            4     628            scalar   COM                                                 
+ HM8E1                      R(4)            4     864            scalar   COM                                                 
+ HMP5                       R(4)            4     640            scalar   COM                                                 
+ HMP575                     R(4)            4     588            scalar   COM                                                 
+ HMP66667                   R(4)            4     624            scalar   COM                                                 
+ HMP805                     R(4)            4     840            scalar   COM                                                 
+ HNINE                      R(4)            4     60             scalar   COM              709                                
+ HNINETY                    R(4)            4     4              scalar   COM              707                                
+ HP1                        R(4)            4     196            scalar   COM              710                                
+ HP118666                   R(4)            4     820            scalar   COM                                                 
+ HP144                      R(4)            4     712            scalar   COM                                                 
+ HP166666                   R(4)            4     632            scalar   COM                                                 
+ HP2                        R(4)            4     52             scalar   COM              654                                
+ HP219                      R(4)            4     708            scalar   COM                                                 
+ HP228                      R(4)            4     672            scalar   COM                                                 
+ HP26                       R(4)            4     728            scalar   COM                                                 
+ HP369                      R(4)            4     192            scalar   COM                                                 
+ HP3795                     R(4)            4     776            scalar   COM                                                 
+ HP5048                     R(4)            4     780            scalar   COM                                                 
+ HP518                      R(4)            4     188            scalar   COM                                                 
+ HP526315                   R(4)            4     848            scalar   COM                                                 
+ HP537                      R(4)            4     36             scalar   COM              703,714                            
+ HP6                        R(4)            4     664            scalar   COM                                                 
+ HP602409                   R(4)            4     844            scalar   COM                                                 
+ HP60241                    R(4)            4     676            scalar   COM                                                 
+ HP75                       R(4)            4     28             scalar   COM                                                 
+ HP8                        R(4)            4     184            scalar   COM                                                 
+ HP805                      R(4)            4     744            scalar   COM                                                 
+ HP816                      R(4)            4     716            scalar   COM                                                 
+ HP98                       R(4)            4     20             scalar   COM              645                                
+ HSIGMA                     R(4)            4     68             scalar   COM              798,801                            
+ HTMG                       R(4)            4     743768   3     4183695  COM                                                 
+ HUNDRED                    R(4)            4     0              scalar   COM                                                 
+ IBAND                      I(4)            4     0        1     40       COM                                                 
+ IBROW                      I(4)            4     404            scalar   COM                                                 
+ ICHUNKTAB                  I(4)            4     828      1     21       COM                                                 
+ IE_GLB_TABLE               I(4)            4     84       1     21       COM                                                 
+ IE_LOC_TABLE               I(4)            4     660      1     21       COM                                                 
+ ILCOL                      I(4)            4     396            scalar   COM                                                 
+ ILPAD1                     I(4)            4     412            scalar   COM                                                 
+ ILPAD2                     I(4)            4     416            scalar   COM                                                 
+ ILPAD3                     I(4)            4     420            scalar   COM                                                 
+ ILPAD4                     I(4)            4     424            scalar   COM                                                 
+ ILPAD5                     I(4)            4     428            scalar   COM                                                 
+ IND                        I(4)            4     0        1     237      COM                                                 
+ INDX2                      I(4)            4     948      1     2116     COM                                                 
+ INUMQ                      I(4)            4     1324     1     100      COM                                                 
+ IQUILT_GROUP               I(4)            4     1320           scalar   COM                                                 
+ IRCOL                      I(4)            4     400            scalar   COM                                                 
+ IRPAD1                     I(4)            4     432            scalar   COM                                                 
+ IRPAD2                     I(4)            4     436            scalar   COM                                                 
+
+Page 20          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IRPAD3                     I(4)            4     440            scalar   COM                                                 
+ IRPAD4                     I(4)            4     444            scalar   COM                                                 
+ IRPAD5                     I(4)            4     448            scalar   COM                                                 
+ IS_GLB_TABLE               I(4)            4     0        1     21       COM                                                 
+ IS_LOC_TABLE               I(4)            4     492      1     21       COM                                                 
+ ITEMP                      I(4)            4     5870016  2     91719    COM                                                 
+ ITEMP2                     I(4)            4     6236892  2     91719    COM                                                 
+ ITROW                      I(4)            4     408            scalar   COM                                                 
+ JBPAD1                     I(4)            4     452            scalar   COM                                                 
+ JBPAD2                     I(4)            4     456            scalar   COM                                                 
+ JBPAD3                     I(4)            4     460            scalar   COM                                                 
+ JBPAD4                     I(4)            4     464            scalar   COM                                                 
+ JBPAD5                     I(4)            4     468            scalar   COM                                                 
+ JE_GLB_TABLE               I(4)            4     252      1     21       COM                                                 
+ JE_LOC_TABLE               I(4)            4     744      1     21       COM                                                 
+ JS_GLB_TABLE               I(4)            4     168      1     21       COM                                                 
+ JS_LOC_TABLE               I(4)            4     576      1     21       COM                                                 
+ JTPAD1                     I(4)            4     472            scalar   COM                                                 
+ JTPAD2                     I(4)            4     476            scalar   COM                                                 
+ JTPAD3                     I(4)            4     480            scalar   COM                                                 
+ JTPAD4                     I(4)            4     484            scalar   COM                                                 
+ JTPAD5                     I(4)            4     488            scalar   COM                                                 
+ KMAXV                      I(4)            4     9412     1     46       COM                                                 
+ KMAXVM                     I(4)            4     9596           scalar   COM                                                 
+ L2GI                       I(4)            4     956      1     239      COM                                                 
+ L2GJ                       I(4)            4     3468     1     389      COM                                                 
+ MPI_COMM_COMP              I(4)            4     912            scalar   COM                                                 
+ MPI_COMM_INTER             I(4)            4     916            scalar   COM                                                 
+ MPI_COMM_INTER_ARRAY       I(4)            4     920      1     100      COM                                                 
+ MYIE                       I(4)            4     52             scalar   COM              652,681,694,704,724,738,760,765,78 
+                                                                                           4,795,805,823,840                  
+ MYIE1                      I(4)            4     56             scalar   COM                                                 
+ MYIE1_P1                   I(4)            4     120            scalar   COM                                                 
+ MYIE1_P2                   I(4)            4     124            scalar   COM                                                 
+ MYIE1_P3                   I(4)            4     128            scalar   COM                                                 
+ MYIE1_P4                   I(4)            4     132            scalar   COM                                                 
+ MYIE2                      I(4)            4     60             scalar   COM                                                 
+ MYIE2_P1                   I(4)            4     136            scalar   COM                                                 
+ MYIE_P1                    I(4)            4     100            scalar   COM                                                 
+ MYIE_P2                    I(4)            4     104            scalar   COM                                                 
+ MYIE_P3                    I(4)            4     108            scalar   COM                                                 
+ MYIE_P4                    I(4)            4     112            scalar   COM                                                 
+ MYIE_P5                    I(4)            4     116            scalar   COM                                                 
+ MYIS                       I(4)            4     40             scalar   COM              652,681,694,704,724,738,760,765,78 
+                                                                                           4,795,805,823,840                  
+ MYIS1                      I(4)            4     44             scalar   COM                                                 
+ MYIS1_P1                   I(4)            4     84             scalar   COM                                                 
+ MYIS1_P2                   I(4)            4     88             scalar   COM                                                 
+ MYIS1_P3                   I(4)            4     92             scalar   COM                                                 
+ MYIS1_P4                   I(4)            4     96             scalar   COM                                                 
+ MYIS2                      I(4)            4     48             scalar   COM                                                 
+ MYIS_P1                    I(4)            4     64             scalar   COM                                                 
+ MYIS_P2                    I(4)            4     68             scalar   COM                                                 
+ MYIS_P3                    I(4)            4     72             scalar   COM                                                 
+ MYIS_P4                    I(4)            4     76             scalar   COM                                                 
+
+Page 21          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MYIS_P5                    I(4)            4     80             scalar   COM                                                 
+ MYJE                       I(4)            4     236            scalar   COM                                                 
+ MYJE1                      I(4)            4     240            scalar   COM                                                 
+ MYJE1_P1                   I(4)            4     280            scalar   COM                                                 
+ MYJE1_P2                   I(4)            4     284            scalar   COM                                                 
+ MYJE1_P3                   I(4)            4     288            scalar   COM                                                 
+ MYJE1_P4                   I(4)            4     292            scalar   COM                                                 
+ MYJE2                      I(4)            4     244            scalar   COM                                                 
+ MYJE2_P1                   I(4)            4     296            scalar   COM                                                 
+ MYJE2_P2                   I(4)            4     300            scalar   COM                                                 
+ MYJE2_P3                   I(4)            4     304            scalar   COM                                                 
+ MYJE2_P4                   I(4)            4     308            scalar   COM                                                 
+ MYJE3                      I(4)            4     248            scalar   COM                                                 
+ MYJE3_P4                   I(4)            4     312            scalar   COM                                                 
+ MYJE4                      I(4)            4     252            scalar   COM                                                 
+ MYJE4_P1                   I(4)            4     316            scalar   COM                                                 
+ MYJE4_P4                   I(4)            4     320            scalar   COM                                                 
+ MYJE5                      I(4)            4     256            scalar   COM                                                 
+ MYJE5_P1                   I(4)            4     324            scalar   COM                                                 
+ MYJE5_P2                   I(4)            4     328            scalar   COM                                                 
+ MYJE_P1                    I(4)            4     260            scalar   COM                                                 
+ MYJE_P2                    I(4)            4     264            scalar   COM                                                 
+ MYJE_P3                    I(4)            4     268            scalar   COM                                                 
+ MYJE_P4                    I(4)            4     272            scalar   COM                                                 
+ MYJE_P5                    I(4)            4     276            scalar   COM                                                 
+ MYJS                       I(4)            4     140            scalar   COM                                                 
+ MYJS1                      I(4)            4     144            scalar   COM                                                 
+ MYJS1_P1                   I(4)            4     184            scalar   COM                                                 
+ MYJS1_P2                   I(4)            4     188            scalar   COM                                                 
+ MYJS1_P3                   I(4)            4     192            scalar   COM                                                 
+ MYJS1_P4                   I(4)            4     196            scalar   COM                                                 
+ MYJS2                      I(4)            4     148            scalar   COM                                                 
+ MYJS2_P1                   I(4)            4     200            scalar   COM                                                 
+ MYJS2_P2                   I(4)            4     204            scalar   COM                                                 
+ MYJS2_P3                   I(4)            4     208            scalar   COM                                                 
+ MYJS2_P4                   I(4)            4     212            scalar   COM                                                 
+ MYJS3                      I(4)            4     152            scalar   COM                                                 
+ MYJS3_P4                   I(4)            4     216            scalar   COM                                                 
+ MYJS4                      I(4)            4     156            scalar   COM                                                 
+ MYJS4_P1                   I(4)            4     220            scalar   COM                                                 
+ MYJS4_P4                   I(4)            4     224            scalar   COM                                                 
+ MYJS5                      I(4)            4     160            scalar   COM                                                 
+ MYJS5_P1                   I(4)            4     228            scalar   COM                                                 
+ MYJS5_P2                   I(4)            4     232            scalar   COM                                                 
+ MYJS_P1                    I(4)            4     164            scalar   COM                                                 
+ MYJS_P2                    I(4)            4     168            scalar   COM                                                 
+ MYJS_P3                    I(4)            4     172            scalar   COM                                                 
+ MYJS_P4                    I(4)            4     176            scalar   COM                                                 
+ MYJS_P5                    I(4)            4     180            scalar   COM                                                 
+ MYPE                       I(4)            4     0              scalar   COM                                                 
+ MY_E                       I(4)            4     336            scalar   COM                                                 
+ MY_IE_GLB                  I(4)            4     12             scalar   COM                                                 
+ MY_IE_LOC                  I(4)            4     28             scalar   COM                                                 
+ MY_IS_GLB                  I(4)            4     8              scalar   COM                                                 
+ MY_IS_LOC                  I(4)            4     24             scalar   COM                                                 
+
+Page 22          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ MY_JE_GLB                  I(4)            4     20             scalar   COM                                                 
+ MY_JE_LOC                  I(4)            4     36             scalar   COM                                                 
+ MY_JS_GLB                  I(4)            4     16             scalar   COM                                                 
+ MY_JS_LOC                  I(4)            4     32             scalar   COM                                                 
+ MY_N                       I(4)            4     332            scalar   COM                                                 
+ MY_NE                      I(4)            4     348            scalar   COM                                                 
+ MY_NEB                     I(4)            4     364      1     8        COM                                                 
+ MY_NW                      I(4)            4     360            scalar   COM                                                 
+ MY_S                       I(4)            4     340            scalar   COM                                                 
+ MY_SE                      I(4)            4     352            scalar   COM                                                 
+ MY_SW                      I(4)            4     356            scalar   COM                                                 
+ MY_W                       I(4)            4     344            scalar   COM                                                 
+ NPES                       I(4)            4     4              scalar   COM                                                 
+ O3DIFCTR                   R(4)            4     20             scalar   COM                                                 
+ ONE                        R(4)            4     40             scalar   COM              703,707                            
+ P0                         R(4)            4     24             scalar   COM                                                 
+ P0INV                      R(4)            4     72             scalar   COM                                                 
+ P0X2                       R(4)            4     36             scalar   COM                                                 
+ P0XZP2                     R(4)            4     28             scalar   COM                                                 
+ P0XZP8                     R(4)            4     32             scalar   COM                                                 
+ PWTS                       R(4)            4     48       1     12       COM                                                 
+ Q14330                     R(4)            4     48             scalar   COM              798                                
+ Q19001                     R(4)            4     16             scalar   COM              655                                
+ QUARTR                     R(4)            4     48             scalar   COM              709                                
+ RAD1                       R(4)            4     0        1     1665     COM                                                 
+ RAD2                       R(4)            4     6660     1     1665     COM                                                 
+ RAD3                       R(4)            4     13320    1     1665     COM                                                 
+ RAD4                       R(4)            4     19980    1     1665     COM                                                 
+ RADCON                     R(4)            4     40             scalar   COM                                                 
+ RADCON1                    R(4)            4     64             scalar   COM                                                 
+ RATCO2MW                   R(4)            4     56             scalar   COM              775                                
+ RATH2OMW                   R(4)            4     60             scalar   COM                                                 
+ RCO2                       R(4)            4     76             scalar   COM              774                                
+ RCOS1                      R(4)            4     8              scalar   COM              650,726,729                        
+ RCOS2                      R(4)            4     12             scalar   COM              651,727,730                        
+ REFLO3                     R(4)            4     104            scalar   COM                                                 
+ RGAS                       R(4)            4     44             scalar   COM                                                 
+ RGASSP                     R(4)            4     48             scalar   COM                                                 
+ RRAYAV                     R(4)            4     108            scalar   COM                                                 
+ RSIN1                      R(4)            4     4              scalar   COM              649,725,728                        
+ SECPDA                     R(4)            4     52             scalar   COM                                                 
+ SIXTY                      R(4)            4     8              scalar   COM                                                 
+ SKC1R                      R(4)            4     48             scalar   COM                                                 
+ SKO2D                      R(4)            4     44             scalar   COM                                                 
+ SKO3R                      R(4)            4     52             scalar   COM                                                 
+ SOLC                       R(4)            4     0              scalar   COM              639,645                            
+ SOURCE                     R(4)            4     130560   2     420      COM                                                 
+ STEMP                      R(4)            4     51864    1     46       COM                                                 
+ TABLE1                     R(4)            4     49920    2     5040     COM                                                 
+ TABLE2                     R(4)            4     70080    2     5040     COM                                                 
+ TABLE3                     R(4)            4     90240    2     5040     COM                                                 
+ TEMP1                      R(4)            4     0        2     91719    COM                                                 
+ TEMP10                     R(4)            4     3301884  2     91719    COM                                                 
+ TEMP11                     R(4)            4     3668760  2     91719    COM                                                 
+ TEMP12                     R(4)            4     4035636  2     91719    COM                                                 
+
+Page 23          Source Listing                  RADFS
+2022-02-15 16:38 Symbol Table                    RADFS.F
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TEMP13                     R(4)            4     4402512  2     91719    COM                                                 
+ TEMP14                     R(4)            4     4769388  2     91719    COM                                                 
+ TEMP15                     R(4)            4     5136264  2     91719    COM                                                 
+ TEMP16                     R(4)            4     5503140  2     91719    COM                                                 
+ TEMP2                      R(4)            4     366876   2     91719    COM                                                 
+ TEMP2X                     R(4)            4     0        2     92971    COM                                                 
+ TEMP3                      R(4)            4     733752   2     91719    COM                                                 
+ TEMP4                      R(4)            4     1100628  2     91719    COM                                                 
+ TEMP5                      R(4)            4     1467504  2     91719    COM                                                 
+ TEMP6                      R(4)            4     1834380  2     91719    COM                                                 
+ TEMP7                      R(4)            4     2201256  2     91719    COM                                                 
+ TEMP8                      R(4)            4     2568132  2     91719    COM                                                 
+ TEMP9                      R(4)            4     2935008  2     91719    COM                                                 
+ TEN                        R(4)            4     16             scalar   COM                                                 
+ THREE                      R(4)            4     32             scalar   COM                                                 
+ TRN                        R(4)            4     1760     1     21       COM              714                                
+ TTVG                       R(4)            4     371884   2     92971    COM                                                 
+ TWENTY                     R(4)            4     56             scalar   COM              703,714                            
+ TWO                        R(4)            4     36             scalar   COM                                                 
+ XLATP                      R(4)            4     12             scalar   COM                                                 
+ XLATT                      R(4)            4     8              scalar   COM                                                 
+ ZA                         R(4)            4     1680     1     20       COM              711                                
+ ZERO                       R(4)            4     52             scalar   COM              762,767                            
+
+Page 24          Source Listing                  RADFS
+2022-02-15 16:38 Subprograms/Common Blocks       RADFS.F
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ASTSAV                     Common 624                                  16                                                          
+ BANDTA                     Common 337                                  5900     SAVE                                               
+ BDCOMB                     Common 408                                  736      SAVE                                               
+ BDWIDE                     Common 367                                  56       SAVE                                               
+ CO2BD2                     Common 466                                  1104     SAVE                                               
+ CO2BD3                     Common 448                                  52248    SAVE                                               
+ CO2BD4                     Common 482                                  1104     SAVE                                               
+ CO2BD5                     Common 493                                  368      SAVE                                               
+ GLB_TABLE                  Common 200                                  336      SAVE                                               
+ HCON                       Common 229                                  872      SAVE                                               
+ MAPPINGS                   Common 219                                  5024     SAVE                                               
+ MPPCOM                     Common 164                                  1724     SAVE                                               
+ PHYCON                     Common 223                                  80       SAVE                                               
+ RADFS                      Subr   2                                                                                                
+ RDFSAV                     Common 620                                  140                                                         
+ SAVMEM                     Common 597                                  26640                                                       
+ SSALB                      Common 605                                  1920                                                        
+ SWRSAV                     Common 586                                  112                                                         
+ TABCOM                     Common 524                                  133920   SAVE                                               
+ TEMPCOM                    Common 205                                  6603768  SAVE                                               
+ TOPO                       Common 213                                  17478548 SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+
+Page 25          Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model precise
+       -fp_model nofast                      -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -fp_modbits nofp_contract             -fp_modbits nono_fp_contract
+       -fp_modbits nofenv_access             -fp_modbits nono_fenv_access
+       -fp_modbits nocx_limited_range        -fp_modbits nono_cx_limited_range
+       -fp_modbits noprec_div                -fp_modbits nono_prec_div
+       -fp_modbits noprec_sqrt               -fp_modbits nono_prec_sqrt
+       -fp_modbits noftz                     -fp_modbits no_ftz
+       -fp_modbits nointrin_limited_range       -fp_modbits nono_intrin_limited_range
+       -fp_modbits notrunc_compares          -fp_modbits nono_trunc_compares
+       -fp_modbits noieee_nan_compares       -fp_modbits nono_ieee_nan_compares
+
+Page 26          Source Listing                  RADFS
+2022-02-15 16:38                                 RADFS.F
+
+       -fp_modbits nohonor_f32_conversion       -fp_modbits nono_honor_f32_conversion
+       -fp_modbits nohonor_f64_conversion       -fp_modbits nono_honor_f64_conversion
+       -fp_modbits nono_x87_copy             -fp_modbits nono_no_x87_copy
+       -fp_modbits noexception_semantics       -fp_modbits nono_exception_semantics
+       -fp_modbits noprecise_libm_functions       -fp_modbits nono_precise_libm_functions
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : RADFS.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

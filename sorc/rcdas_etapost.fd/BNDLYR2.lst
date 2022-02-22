@@ -1,0 +1,991 @@
+Page 1           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+      1       SUBROUTINE BNDLYR2(PBND,TBND,QBND,RHBND,UBND,VBND,
+      2      X     OMGBND,PWTBND,LVLBND)
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    BNDLYR2     COMPUTES CONSTANT MASS MEAN FIELDS
+      6 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-01-29
+      7 C     
+      8 C ABSTRACT:  THIS ROUTINE COMPUTES CONSTANT MASS (BOUNDARY LAYER)
+      9 C   FIELDS.  THE FIELDS ARE A MEAN OVER LAYERS PARAMETER DPBND
+     10 C   (PASCALS) THICK.  THERE ARE NBND CONSTANT MASS LAYERS, EACH
+     11 C   DPBND THICK STARTING FROM THE SURFACE UP.  COMPUTED BOUNDARY 
+     12 C   LAYER FIELDS ARE PRESSURE, TEMPERATURE, SPECIFIC HUMIDITY,
+     13 C   RELATIVE HUMIDITY, U AND V WINDS, VERTICAL VELOCITY,
+     14 C   AND PRECIPITABLE WATER.  GIVEN THESE FUNDAMENTAL VARIABLES
+     15 C   OTHER FIELDS MAY BE COMPUTED.
+     16 C
+     17 C   ***WARNING*** IF YOU CHANGE PARAMETER NBND IN THIS ROUTINE 
+     18 C                 DON'T FOREGET TO CHANGE IT ALSO IN THE CALLING
+     19 C                 SUBPROGRAM, MISCLN.
+     20 C   .     
+     21 C     
+     22 C PROGRAM HISTORY LOG:
+     23 C   93-01-29  RUSS TREADON
+     24 C   93-05-07  RUSS TREADON - ADDED DOC BLOCK AND MORE COMMENTS.
+     25 C   93-06-19  RUSS TREADON - ADDED LVLBND TO PARAMETER LIST.
+     26 C   96-03-07  MIKE BALDWIN - CHANGE PWTR CALC TO INCLUDE CLD WTR
+     27 C                            SPEED UP CODE
+     28 C   98-06-16  T BLACK      - CONVERSION FROM 1-D TO 2-D
+     29 C   98-08-18  MIKE BALDWIN - CHANGE QSBND TO RHBND IN CALL,
+     30 C                            COMPUTE RH OVER ICE
+     31 C   98-12-22  MIKE BALDWIN - BACK OUT RH OVER ICE
+     32 C   00-01-04  JIM TUCCILLO - MPI VERSION 
+     33 C     
+     34 C     USAGE:    CALL BNDLYR2(PBND,TBND,QBND,RHBND,UBND,VBND,
+     35 C                            OMGBND,PWTBND,LVLBND)
+     36 C           
+     37 C   INPUT ARGUMENT LIST:
+     38 C     NONE     
+     39 C
+     40 C   OUTPUT ARGUMENT LIST: 
+     41 C     PBND     - LAYER MEAN PRESSURE IN NBND BOUNDARY LAYERS (NBL).
+     42 C     TBND     - LAYER MEAN TEMPERATURE IN NBL.
+     43 C     QBND     - LAYER MEAN SPECIFIC HUMIDITY IN NBL.
+     44 C     RHBND    - LAYER MEAN RELATIVE HUM. (QBND/QSBND) IN  NBL.
+     45 C     UBND     - LAYER MEAN U WIND COMPONENT IN NBL.
+     46 C     VBND     - LAYER MEAN V WIND COMPONENT IN NBL.
+     47 C     OMGBND   - LAYER MEAN VERTICAL VELOCITY IN NBL.
+     48 C     PWTBND   - LAYER PRECIPITABLE WATER IN NBL.
+     49 C     LVLBND   - ETA LAYER AT MIDPOINT OF NBL.
+     50 C     
+     51 C   OUTPUT FILES:
+     52 C     NONE
+     53 C     
+     54 C   SUBPROGRAMS CALLED:
+     55 C     UTILITIES:
+     56 C       H2V
+     57 C
+
+Page 2           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+     58 C     LIBRARY:
+     59 C       COMMON   - LOOPS
+     60 C                  VRBLS
+     61 C                  MAPOT
+     62 C                  EXTRA
+     63 C                  MASKS
+     64 C                  PVRBLS
+     65 C                  OMGAOT
+     66 C                  OPTIONS
+     67 C                  INDX
+     68 C     
+     69 C   ATTRIBUTES:
+     70 C     LANGUAGE: FORTRAN 90
+     71 C     MACHINE : CRAY C-90
+     72 C$$$  
+     73 C     
+     74 C
+     75 C     INCLUDE GLOBAL PARAMETERS.  SET LOCAL PARAMETERS.
+     76 C        DPBND:  DEPTH OF BOUNDARY LAYER (IN PASCALS).
+     77 C     
+     78       INCLUDE "parmeta"
+     96       INCLUDE "params"
+     97 C
+     98 C
+     99 C
+    141       PARAMETER (DPBND=30.E2,RHOWAT=1.E3,rrhowt=1./rhowat)
+    142       PARAMETER (NBND=6)
+    143 C     
+    144 C     DECLARE VARIABLES.
+    145 C     
+    146       INTEGER LVLBND(IM,JM,NBND)
+    147       REAL PBND(IM,JM,NBND),TBND(IM,JM,NBND),QBND(IM,JM,NBND)
+    148       REAL UBND(IM,JM,NBND),VBND(IM,JM,NBND),OMGBND(IM,JM,NBND)
+    149       REAL PWTBND(IM,JM,NBND),PBINT(IM,JM,NBND+1)
+    150       REAL QSBND(IM,JM,NBND),RHBND(IM,JM,NBND),IWL(IM,JM),IWM1
+    151       REAL PSUM(IM,JM,NBND),PVSUM(IM,JM,NBND),NSUM(IM,JM,NBND)
+    152 C     
+    153 C     INCLUDE COMMONS.
+    154       INCLUDE "LOOPS.comm"
+    162       INCLUDE "VRBLS.comm"
+    169       INCLUDE "MAPOT.comm"
+    182       INCLUDE "EXTRA.comm"
+    194       INCLUDE "MASKS.comm"
+    202       INCLUDE "PVRBLS.comm"
+    214       INCLUDE "CLDWTR.comm"
+    220       INCLUDE "OMGAOT.comm"
+    224       INCLUDE "OPTIONS.comm"
+    228       INCLUDE "INDX.comm"
+    234       INCLUDE "CTLBLK.comm"
+    235 C
+    236 C*****************************************************************************
+    237 C     START BNDLYR HERE
+    252         CLIMIT =1.0E-20
+    253 C
+    254 C     LOOP OVER HORIZONTAL GRID.  AT EACH MASS POINT COMPUTE
+    255 C     PRESSURE AT THE INTERFACE OF EACH BOUNDARY LAYER.
+    256 C     
+
+Page 3           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    257 !$omp  parallel do
+    258       DO J=JSTA,JEND
+    259       DO I=1,IM
+    260         PBINT(I,J,1)=PD(I,J)+PT
+    261       ENDDO
+    262       ENDDO
+    263 C
+    264       DO LBND=2,NBND+1
+    265 !$omp  parallel do
+    266         DO J=JSTA,JEND
+    267         DO I=1,IM
+    268           PBINT(I,J,LBND)=PBINT(I,J,LBND-1)-DPBND
+    269         ENDDO
+    270         ENDDO
+    271       ENDDO
+    272 C     
+    273 C     LOOP OVER HORIZONTAL.  AT EACH MASS POINT COMPUTE 
+    274 C     MASS WEIGHTED LAYER MEAN P, T, Q, U, V, OMEGA, 
+    275 C     WAND PRECIPITABLE WATER IN EACH BOUNDARY LAYER FROM THE SURFACE UP.
+    276 C     
+    277 !$omp  parallel do
+    278 !$omp& private(ai,bi,dp,iwl,iwm1,pm,qi,qint,qsat,qw,tmt0,tmt15)
+    279       DO LBND=1,NBND
+    280         DO J=JSTA,JEND
+    281         DO I=1,IM
+    282           PBND(I,J,LBND)   = D00
+    283           TBND(I,J,LBND)   = D00
+    284           QBND(I,J,LBND)   = D00
+    285           QSBND(I,J,LBND)  = D00
+    286           RHBND(I,J,LBND)  = D00
+    287           UBND(I,J,LBND)   = D00
+    288           VBND(I,J,LBND)   = D00
+    289           OMGBND(I,J,LBND) = D00
+    290           LVLBND(I,J,LBND) = 0
+    291           NSUM(I,J,LBND)   = 0
+    292           PSUM(I,J,LBND)   = D00
+    293           PVSUM(I,J,LBND)  = D00
+    294           PWTBND(I,J,LBND) = D00
+    295         ENDDO
+    296         ENDDO
+    297 C
+    298         IWL=0.
+    299         DO L=1,LM
+    300           DO J=JSTA,JEND
+    301           DO I=1,IM
+    302 C
+    303 C   COMPUTE IW
+    304 C
+    305            IF (L.LE.LMH(I,J)) THEN
+    306             IWM1=IWL(I,J)
+    307             IF(CWM(I,J,L).GT.CLIMIT) THEN
+    308              IF(T(I,J,L).LT.258.15)THEN
+    309                IWL(I,J)=1.
+    310              ELSEIF(T(I,J,L).GE.273.15)THEN
+    311                IWL(I,J)=0.
+    312              ELSE
+    313                IF(IWM1.EQ.1.0)IWL(I,J)=1.
+
+Page 4           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    314              ENDIF
+    315             ELSE
+    316              IWL(I,J)=0.
+    317             ENDIF
+    318            ENDIF
+    319 C
+    320             PM=D50*(PINT(I,J,L)+PINT(I,J,L+1))
+    321             IF((PBINT(I,J,LBND).GE.PM).AND.
+    322      1         (PBINT(I,J,LBND+1).LE.PM)) THEN
+    323               DP     = PINT(I,J,L+1)-PINT(I,J,L)
+    324               PSUM(I,J,LBND)  =PSUM(I,J,LBND)+DP
+    325               NSUM(I,J,LBND)  =NSUM(I,J,LBND)+1
+    326               LVLBND(I,J,LBND)=LVLBND(I,J,LBND)+L
+    327               TBND(I,J,LBND)  =TBND(I,J,LBND)+T(I,J,L)*DP
+    328               QBND(I,J,LBND)  =QBND(I,J,LBND)+Q(I,J,L)*DP
+    329               OMGBND(I,J,LBND)=OMGBND(I,J,LBND)+OMGA(I,J,L)*DP
+    330               PWTBND(I,J,LBND)=PWTBND(I,J,LBND)
+    331      1                        +(Q(I,J,L)+CWM(I,J,L))*DP*GI
+    332 C
+    333               TMT0=T(I,J,L)-273.16
+    334               TMT15=AMIN1(TMT0,-15.)
+    335               AI=0.008855
+    336               BI=1.
+    337               IF(TMT0.LT.-20.)THEN
+    338                 AI=0.007225
+    339                 BI=0.9674
+    340               ENDIF
+    341               QW=PQ0/PM
+    342      1          *EXP(A2*(T(I,J,L)-A3)/(T(I,J,L)-A4))
+    343               QI=QW*(BI+AI*AMIN1(TMT0,0.))
+    344               QINT=QW*(1.-0.00032*TMT15*(TMT15+15.))
+    345               IF(TMT0.LT.-15.)THEN
+    346                   QSAT=QI
+    347               ELSEIF(TMT0.GE.0.)THEN
+    348                   QSAT=QINT
+    349               ELSE
+    350                 IF(IWL(I,J).GT.0.0) THEN
+    351                   QSAT=QI
+    352                 ELSE
+    353                   QSAT=QINT
+    354                 ENDIF
+    355               ENDIF
+    356 CMEB 12/22/98 SWITCH TO RH VS WATER NO MATTER WHAT
+    357 C             DELETE THIS LINE TO SWITCH BACK TO RH VS ICE
+    358               QSAT=QW
+    359 CMEB 12/22/98 SWITCH TO RH VS WATER NO MATTER WHAT
+    360               QSBND(I,J,LBND)=QSBND(I,J,LBND)+QSAT*DP
+    361             ENDIF
+    362           ENDDO
+    363           ENDDO
+    364         ENDDO
+    365 C
+    366 C         NEED TO MAKE SURE THAT PINT HALOS EXIST
+    367 C
+    368         DO L = 1, LP1
+    369            CALL EXCH(PINT(1,1,L))
+    370         end do
+
+Page 5           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    371 C
+    372         DO L=1,LM
+    373 C
+    374           DO J=JSTA_M,JEND_M
+    375           DO I=2,IM-1
+    376             IE=I+IVE(J)
+    377             IW=I+IVW(J)
+    378             PV1=0.25*(PINT(IW,J,L)+PINT(IE,J,L)
+    379      1               +PINT(I,J+1,L)+PINT(I,J-1,L))
+    380             PV2=0.25*(PINT(IW,J,L+1)+PINT(IE,J,L+1)
+    381      1               +PINT(I,J+1,L+1)+PINT(I,J-1,L+1))
+    382             DP=PV2-PV1
+    383             PMV=0.5*(PV1+PV2)
+    384             IF((PBINT(IW,J,LBND).GE.PMV).AND.
+    385      X         (PBINT(IW,J,LBND+1).LE.PMV)) THEN
+    386               PVSUM(I,J,LBND)=PVSUM(I,J,LBND)+DP
+    387               UBND(I,J,LBND)=UBND(I,J,LBND)+U(I,J,L)*DP
+    388               VBND(I,J,LBND)=VBND(I,J,LBND)+V(I,J,L)*DP
+    389             ENDIF
+    390 C
+    391           ENDDO
+    392           ENDDO
+    393         ENDDO
+    394       ENDDO
+    395 C
+    396 !$omp  parallel do
+    397 !$omp& private(rpsum)
+    398       DO LBND=1,NBND
+    399         DO J=JSTA,JEND
+    400         DO I=1,IM
+    401           IF(PSUM(I,J,LBND).NE.0.)THEN
+    402             RPSUM           = 1./PSUM(I,J,LBND)
+    403             LVLBND(I,J,LBND)= LVLBND(I,J,LBND)/NSUM(I,J,LBND)
+    404             PBND(I,J,LBND)  = (PBINT(I,J,LBND)+PBINT(I,J,LBND+1))*0.5
+    405             TBND(I,J,LBND)  = TBND(I,J,LBND)*RPSUM
+    406             QBND(I,J,LBND)  = QBND(I,J,LBND)*RPSUM
+    407             QSBND(I,J,LBND) = QSBND(I,J,LBND)*RPSUM
+    408             OMGBND(I,J,LBND)= OMGBND(I,J,LBND)*RPSUM
+    409           ENDIF
+    410         ENDDO
+    411         ENDDO
+    412 C
+    413         DO J=JSTA_M,JEND_M
+    414         DO I=2,IM-1
+    415           IF(PVSUM(I,J,LBND).NE.0.)THEN
+    416             RPVSUM      =1./PVSUM(I,J,LBND)
+    417             UBND(I,J,LBND)=UBND(I,J,LBND)*RPVSUM
+    418             VBND(I,J,LBND)=VBND(I,J,LBND)*RPVSUM
+    419           ENDIF
+    420         ENDDO
+    421         ENDDO
+    422       ENDDO
+    423 C
+    424 C  IF NO ETA MID LAYER PRESSURES FELL WITHIN A BND LYR,
+    425 C   FIND THE CLOSEST LAYER TO THE BND LYR AND ASSIGN THE VALUES THERE
+    426 C
+    427 !$omp  parallel do
+
+Page 6           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    428 !$omp& private(ai,bi,delp,delpv,dp,ie,iw,l,lv,pm,pmin,pminv,pmv,
+    429 !$omp&         qi,qint,qsat,qw,tmt0,tmt15)
+    430       DO LBND=1,NBND
+    431         DO J=JSTA,JEND
+    432         DO I=1,IM
+    433           IF(PSUM(I,J,LBND).EQ.0.)THEN
+    434             L=LM
+    435             PMIN=9999999.
+    436             PBND(I,J,LBND)=(PBINT(I,J,LBND)+PBINT(I,J,LBND+1))*0.5
+    437 C
+    438             DO LL=1,LM
+    439               PM=D50*(PINT(I,J,LL)+PINT(I,J,LL+1))
+    440               DELP=ABS(PM-PBND(I,J,LBND))
+    441               IF(DELP.LT.PMIN)THEN
+    442                 PMIN=DELP
+    443                 L=LL
+    444               ENDIF
+    445             ENDDO
+    446 C
+    447             DP=PINT(I,J,L+1)-PINT(I,J,L)
+    448             PM=D50*(PINT(I,J,L)+PINT(I,J,L+1))
+    449             LVLBND(I,J,LBND)=L
+    450             TBND(I,J,LBND)=T(I,J,L)
+    451             QBND(I,J,LBND)=Q(I,J,L)
+    452 C
+    453             TMT0=T(I,J,L)-273.16
+    454             TMT15=AMIN1(TMT0,-15.)
+    455             AI=0.008855
+    456             BI=1.
+    457             IF(TMT0.LT.-20.)THEN
+    458               AI=0.007225
+    459               BI=0.9674
+    460             ENDIF
+    461             QW=PQ0/PM
+    462      1          *EXP(A2*(T(I,J,L)-A3)/(T(I,J,L)-A4))
+    463             QI=QW*(BI+AI*AMIN1(TMT0,0.))
+    464             QINT=QW*(1.-0.00032*TMT15*(TMT15+15.))
+    465             IF(TMT0.LT.-15.)THEN
+    466                 QSAT=QI
+    467             ELSEIF(TMT0.GE.0.)THEN
+    468                 QSAT=QINT
+    469             ELSE
+    470               IF(IWL(I,J).GT.0.0) THEN
+    471                 QSAT=QI
+    472               ELSE
+    473                 QSAT=QINT
+    474               ENDIF
+    475             ENDIF
+    476 CMEB 12/22/98 SWITCH TO RH VS WATER NO MATTER WHAT
+    477 C             DELETE THIS LINE TO SWITCH BACK TO RH VS ICE
+    478               QSAT=QW
+    479 CMEB 12/22/98 SWITCH TO RH VS WATER NO MATTER WHAT
+    480             QSBND(I,J,LBND)=QSAT
+    481             OMGBND(I,J,LBND)=OMGA(I,J,L)
+    482             PWTBND(I,J,LBND)=(Q(I,J,L)+CWM(I,J,L))*DP*GI
+    483           ENDIF
+    484 C
+
+Page 7           Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    485 C   RH, BOUNDS CHECK
+    486 C
+    487           RHBND(I,J,LBND)=QBND(I,J,LBND)/QSBND(I,J,LBND)
+    488           IF (RHBND(I,J,LBND).GT.1.0) THEN
+    489             RHBND(I,J,LBND)=1.0
+    490             QBND(I,J,LBND)=RHBND(I,J,LBND)*QSBND(I,J,LBND)
+    491           ENDIF
+    492           IF (RHBND(I,J,LBND).LT.0.01) THEN
+    493             RHBND(I,J,LBND)=0.01
+    494             QBND(I,J,LBND)=RHBND(I,J,LBND)*QSBND(I,J,LBND)
+    495           ENDIF
+    496         ENDDO
+    497         ENDDO
+    498 C
+    499         DO J=JSTA_M,JEND_M
+    500         DO I=2,IM-1
+    501           IF(PVSUM(I,J,LBND).EQ.0.)THEN
+    502             LV=LM
+    503             PMINV=9999999.
+    504             IE=I+IVE(J)
+    505             IW=I+IVW(J)
+    506 C
+    507 C           PINT HALOS UPDATED ALREADY
+    508 C
+    509             DO LL=1,LM
+    510               PMV=0.125*(PINT(IW,J,LL)+PINT(IE,J,LL)+
+    511      1              PINT(I,J+1,LL)+PINT(I,J-1,LL)+
+    512      2              PINT(IW,J,LL+1)+PINT(IE,J,LL+1)+
+    513      3              PINT(I,J+1,LL+1)+PINT(I,J-1,LL+1))
+    514               DELPV=ABS(PMV-PBND(I,J,LBND))
+    515               IF(DELPV.LT.PMINV)THEN
+    516                 PMINV=DELPV
+    517                 LV=LL
+    518               ENDIF
+    519             ENDDO
+    520 C
+    521             UBND(I,J,LBND)=U(I,J,LV)
+    522             VBND(I,J,LBND)=V(I,J,LV)
+    523           ENDIF
+    524         ENDDO
+    525         ENDDO
+    526       ENDDO
+    527 C
+    528 C     END OF ROUTINE
+    529 C     
+    530       RETURN
+    531       END
+
+Page 8           Source Listing                  BNDLYR2
+2022-02-15 16:38 Entry Points                    BNDLYR2.f
+
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ bndlyr2_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ A2                         Param  140      R(4)            4           scalar                    342,462                           
+ A3                         Param  140      R(4)            4           scalar                    342,462                           
+ A4                         Param  140      R(4)            4           scalar                    342,462                           
+ ABS                        Func   440                                  scalar                    440,514                           
+ AD05                       Param  132      R(4)            4           scalar                                                      
+ AI                         Local  335      R(4)            4           scalar                    335,338,343,455,458,463           
+ AMIN1                      Func   334                                  scalar                    334,343,454,463                   
+ BETA                       Param  136      R(4)            4           scalar                    136                               
+ BI                         Local  336      R(4)            4           scalar                    336,339,343,456,459,463           
+ BNDLYR2                    Subr   1                                                                                                
+ BTG                        Param  136      R(4)            4           scalar                                                      
+ CAPA                       Param  127      R(4)            4           scalar                    134                               
+ CFT0                       Param  132      R(4)            4           scalar                                                      
+ CLDWTR                     Common 216                                  17610408 SAVE                                               
+ CLIMIT                     Local  252      R(4)            4           scalar                    252,307                           
+ CM1                        Param  122      R(4)            4           scalar                                                      
+ CM2                        Param  122      R(4)            4           scalar                                                      
+ CM3                        Param  122      R(4)            4           scalar                                                      
+ CP                         Param  133      R(4)            4           scalar                    135,139                           
+ CPDR                       Param  135      R(4)            4           scalar                                                      
+ CTLBLK                     Common 239                                  96       SAVE                                               
+ D00                        Param  124      R(4)            4           scalar                    282,283,284,285,286,287,288,289,29
+                                                                                                  2,293,294                         
+ D001                       Param  124      R(4)            4           scalar                                                      
+ D0065                      Param  128      R(4)            4           scalar                                                      
+ D01                        Param  124      R(4)            4           scalar                                                      
+ D05                        Param  128      R(4)            4           scalar                    132                               
+ D1                         Param  124      R(4)            4           scalar                                                      
+ D115                       Param  128      R(4)            4           scalar                                                      
+ D125                       Param  126      R(4)            4           scalar                                                      
+ D25                        Param  126      R(4)            4           scalar                                                      
+ D50                        Param  124      R(4)            4           scalar                    320,439,448                       
+ D608                       Param  128      R(4)            4           scalar                                                      
+ DELP                       Local  440      R(4)            4           scalar                    440,441,442                       
+ DELPV                      Local  514      R(4)            4           scalar                    514,515,516                       
+ DP                         Local  323      R(4)            4           scalar                    323,324,327,328,329,331,360,382,38
+                                                                                                  6,387,388,447,482                 
+ DP10M                      Param  134      R(4)            4           scalar                                                      
+ DPBND                      Param  141      R(4)            4           scalar                    268                               
+ DTR                        Param  133      R(4)            4           scalar                    133                               
+ ELDR                       Param  135      R(4)            4           scalar                                                      
+ ELWV                       Param  135      R(4)            4           scalar                    135                               
+ EPS                        Param  138      R(4)            4           scalar                    138                               
+ EPSQ2                      Param  139      R(4)            4           scalar                                                      
+
+Page 9           Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ERAD                       Param  133      R(4)            4           scalar                                                      
+ EXCH                       Subr   369                                                            369                               
+ EXP                        Func   342                                  scalar                    342,462                           
+ EXTRA                      Common 185                                  71506268 SAVE                                               
+ FMD                        Param  138      R(4)            4           scalar                    138                               
+ FMW                        Param  138      R(4)            4           scalar                    138                               
+ G                          Param  131      R(4)            4           scalar                    131                               
+ GI                         Param  131      R(4)            4           scalar                    135,331,482                       
+ H1                         Param  125      R(4)            4           scalar                    132                               
+ H100                       Param  126      R(4)            4           scalar                                                      
+ H1000                      Param  126      R(4)            4           scalar                                                      
+ H10000                     Param  127      R(4)            4           scalar                                                      
+ H10E5                      Param  127      R(4)            4           scalar                                                      
+ H1E2                       Param  129      R(4)            4           scalar                                                      
+ H1E4                       Param  129      R(4)            4           scalar                                                      
+ H1M12                      Param  125      R(4)            4           scalar                                                      
+ H1M2                       Param  129      R(4)            4           scalar                                                      
+ H1M5                       Param  126      R(4)            4           scalar                                                      
+ H2                         Param  125      R(4)            4           scalar                                                      
+ H4                         Param  125      R(4)            4           scalar                                                      
+ H999                       Param  124      R(4)            4           scalar                                                      
+ H99999                     Param  125      R(4)            4           scalar                                                      
+ I                          Local  259      I(4)            4           scalar                    259,260,267,268,281,282,283,284,28
+                                                                                                  5,286,287,288,289,290,291,292,293,
+                                                                                                  294,301,305,306,307,308,309,310,31
+                                                                                                  1,313,316,320,321,322,323,324,325,
+                                                                                                  326,327,328,329,330,331,333,342,35
+                                                                                                  0,360,375,376,377,379,381,386,387,
+                                                                                                  388,400,401,402,403,404,405,406,40
+                                                                                                  7,408,414,415,416,417,418,432,433,
+                                                                                                  436,439,440,447,448,449,450,451,45
+                                                                                                  3,462,470,480,481,482,487,488,489,
+                                                                                                  490,492,493,494,500,501,504,505,51
+                                                                                                  1,513,514,521,522                 
+ IDIM1                      Param  92       I(4)            4           scalar                                                      
+ IDIM2                      Param  92       I(4)            4           scalar                                                      
+ IE                         Local  376      I(4)            4           scalar                    376,378,380,504,510,512           
+ IGSTL                      Param  87       I(4)            4           scalar                    92                                
+ IGSTR                      Param  87       I(4)            4           scalar                    92                                
+ IM                         Param  81       I(4)            4           scalar                    89,92,103,105,106,108,146,147,148,
+                                                                                                  149,150,151,159,165,167,184,186,18
+                                                                                                  7,188,189,190,191,197,199,205,206,
+                                                                                                  207,208,209,211,217,222,259,267,28
+                                                                                                  1,301,375,400,414,432,500         
+ IM1                        Param  105      I(4)            4           scalar                                                      
+ IMJM                       Param  184      I(4)            4           scalar                    187                               
+ IMT                        Param  103      I(4)            4           scalar                                                      
+ INDX                       Common 230                                  6192     SAVE                                               
+ INPES                      Param  84       I(4)            4           scalar                    89,92                             
+ ITAIL                      Param  89       I(4)            4           scalar                                                      
+ IW                         Local  377      I(4)            4           scalar                    377,378,380,384,385,505,510,512   
+ IWL                        Local  150      R(4)            4     2     91719                     298,306,309,311,313,316,350,470   
+ IWM1                       Local  150      R(4)            4           scalar                    306,313                           
+ J                          Local  258      I(4)            4           scalar                    258,260,266,268,280,282,283,284,28
+                                                                                                  5,286,287,288,289,290,291,292,293,
+
+Page 10          Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  294,300,305,306,307,308,309,310,31
+                                                                                                  1,313,316,320,321,322,323,324,325,
+                                                                                                  326,327,328,329,330,331,333,342,35
+                                                                                                  0,360,374,376,377,378,379,380,381,
+                                                                                                  384,385,386,387,388,399,401,402,40
+                                                                                                  3,404,405,406,407,408,413,415,416,
+                                                                                                  417,418,431,433,436,439,440,447,44
+                                                                                                  8,449,450,451,453,462,470,480,481,
+                                                                                                  482,487,488,489,490,492,493,494,49
+                                                                                                  9,501,504,505,510,511,512,513,514,
+                                                                                                  521,522                           
+ JAM                        Param  105      I(4)            4           scalar                    157                               
+ JDIM1                      Param  93       I(4)            4           scalar                                                      
+ JDIM2                      Param  93       I(4)            4           scalar                                                      
+ JGSTL                      Param  88       I(4)            4           scalar                    93                                
+ JGSTR                      Param  88       I(4)            4           scalar                    93                                
+ JM                         Param  81       I(4)            4           scalar                    90,93,103,105,108,146,147,148,149,
+                                                                                                  150,151,159,165,167,184,186,187,18
+                                                                                                  8,189,190,191,197,199,205,206,207,
+                                                                                                  208,209,211,217,222,231           
+ JM2                        Param  105      I(4)            4           scalar                                                      
+ JMT                        Param  103      I(4)            4           scalar                                                      
+ JNPES                      Param  84       I(4)            4           scalar                    90,93                             
+ JTAIL                      Param  90       I(4)            4           scalar                                                      
+ KSAV                       Param  113      I(4)            4           scalar                                                      
+ KSFI                       Param  112      I(4)            4           scalar                                                      
+ KSLI                       Param  113      I(4)            4           scalar                                                      
+ KSLP                       Param  113      I(4)            4           scalar                                                      
+ KSLPD                      Param  112      I(4)            4           scalar                                                      
+ KSMUD                      Param  112      I(4)            4           scalar                                                      
+ KSRH                       Param  113      I(4)            4           scalar                                                      
+ KSSLP                      Param  112      I(4)            4           scalar                                                      
+ KST                        Param  112      I(4)            4           scalar                                                      
+ KSUV                       Param  113      I(4)            4           scalar                                                      
+ L                          Local  299      I(4)            4           scalar                    299,305,307,308,310,320,323,326,32
+                                                                                                  7,328,329,331,333,342,368,369,372,
+                                                                                                  378,379,380,381,387,388,434,443,44
+                                                                                                  7,448,449,450,451,453,462,481,482 
+ LB                         Param  108      I(4)            4           scalar                                                      
+ LBND                       Local  264      I(4)            4           scalar                    264,268,279,282,283,284,285,286,28
+                                                                                                  7,288,289,290,291,292,293,294,321,
+                                                                                                  322,324,325,326,327,328,329,330,36
+                                                                                                  0,384,385,386,387,388,398,401,402,
+                                                                                                  403,404,405,406,407,408,415,416,41
+                                                                                                  7,418,430,433,436,440,449,450,451,
+                                                                                                  480,481,482,487,488,489,490,492,49
+                                                                                                  3,494,501,514,521,522             
+ LHEAT                      Param  139      I(4)            4           scalar                    139                               
+ LHTOCP                     Param  139      I(4)            4           scalar                                                      
+ LL                         Local  438      I(4)            4           scalar                    438,439,443,509,510,511,512,513,51
+                                                                                                  7                                 
+ LM                         Param  81       I(4)            4           scalar                    107,118,167,177,187,199,211,217,22
+                                                                                                  2,299,372,434,438,502,509         
+ LM1                        Param  107      I(4)            4           scalar                                                      
+ LOOPS                      Common 156                                  748952   SAVE                                               
+
+Page 11          Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LP1                        Param  107      I(4)            4           scalar                    177,186,368                       
+ LSM                        Param  81       I(4)            4           scalar                    176                               
+ LV                         Local  502      I(4)            4           scalar                    502,517,521,522                   
+ LVLBND                     Dummy  2        I(4)            4     3     550314   ARG,INOUT        290,326,403,449                   
+ MAPOT                      Common 171                                  1448     SAVE                                               
+ MASKS                      Common 196                                  34853220 SAVE                                               
+ NBND                       Param  142      I(4)            4           scalar                    146,147,148,149,150,151,264,279,39
+                                                                                                  8,430                             
+ NINC                       Param  106      I(4)            4           scalar                                                      
+ NSTAT                      Param  118      I(4)            4           scalar                                                      
+ NSUM                       Local  151      R(4)            4     3     550314                    291,325,403                       
+ NSUMD                      Param  114      I(4)            4           scalar                                                      
+ NWORD                      Param  118      I(4)            4           scalar                    118                               
+ NWORD3                     Param  118      I(4)            4           scalar                                                      
+ NWORD6                     Param  118      I(4)            4           scalar                                                      
+ OMGAOT                     Common 222                                  16509420 SAVE                                               
+ OMGBND                     Dummy  2        R(4)            4     3     550314   ARG,INOUT        289,329,408,481                   
+ ONEPS                      Param  138      R(4)            4           scalar                                                      
+ OPTIONS                    Common 226                                  24       SAVE                                               
+ OVERRC                     Param  132      R(4)            4           scalar                    132                               
+ P1000                      Param  134      R(4)            4           scalar                                                      
+ PARALLEL                   Common 246                                  8240                                                        
+ PBINT                      Local  149      R(4)            4     3     642033                    260,268,321,322,384,385,404,436   
+ PBND                       Dummy  1        R(4)            4     3     550314   ARG,INOUT        282,404,436,440,514               
+ PM                         Local  320      R(4)            4           scalar                    320,321,322,341,439,440,448,461   
+ PMIN                       Local  435      R(4)            4           scalar                    435,441,442                       
+ PMINV                      Local  503      R(4)            4           scalar                    503,515,516                       
+ PMV                        Local  383      R(4)            4           scalar                    383,384,385,510,514               
+ PQ0                        Param  140      R(4)            4           scalar                    341,461                           
+ PSUM                       Local  151      R(4)            4     3     550314                    292,324,401,402,433               
+ PV1                        Local  378      R(4)            4           scalar                    378,382,383                       
+ PV2                        Local  380      R(4)            4           scalar                    380,382,383                       
+ PVRBLS                     Common 204                                  23480064 SAVE                                               
+ PVSUM                      Local  151      R(4)            4     3     550314                    293,386,415,416,501               
+ PWTBND                     Dummy  2        R(4)            4     3     550314   ARG,INOUT        294,330,482                       
+ QBND                       Dummy  1        R(4)            4     3     550314   ARG,INOUT        284,328,406,451,487,490,494       
+ QI                         Local  343      R(4)            4           scalar                    343,346,351,463,466,471           
+ QINT                       Local  344      R(4)            4           scalar                    344,348,353,464,468,473           
+ QSAT                       Local  346      R(4)            4           scalar                    346,348,351,353,358,360,466,468,47
+                                                                                                  1,473,478,480                     
+ QSBND                      Local  150      R(4)            4     3     550314                    285,360,407,480,487,490,494       
+ QW                         Local  341      R(4)            4           scalar                    341,343,344,358,461,463,464,478   
+ RCAPA                      Param  134      R(4)            4           scalar                                                      
+ RD                         Param  131      R(4)            4           scalar                    131,135,139                       
+ RDOCP                      Param  139      R(4)            4           scalar                                                      
+ RG                         Param  135      R(4)            4           scalar                                                      
+ RHBND                      Dummy  1        R(4)            4     3     550314   ARG,INOUT        286,487,488,489,490,492,493,494   
+ RHOWAT                     Param  141      R(4)            4           scalar                    141                               
+ ROG                        Param  131      R(4)            4           scalar                                                      
+ RPSUM                      Local  402      R(4)            4           scalar                    402,405,406,407,408               
+ RPVSUM                     Local  416      R(4)            4           scalar                    416,417,418                       
+ RRHOWT                     Param  141      R(4)            4           scalar                                                      
+ RTD                        Param  133      R(4)            4           scalar                                                      
+ SMTHA                      Param  114      R(4)            4           scalar                                                      
+ SMTHB                      Param  114      R(4)            4           scalar                                                      
+
+Page 12          Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ TBND                       Dummy  1        R(4)            4     3     550314   ARG,INOUT        283,327,405,450                   
+ TFRZ                       Param  138      R(4)            4           scalar                                                      
+ TMT0                       Local  333      R(4)            4           scalar                    333,334,337,343,345,347,453,454,45
+                                                                                                  7,463,465,467                     
+ TMT15                      Local  334      R(4)            4           scalar                    334,344,454,464                   
+ UBND                       Dummy  1        R(4)            4     3     550314   ARG,INOUT        287,387,417,521                   
+ VBND                       Dummy  1        R(4)            4     3     550314   ARG,INOUT        288,388,418,522                   
+ VRBLS                      Common 164                                  67138308                                                    
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ACCLIQ                     R(4)            4     6236892  2     91719    COM                                                 
+ ACPREC                     R(4)            4     5870016  2     91719    COM                                                 
+ AETA                       R(4)            4     808      1     45       COM                                                 
+ AKHS                       R(4)            4     733752   2     91719    COM                                                 
+ AKMS                       R(4)            4     366876   2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ ALSL                       R(4)            4     472      1     39       COM                                                 
+ CLDEFI                     R(4)            4     5136264  2     91719    COM                                                 
+ CMLD                       R(4)            4     292            scalar   COM                                                 
+ CPHI0                      R(4)            4     1420           scalar   COM                                                 
+ CUPREC                     R(4)            4     6603768  2     91719    COM                                                 
+ CWM                        R(4)            4     0        3     4127355  COM              307,331,482                        
+ DETA                       R(4)            4     628      1     45       COM                                                 
+ DISLP                      R(4)            4     308            scalar   COM                                                 
+ DLMD                       R(4)            4     284            scalar   COM                                                 
+ DP30                       R(4)            4     296            scalar   COM                                                 
+ DPHD                       R(4)            4     288            scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ ERLAM0                     R(4)            4     1416           scalar   COM                                                 
+ ETA                        R(4)            4     988      1     46       COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IHE                        I(4)            4     0        1     387      COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1548     1     387      COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ ISHDE                      I(4)            4     12       1     61       COM                                                 
+ IUNIT                      I(4)            4     1440           scalar   COM                                                 
+
+Page 13          Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVE                        I(4)            4     3096     1     387      COM              376,504                            
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IVW                        I(4)            4     4644     1     387      COM              377,505                            
+ IXM                        I(4)            4     4              scalar   COM                                                 
+ IYM                        I(4)            4     8              scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              258,266,280,300,399,431            
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              374,413,499                        
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              258,266,280,300,399,431            
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              374,413,499                        
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ KUNIT                      I(4)            4     1428           scalar   COM                                                 
+ LC                         I(4)            4     16876656 2     91719    COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM              305                                
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ LSL                        I(4)            4     0              scalar   COM                                                 
+ LUNIT                      I(4)            4     1432           scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ MUNIT                      I(4)            4     1436           scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ NUNIT                      I(4)            4     1444           scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ OMGA                       R(4)            4     0        3     4127355  COM              329,481                            
+ PD                         R(4)            4     0        2     91719    COM              260                                
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM              320,323,369,378,379,380,381,439,44 
+                                                                                           7,448,510,511,512,513              
+ PREC                       R(4)            4     5503140  2     91719    COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     260            scalar   COM              260                                
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM              328,331,451,482                    
+
+Page 14          Source Listing                  BNDLYR2
+2022-02-15 16:38 Symbol Table                    BNDLYR2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ Q2                         R(4)            4     6970644  3     4127355  COM                                                 
+ QS                         R(4)            4     1467504  2     91719    COM                                                 
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ QWBS                       R(4)            4     4035636  2     91719    COM                                                 
+ QZ0                        R(4)            4     2935008  2     91719    COM                                                 
+ R                          R(4)            4     256            scalar   COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RF                         R(4)            4     3301884  2     91719    COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SBD                        R(4)            4     272            scalar   COM                                                 
+ SI                         R(4)            4     4769388  2     91719    COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SNO                        R(4)            4     4402512  2     91719    COM                                                 
+ SPHI0                      R(4)            4     1424           scalar   COM                                                 
+ SPL                        R(4)            4     316      1     39       COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ SR                         R(4)            4     17243532 2     91719    COM                                                 
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              308,310,327,333,342,450,453,462    
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ THS                        R(4)            4     1100628  2     91719    COM                                                 
+ THZ0                       R(4)            4     2568132  2     91719    COM                                                 
+ TLM0D                      R(4)            4     276            scalar   COM                                                 
+ TPH0D                      R(4)            4     280            scalar   COM                                                 
+ TSHDE                      R(4)            4     1172     1     61       COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TSPH                       R(4)            4     264            scalar   COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ TWBS                       R(4)            4     3668760  2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM              387,521                            
+ U00                        R(4)            4     16509420 2     91719    COM                                                 
+ UL                         R(4)            4     16876296 1     90       COM                                                 
+ UZ0                        R(4)            4     1834380  2     91719    COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM              388,522                            
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ VZ0                        R(4)            4     2201256  2     91719    COM                                                 
+ WBD                        R(4)            4     268            scalar   COM                                                 
+ X1P                        R(4)            4     300            scalar   COM                                                 
+ Y1P                        R(4)            4     304            scalar   COM                                                 
+ Z0                         R(4)            4     0        2     91719    COM                                                 
+ Z0SLP                      R(4)            4     312            scalar   COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM                                                 
+
+Page 15          Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+    532 C
+
+Page 16          Source Listing                  BNDLYR2
+2022-02-15 16:38 Subprograms/Common Blocks       BNDLYR2.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ BNDLYR2                    Subr   1                                                                                                
+ CLDWTR                     Common 216                                  17610408 SAVE                                               
+ CTLBLK                     Common 239                                  96       SAVE                                               
+ EXTRA                      Common 185                                  71506268 SAVE                                               
+ INDX                       Common 230                                  6192     SAVE                                               
+ LOOPS                      Common 156                                  748952   SAVE                                               
+ MAPOT                      Common 171                                  1448     SAVE                                               
+ MASKS                      Common 196                                  34853220 SAVE                                               
+ OMGAOT                     Common 222                                  16509420 SAVE                                               
+ OPTIONS                    Common 226                                  24       SAVE                                               
+ PARALLEL                   Common 246                                  8240                                                        
+ PVRBLS                     Common 204                                  23480064 SAVE                                               
+ VRBLS                      Common 164                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+
+Page 17          Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+
+Page 18          Source Listing                  BNDLYR2
+2022-02-15 16:38                                 BNDLYR2.f
+
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : BNDLYR2.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

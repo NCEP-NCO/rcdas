@@ -1,0 +1,390 @@
+Page 1           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+      1       SUBROUTINE CLMAX
+      2      I (DETA,PDSL,HTM,Q2,ZINT,SM,HGT,LMH,IM,JM,LM,LP1
+      3      O, EL0
+      4      W, SQZ,SQ,RQ2L,RQ2H)
+      5 CFPP$ NOCONCUR R
+      6 C
+      7 C     CALCULATES THE FREE-ATMOSPHERE ASYMPTOTE OF THE TURBULENCE LENGTH
+      8 C     SCALE (L-INF IN THE BLACKADAR's FORMULA) FROM THE DISTRIBUTION
+      9 C     OF THE TURBULENT ENERGY (see MY82)
+     10 C
+     11 C     EXTRACTED FROM EXISTING CODE BY L. LOBOCKI, JULY 28, 1992
+     12 C
+     13 C     INPUT:
+     14 C     ------
+     15 C
+     16 C     DETA (LM)        - VECTOR OF THE ETA COORDINATE STEPS
+     17 C     PDSL (IM,JM)     - VECTORIZED ARRAY OF SURFACE PRESSURE
+     18 C     HTM  (IM,JM,LM)  - HEIGHT TOPOGRAPHY MASK ARRAY
+     19 C     Q2   (IM,JM,LM)  - TWICE THE TURBULENT ENERGY FIELD
+     20 C     ZINT (IM,JM,LP1) - ETA INTERFACES HEIGHT FIELD
+     21 C     SM   (IM,JM)     - SEA MASK
+     22 C     HGT  (IM,JM)     - SURFACE ELEVATION ARRAY
+     23 C     LMH  (IM,JM)     - TOPOGRAPHY INDEXES ARRAY
+     24 C     IM,JM            - ARRAY DIMENSIONS FOR HORIZONTAL GRIDS
+     25 C                        IN A VECTORIZED FORM
+     26 C     KHL00            - INDEX POINTING TO THE BEGIN OF INTERNAL H-POINTS
+     27 C                        IN HORIZONTAL GRIDS
+     28 C     KHH00            - INDEX POINTING TO THE END OF INTERNAL H-POINTS
+     29 C                        IN HORIZONTAL GRIDS
+     30 C     LM               - ARRAY DIMENSION FOR VERTICAL GRIDS
+     31 C     LP1              = LM+1
+     32 C
+     33 C
+     34 C     OUTPUT:
+     35 C     -------
+     36 C
+     37 C     EL0 (IM,JM)      - ARRAY OF RESULTING ASYMPTOTIC MIXING LENGTHS
+     38 C
+     39 C
+     40 C     SCRATCH AREAS:
+     41 C     --------------
+     42 C
+     43 C     SQZ(IM,JM),SQ(IM,JM),RQ2L(IM,JM),RQ2H(IM,JM)
+     44 C
+     45 C
+     46 C     RELEVANT CONSTANTS:
+     47 C     -------------------
+     48 C
+     49 C     PROPORTIONALITY CONSTANT BETWEEN ASYMPTOTIC MIXING LENGTH AND THE
+     50 C     S.D. OF Q DISTRIBUTION, FOR LAND AND SEA AREAS, CORRESPONDINGLY:
+     51       PARAMETER (ALPHAL=0.2, ALPHAS=0.2)
+     52 C
+     53 C     ASYMPTOTIC MIXING LENGTH LIMITATIONS:
+     54       PARAMETER (EL0M=300.0, ELMIN=11.0)
+     55 C
+     56 C     MINIMAL VALUE OF TURBULENT ENERGY:
+     57       PARAMETER (EPSQ2=1.0E-4)
+
+Page 2           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+     58 C
+     59 C     ------------------------------------------------------------------
+     60 C
+     61                          D I M E N S I O N
+     62      & DETA(LM),PDSL(IM,JM),HTM(IM,JM,LM),Q2(IM,JM,LM)
+     63      &,ZINT(IM,JM,LP1),SM(IM,JM),HGT(IM,JM),EL0(IM,JM),LMH(IM,JM)
+     64      &,SQZ(IM,JM),SQ(IM,JM),RQ2L(IM,JM),RQ2H(IM,JM)
+     65 C     ------------------------------------------------------------------
+     66 C
+     67       INCLUDE "CTLBLK.comm"
+     68 C
+     83 !$omp  parallel do
+     84       DO J=JSTA,JEND
+     85       DO I=1,IM
+     86         SQZ(I,J)=0.0
+     87         SQ(I,J)=0.0
+     88         RQ2H(I,J)=0.0
+     89       ENDDO
+     90       ENDDO
+     91 C
+     92       DO 220 L=1,LM
+     93 !$omp  parallel do
+     94 !$omp& private(dp,rq2m)
+     95       DO J=JSTA,JEND
+     96       DO I=1,IM
+     97         IF(Q2(I,J,L).LE.EPSQ2) THEN
+     98           RQ2L(I,J)=0.0
+     99         ELSE
+    100           RQ2L(I,J)=SQRT(Q2(I,J,L))
+    101         ENDIF
+    102 C
+    103 C         -----------------------------------------------------------------
+    104 C         THIS PART OF THE CODE IS LEFT FOR TESTING OTHER PARAMETERIZATION
+    105 C         SCHEMES 
+    106 C
+    107 C         IF (L.GE.LMH(I,J)) GOTO 215
+    108 c         RQ2L(I,J)=SQRT(Q2(I,J,L))
+    109 c         IF(Q2(I,J,L).LT.0.0)THEN
+    110 c           write(3,*)'NEGATIVE Q2 AT (I,J,L)=(',I,',',J,',',L,'): ',
+    111 c                     Q2(I,J,L)
+    112 c           STOP
+    113 c         ENDIF
+    114 C         -----------------------------------------------------------------
+    115 C
+    116           DP=DETA(L)*PDSL(I,J)*HTM(I,J,L)
+    117 C***
+    118 C***      SUM OF Q2 AT BOTH LOWER & UPPER SURFACES:
+    119 C***
+    120           RQ2M=(RQ2H(I,J)+RQ2L(I,J))
+    121 C***
+    122 C***      INTEGRAL OF Q*Z OVER DP
+    123 C***
+    124           SQZ(I,J)=((ZINT(I,J,L)+ZINT(I,J,L+1))*0.5-HGT(I,J))*RQ2M*DP
+    125      1              +SQZ(I,J)
+    126 C***
+    127 C***      INTEGRAL OF Q OVER DP:
+    128 C***
+
+Page 3           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+    129           SQ(I,J)=RQ2M*DP+SQ(I,J)
+    130           RQ2H(I,J)=RQ2L(I,J)
+    131       ENDDO
+    132       ENDDO
+    133 c215  CONTINUE
+    134  220  CONTINUE
+    135 C***
+    136 C***    CLIPPING & APPLYING DIFFERENT VALUES OF THE PROPORTIONALITY 
+    137 C***    CONSTANT ALPHA FOR THE LAND AND SEA AREA:
+    138 C***
+    139 !$omp  parallel do
+    140       DO J=JSTA,JEND
+    141       DO I=1,IM
+    142         EL0(I,J)= AMAX1(AMIN1(
+    143      1    ((SM(I,J)*ALPHAS+(1.0-SM(I,J))*ALPHAL)*SQZ(I,J)
+    144      2     /(SQ(I,J)+EPSQ2)),
+    145      3    EL0M),ELMIN)
+    146       ENDDO
+    147       ENDDO
+    148 C
+    149       RETURN
+    150       END
+
+
+ENTRY POINTS
+
+  Name              
+                    
+ clmax_             
+
+Page 4           Source Listing                  CLMAX
+2022-02-15 16:38 Symbol Table                    CLMAX.f
+
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 220                        Label  134                                                            92                                
+ ALPHAL                     Param  51       R(4)            4           scalar                    143                               
+ ALPHAS                     Param  51       R(4)            4           scalar                    143                               
+ AMAX1                      Func   142                                  scalar                    142                               
+ AMIN1                      Func   142                                  scalar                    142                               
+ CLMAX                      Subr   1                                                                                                
+ CTLBLK                     Common 70                                   96       SAVE                                               
+ DETA                       Dummy  2        R(4)            4     1     0        ARG,INOUT        116                               
+ DP                         Local  116      R(4)            4           scalar                    116,124,129                       
+ EL0                        Dummy  3        R(4)            4     2     0        ARG,INOUT        142                               
+ EL0M                       Param  54       R(4)            4           scalar                    145                               
+ ELMIN                      Param  54       R(4)            4           scalar                    145                               
+ EPSQ2                      Param  57       R(4)            4           scalar                    97,144                            
+ HGT                        Dummy  2        R(4)            4     2     0        ARG,INOUT        124                               
+ HTM                        Dummy  2        R(4)            4     3     0        ARG,INOUT        116                               
+ I                          Local  85       I(4)            4           scalar                    85,86,87,88,96,97,98,100,116,120,1
+                                                                                                  24,125,129,130,141,142,143,144    
+ IM                         Dummy  2        I(4)            4           scalar   ARG,INOUT        62,63,64,85,96,141                
+ J                          Local  84       I(4)            4           scalar                    84,86,87,88,95,97,98,100,116,120,1
+                                                                                                  24,125,129,130,140,142,143,144    
+ JM                         Dummy  2        I(4)            4           scalar   ARG,INOUT        62,63,64                          
+ L                          Local  92       I(4)            4           scalar                    92,97,100,116,124                 
+ LM                         Dummy  2        I(4)            4           scalar   ARG,INOUT        62,92                             
+ LMH                        Dummy  2        I(4)            4     2     0        ARG,INOUT                                          
+ LP1                        Dummy  2        I(4)            4           scalar   ARG,INOUT        63                                
+ PARALLEL                   Common 77                                   8240                                                        
+ PDSL                       Dummy  2        R(4)            4     2     0        ARG,INOUT        116                               
+ Q2                         Dummy  2        R(4)            4     3     0        ARG,INOUT        97,100                            
+ RQ2H                       Dummy  4        R(4)            4     2     0        ARG,INOUT        88,120,130                        
+ RQ2L                       Dummy  4        R(4)            4     2     0        ARG,INOUT        98,100,120,130                    
+ RQ2M                       Local  120      R(4)            4           scalar                    120,124,129                       
+ SM                         Dummy  2        R(4)            4     2     0        ARG,INOUT        143                               
+ SQ                         Dummy  4        R(4)            4     2     0        ARG,INOUT        87,129,144                        
+ SQRT                       Func   100                                  scalar                    100                               
+ SQZ                        Dummy  4        R(4)            4     2     0        ARG,INOUT        86,124,125,143                    
+ ZINT                       Dummy  2        R(4)            4     3     0        ARG,INOUT        124                               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+
+Page 5           Source Listing                  CLMAX
+2022-02-15 16:38 Symbol Table                    CLMAX.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              84,95,140                          
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              84,95,140                          
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+
+Page 6           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+    151 
+
+Page 7           Source Listing                  CLMAX
+2022-02-15 16:38 Subprograms/Common Blocks       CLMAX.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CLMAX                      Subr   1                                                                                                
+ CTLBLK                     Common 70                                   96       SAVE                                               
+ PARALLEL                   Common 77                                   8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 8           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 9           Source Listing                  CLMAX
+2022-02-15 16:38                                 CLMAX.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CLMAX.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

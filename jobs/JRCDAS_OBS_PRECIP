@@ -1,0 +1,188 @@
+#!/bin/sh
+#############################################################
+#
+# processing of precip for input to the RCDAS assimilation
+#
+# input:
+#       CMORPH binary 30-minute precip data
+#       CPC global precip analysis binary daily precip data 12Z-12Z
+#       CPC conus precip analysis binary daily precip data 12Z-12Z
+#
+# output:
+#       Hourly CMORPH grib files
+#       Hourly US_MEX grib precip
+#
+# failure mode:
+#      no cmorph -- daily values are spread out over 24 hours
+#      no cpc_gbl  -- use cmorph data
+#
+# calls $HOMErcdas/scripts/exrcdas_obs_precip.sh
+#
+# programs:
+#      rcdas_gribify_cmorph.x converts two 30 minute CMORPH fields into 1 hour ave grib file
+#      rcdas_disag_us_mex.x takes us_mex and cmorph and makes hourly data
+#      rcdas_gribify_us_mex2.x convert binary hourly data into grib
+#      rcdas_gribify_us_conus_gauge.x convert cpc conus precip into grib
+#
+#
+# 2/2007: updated script from Marco Carrera by Wesley Ebisuzaki
+#         updated documentation
+#         very minor bug fix
+# 4/2007: fix copy to IBM section
+# 9/2009: Compute farm mods
+#
+# variables: date, day and day1
+# serial job
+#
+#############################################################
+set -x
+export RUN_ENVIR=${RUN_ENVIR:-prod}
+
+export PS4='$SECONDS + '
+date
+set -xa
+
+fatal() {
+  msg="fatal error $*"
+  postmsg "$msg"
+  exit 8
+}
+
+
+####################################
+# obtain unique process id (pid) and make temp directory
+####################################
+export pid=$$
+export DATA=${DATA:-$DATAROOT/${jobid}}
+mkdir -p $DATA
+cd $DATA || fatal "could not cd to $DATA"
+KEEPDATA=${KEEPDATA:-NO}
+
+export cycle=t${cyc}z
+
+####################################
+# Specify NET and RUN Name and model and Log Msgs
+####################################
+export NET=${NET:-rcdas}
+export RUN=${RUN:-rcdas}
+export model=${model:-rcdas}
+export version=${version:-$rcdas_ver}
+
+if [ $envir = "prod" ]
+then
+   export SENDDBN=${SENDDBN:-'YES'}
+else
+   export SENDDBN=${SENDDBN:-'NO'}
+fi
+
+####################################
+# Determine Job Output Name on System
+####################################
+export job=${job:-JOB}
+export outid=${outid:-OUTID}
+export outid="LL$job"
+export jobid="${outid}.o${pid}"
+export pgmout="OUTPUT.${pid}"
+touch $pgmout
+
+####################################
+# SENDCOM  - Copy Files From TMPDIR to $COMOUT
+# SENDDBN  - Issue DBNet Client Calls
+####################################
+export SENDCOM=${SENDCOM:-'YES'}
+
+# binary 
+####################################
+# Specify Execution Areas
+####################################
+export HOMErcdas=$PACKAGEROOT/${model}.${version}
+export EXECrcdas=${HOMErcdas}/exec
+export PARMrcdas=${HOMErcdas}/parm
+export USHrcdas=${HOMErcdas}/ush
+export FIXrcdas=${HOMErcdas}/fix
+
+##############################
+# Run setpdy and initialize PDY variables
+##############################
+setpdy.sh
+. ./PDY
+##############################
+# set DATE
+##############################
+export CDATE=$PDYm2
+export CDATP1=$PDYm1
+export DATE=$CDATP1
+export date0="${PDYm2}12"
+export enddate="${PDYm1}12"
+
+##############################################
+# Define LOG
+##############################################
+export LOG=${DATA}/rcdas.missing
+
+####################################
+# location of input data
+####################################
+export DCOM_IN=${DCOM_IN:-$DCOMROOT}
+export cmorph_in='CMORPH_025DEG-30MIN_${date}'
+export cpc_conus_in=PRCP_CU_GAUGE_V1.0CONUS_0.25deg.lnx.${CDATP1}.RT
+export cpc_gbl_in=PRCP_CU_GAUGE_V1.0GLB_0.50deg.lnx.${CDATP1}.RT
+####################################
+
+##############################################
+# Define COM directories
+##############################################
+export cpc_conus_in=PRCP_CU_GAUGE_V1.0CONUS_0.25deg.lnx.${CDATP1}.RT
+
+set -x
+export COMIN=${COMIN:-$(compath.py ${envir}/com/${NET}/${version})}
+export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${version})/${RUN}.${CDATE}}
+export COMOUT_P1=${COMOUT_P1:-$(compath.py -o ${NET}/${version})/${RUN}.${CDATP1}}
+
+export COMINpcpanl_base=${COMINpcpanl_base:-$(compath.py ${envir}/com/pcpanl/$pcpanl_ver)}
+export COMINpcpanl=$COMINpcpanl_base/pcpanl.$CDATE
+export COMINpcpanl_P1=$COMINpcpanl_base/pcpanl.$CDATP1
+
+export COMINnam_base=${COMINnam_base:-$(compath.py ${envir}/com/nam/$nam_ver)}
+export COMINnam=$COMINnam_base/nam.$CDATE
+export COMINnam_P1=$COMINnam_base/nam.$CDATP1
+
+[ ! -d $COMOUT ] && mkdir -p $COMOUT
+[ ! -d $COMOUT_P1 ] && mkdir -p $COMOUT_P1
+
+msg="HAS BEGUN on `hostname`"
+postmsg "$msg"
+
+env
+
+export TMPDIR=$DATA
+
+#############################################################
+# Execute the script
+${HOMErcdas}/scripts/exrcdas_obs_precip.sh
+#############################################################
+err=$?
+if [ $err -eq 0 ] ; then
+  msg="ENDED NORMALLY."
+else
+  msg="ERROR."
+fi
+
+if [ -f ${LOG} ]; then
+echo "$LOG"
+fi
+
+if [ -f ${LOG} ]; then
+#  mail -v -s "RCDAS: Missing data detected" -c "wesley.ebisuzaki@noaa.gov" pingping.xie@noaa.gov leigh.zhang@noaa.gov <${LOG}
+  cat ${LOG}
+fi
+
+postmsg "$msg"
+
+##############################
+# Remove the Temporary working directory if prod
+##############################
+if [ $KEEPDATA != YES ] ; then
+   rm -r $DATA
+fi
+exit $err

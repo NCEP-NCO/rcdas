@@ -1,0 +1,462 @@
+Page 1           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+      1       SUBROUTINE EUVGUV(U,V,VTLON,IMT,JMT,EVLAT,EVLON,
+      2      1     ALATVT,ALVTOT,NRTHOT,PROJ)
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    EUVGUV      
+      6 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-23       
+      7 C     
+      8 C ABSTRACT:
+      9 C     THIS ROUTINE CONVERTS (ROTATES) U-V WIND COMPONENTS
+     10 C     ON THE ETA E-GRID TO U-V WIND COMPONENTS ON THE
+     11 C     SPECIFIED OUTPUT GRID.  IT ONLY DOES THE ROTATION,
+     12 C     NOT THE INTERPOLATION.
+     13 C   .     
+     14 C     
+     15 C PROGRAM HISTORY LOG:
+     16 C   ??-??-??  ???
+     17 C   92-12-23  RUSS TREADON - ADDED COMMENTS AND GENERALIZED
+     18 C                            CODE TO HANDLE VARIABLE OUTPUT GRIDS.
+     19 C   93-06-13  RUSS TREADON - GENERALIZED ROUTINE TO HANDLE BOTH
+     20 C                            POLAR STEREOGRAPHIC AND LAT-LON 
+     21 C                            PROJECTIONS.
+     22 C     
+     23 C USAGE:    CALL EUVGUV(U,V,VTLON,IMT,JMT,EVLAT,EVLON,
+     24 C              ALVTOT,NRTHOT,PROJ)
+     25 C   INPUT ARGUMENT LIST:
+     26 C     U        - U WIND ON FILLED E-GRID
+     27 C     V        - V WIND ON FILLED E-GRID
+     28 C     VTLON    - V POINT LONGITUDES ON FILLED E-GRID
+     29 C     IMT      - FIRST DIMENSION OF FILLED E-GRID
+     30 C     JMT      - SECOND DIMENSION OF FILLED E-GRID
+     31 C     EVLAT    - FILLED E-GRID TRANSFORMED LATITUDES
+     32 C     EVLON    - FILLED E-GRID TRANSFORMED LONGITUDES
+     33 C     ALVTOT   - ROTATION LONGITUDE OF OUTPUT GRID
+     34 C     NRTHOT   - N/S HEMISPHERE LOGICAL SWITCH FOR OUTPUT GRID
+     35 C     PROJ     - OUTPUT GRID PROJECTION.
+     36 C
+     37 C   OUTPUT ARGUMENT LIST: 
+     38 C     U        - U WIND ROTATED TO OUTPUT GRID.
+     39 C     V        - V WIND ROTATED TO OUTPUT GRID.
+     40 C     
+     41 C   OUTPUT FILES:
+     42 C       NONE
+     43 C     
+     44 C   SUBPROGRAMS CALLED:
+     45 C     UTILITIES:
+     46 C       NONE
+     47 C     LIBRARY:
+     48 C       COMMON   - EGRID
+     49 C                  IOUNIT
+     50 C     
+     51 C   ATTRIBUTES:
+     52 C     LANGUAGE: FORTRAN
+     53 C     MACHINE : CRAY C-90
+     54 C$$$  
+     55 C     
+     56 C     
+     57 C     INCLUDE ETA MODEL DIMENSIONS.
+
+Page 2           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+     58 C---------------------------------------------------------------
+     59       INCLUDE "parmeta"
+     60 C---------------------------------------------------------------
+     78       PARAMETER (LP1=LM+1)
+     79 C---------------------------------------------------------------
+     80 C     
+     81 C     DECLARE VARIABLES.
+     82       LOGICAL NORTH, NRTHOT
+     83       CHARACTER*6 PROJ
+     84       REAL ALONVT, DLAM, DPHI, LAM0, PHI0, POLEI
+     85       REAL POLEJ, SINPH0, TANPH0, WLONC, XMESHL
+     86       REAL YLATC
+     87       REAL U(IMT,JMT),V(IMT,JMT),VTLON(IMT,JMT)
+     88       REAL EVLAT(IMT,JMT), EVLON(IMT,JMT)
+     89 C---------------------------------------------------------------
+     90       INCLUDE "EGRID.comm"
+     96       INCLUDE "IOUNIT.comm"
+     97 C---------------------------------------------------------------
+    105       EQUIVALENCE (YLATC,ALONVT), (DPHI, POLEI)
+    106       EQUIVALENCE (WLONC, POLEJ), (DLAM,XMESHL)
+    107 C---------------------------------------------------------------
+    108       DATA CONV2R/0.017453293/,CONV2D/57.2958/
+    109       DATA EARTHR/6371.2/
+    110 C     
+    111 C**************************************************************
+    112 C     START EUVGUV HERE.
+    113 C     
+    114 C     CASE I:  ROTATE FROM E-GRID TO POLAR STEREOGRAPHIC GRID.
+    115 C     
+    116       IF (INDEX(PROJ,'POLA').NE.0) THEN
+    117          SPHI0 = SINPH0
+    118 !$omp  parallel do
+    119 !$omp& private(a,alpha,arg,cosa,elat,elon,sina,ue,ve)
+    120          DO 10 J = 1, JMT
+    121          DO 10 I = 1, IMT
+    122             ELAT = EVLAT(I,J)
+    123             ELON = EVLON(I,J)
+    124 	    ARG = SPHI0*SIN(VTLON(I,J)*CONV2R) /
+    125      1           COS(ELAT*CONV2R)
+    126 	    IF(ABS(ARG).GT.1.0) THEN
+    127 		ARG = SIGN(1.0,ARG)  
+    128             END IF
+    129             ALPHA = ASIN(ARG)
+    130             COSA = COS(ALPHA)
+    131             SINA = SIN(ALPHA)
+    132             UE   = U(I,J)*COSA+V(I,J)*SINA
+    133             VE   = V(I,J)*COSA-U(I,J)*SINA
+    134             A    = (ELON-ALVTOT)*CONV2R
+    135             SINA = SIN(A)
+    136             COSA = COS(A)
+    137             IF (.NOT.NRTHOT) COSA = -COSA
+    138             U(I,J) =  UE*COSA+VE*SINA
+    139             V(I,J) = -UE*SINA+VE*COSA
+    140  10      CONTINUE
+    141 C     
+    142 C     CASE II:  ROTATE FROM E-GRID TO LATITUDE-LONGITUDE GRID.
+    143 C        THE BELOW CODE IS FROM THE PROFILE OUTPUT CODE IN
+
+Page 3           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+    144 C        SUBROUTINE OUTMAP OR EQUALLY SUBOMG.  NOTE THAT ELON
+    145 C        AND WLONC ARE BOTH IN DEGREES WEST.  WE WANT THE DIFFERENCE
+    146 C        IN DEGREES BETWEEN THE TWO.  WHAT MATTERS IS THAT ELON AND
+    147 C        WLONC ARE EITHER BOTH IN DEGREES EAST OR WEST.
+    148 C
+    149       ELSEIF (INDEX(PROJ,'LOLA').NE.0) THEN
+    150 !$omp  parallel do
+    151 !$omp& private(alpha,arg,cosalp,dlm,elat,elon,sinalp,tlon,ue,ve,xx,yy)
+    152          DO 20 J = 1,JMT
+    153          DO 20 I = 1,IMT
+    154             ELAT   =  EVLAT(I,J)
+    155             ELON   =  EVLON(I,J)
+    156             DLM    =  ELON-WLONC
+    157             XX     =  COSPH0*COS(ELAT*CONV2R)*COS(DLM*CONV2R)+
+    158      X                SINPH0*SIN(ELAT*CONV2R)
+    159             YY     = -COS(ELAT*CONV2R)*SIN(DLM*CONV2R)
+    160             TLON   = ATAN(YY/XX)
+    161 	    ARG = SINPH0*SIN(TLON)/COS(ELAT*CONV2R)
+    162 	    IF(ABS(ARG).GT.1.0)THEN
+    163               ARG = SIGN(1.0,ARG)  
+    164             ENDIF
+    165             ALPHA  = ASIN(ARG)
+    166             SINALP = SIN(ALPHA)
+    167             COSALP = COS(ALPHA)
+    168             UE     = U(I,J)
+    169             VE     = V(I,J)
+    170             U(I,J) = UE*COSALP+VE*SINALP
+    171             V(I,J) = VE*COSALP-UE*SINALP
+    172  20      CONTINUE
+    173 C
+    174 C     CASE III.  ROTATE FROM E-GRID TO LAMBERT CONFORMAL GRID.
+    175 C
+    176       ELSEIF (INDEX(PROJ,'LMBC').NE.0) THEN
+    177          SPHI0 = SINPH0
+    178 !$omp  parallel do
+    179 !$omp& private(a,alpha,arg,cone,cosa,elat,elon,sina,ue,ve)
+    180          DO 30 J = 1, JMT
+    181          DO 30 I = 1, IMT
+    182             ELAT = EVLAT(I,J)
+    183             ELON = EVLON(I,J)
+    184 	    ARG = SPHI0*SIN(VTLON(I,J)*CONV2R) /
+    185      X           COS(ELAT*CONV2R)
+    186 	    IF(ABS(ARG).GT.1.0)THEN
+    187               ARG = SIGN(1.0,ARG)  
+    188             ENDIF
+    189             ALPHA = ASIN(ARG)
+    190             COSA = COS(ALPHA)
+    191             SINA = SIN(ALPHA)
+    192             UE   = U(I,J)*COSA+V(I,J)*SINA
+    193             VE   = V(I,J)*COSA-U(I,J)*SINA
+    194             CONE = SIN(ALATVT*CONV2R)
+    195             A    = CONE*(ELON-ALVTOT)*CONV2R
+    196             SINA = SIN(A)
+    197             COSA = COS(A)
+    198             IF (.NOT.NRTHOT) COSA = -COSA
+    199             U(I,J) =  UE*COSA+VE*SINA
+    200             V(I,J) = -UE*SINA+VE*COSA
+
+Page 4           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+    201  30      CONTINUE
+    202 C     
+    203 C     CASE IV.  OUTPUT WINDS ON ETA E_GRID.  DO NOTHING CASE.
+    204       ELSE
+    205          CONTINUE
+    206 C
+    207       ENDIF
+    208 C     
+    209 C     END OF ROUTINE.
+    210 C
+    211       RETURN
+    212       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ euvguv_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  140                                                            120,121                           
+ 20                         Label  172                                                            152,153                           
+ 30                         Label  201                                                            180,181                           
+ A                          Local  134      R(4)            4           scalar                    134,135,136,195,196,197           
+ ABS                        Func   126                                  scalar                    126,162,186                       
+ ALATVT                     Dummy  2        R(4)            4           scalar   ARG,INOUT        194                               
+ ALPHA                      Local  129      R(4)            4           scalar                    129,130,131,165,166,167,189,190,19
+                                                                                                  1                                 
+ ALVTOT                     Dummy  2        R(4)            4           scalar   ARG,INOUT        134,195                           
+ ARG                        Local  124      R(4)            4           scalar                    124,126,127,129,161,162,163,165,18
+                                                                                                  4,186,187,189                     
+ ASIN                       Func   129                                  scalar                    129,165,189                       
+ ATAN                       Func   160                                  scalar                    160                               
+ CONE                       Local  194      R(4)            4           scalar                    194,195                           
+ CONV2D                     Local  108      R(4)            4           scalar                    108                               
+ CONV2R                     Local  108      R(4)            4           scalar                    108,124,125,134,157,158,159,161,18
+                                                                                                  4,185,194,195                     
+ COS                        Func   125                                  scalar                    125,130,136,157,159,161,167,185,19
+                                                                                                  0,197                             
+ COSA                       Local  130      R(4)            4           scalar                    130,132,133,136,137,138,139,190,19
+                                                                                                  2,193,197,198,199,200             
+ COSALP                     Local  167      R(4)            4           scalar                    167,170,171                       
+ DLM                        Local  156      R(4)            4           scalar                    156,157,159                       
+ EARTHR                     Local  109      R(4)            4           scalar                    109                               
+ EGRID                      Common 92                                   48       SAVE                                               
+ ELAT                       Local  122      R(4)            4           scalar                    122,125,154,157,158,159,161,182,18
+                                                                                                  5                                 
+ ELON                       Local  123      R(4)            4           scalar                    123,134,155,156,183,195           
+ EUVGUV                     Subr   1                                                                                                
+ EVLAT                      Dummy  1        R(4)            4     2     0        ARG,INOUT        122,154,182                       
+ EVLON                      Dummy  1        R(4)            4     2     0        ARG,INOUT        123,155,183                       
+ I                          Local  121      I(4)            4           scalar                    121,122,123,124,132,133,138,139,15
+
+Page 5           Source Listing                  EUVGUV
+2022-02-15 16:38 Symbol Table                    EUVGUV.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  3,154,155,168,169,170,171,181,182,
+                                                                                                  183,184,192,193,199,200           
+ IDIM1                      Param  74       I(4)            4           scalar                                                      
+ IDIM2                      Param  74       I(4)            4           scalar                                                      
+ IGSTL                      Param  69       I(4)            4           scalar                    74                                
+ IGSTR                      Param  69       I(4)            4           scalar                    74                                
+ IM                         Param  63       I(4)            4           scalar                    71,74                             
+ IMT                        Dummy  1        I(4)            4           scalar   ARG,INOUT        87,88,121,153,181                 
+ INDEX                      Func   116                                  scalar                    116,149,176                       
+ INPES                      Param  66       I(4)            4           scalar                    71,74                             
+ IOUNIT                     Common 101                                  20       SAVE                                               
+ ITAIL                      Param  71       I(4)            4           scalar                                                      
+ J                          Local  120      I(4)            4           scalar                    120,122,123,124,132,133,138,139,15
+                                                                                                  2,154,155,168,169,170,171,180,182,
+                                                                                                  183,184,192,193,199,200           
+ JDIM1                      Param  75       I(4)            4           scalar                                                      
+ JDIM2                      Param  75       I(4)            4           scalar                                                      
+ JGSTL                      Param  70       I(4)            4           scalar                    75                                
+ JGSTR                      Param  70       I(4)            4           scalar                    75                                
+ JM                         Param  63       I(4)            4           scalar                    72,75                             
+ JMT                        Dummy  1        I(4)            4           scalar   ARG,INOUT        87,88,120,152,180                 
+ JNPES                      Param  66       I(4)            4           scalar                    72,75                             
+ JTAIL                      Param  72       I(4)            4           scalar                                                      
+ LM                         Param  63       I(4)            4           scalar                    78                                
+ LP1                        Param  78       I(4)            4           scalar                                                      
+ LSM                        Param  63       I(4)            4           scalar                                                      
+ NRTHOT                     Dummy  2        L(4)            4           scalar   ARG,INOUT        137,198                           
+ PROJ                       Dummy  2        CHAR            6           scalar   ARG,INOUT        116,149,176                       
+ SIGN                       Func   127                                  scalar                    127,163,187                       
+ SIN                        Func   124                                  scalar                    124,131,135,158,159,161,166,184,19
+                                                                                                  1,194,196                         
+ SINA                       Local  131      R(4)            4           scalar                    131,132,133,135,138,139,191,192,19
+                                                                                                  3,196,199,200                     
+ SINALP                     Local  166      R(4)            4           scalar                    166,170,171                       
+ SPHI0                      Local  117      R(4)            4           scalar                    117,124,177,184                   
+ TLON                       Local  160      R(4)            4           scalar                    160,161                           
+ U                          Dummy  1        R(4)            4     2     0        ARG,INOUT        132,133,138,168,170,192,193,199   
+ UE                         Local  132      R(4)            4           scalar                    132,138,139,168,170,171,192,199,20
+                                                                                                  0                                 
+ V                          Dummy  1        R(4)            4     2     0        ARG,INOUT        132,133,139,169,171,192,193,200   
+ VE                         Local  133      R(4)            4           scalar                    133,138,139,169,170,171,193,199,20
+                                                                                                  0                                 
+ VTLON                      Dummy  1        R(4)            4     2     0        ARG,INOUT        124,184                           
+ XX                         Local  157      R(4)            4           scalar                    157,160                           
+ YY                         Local  159      R(4)            4           scalar                    159,160                           
+
+
+
+Page 6           Source Listing                  EUVGUV
+2022-02-15 16:38 Symbol Table                    EUVGUV.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ALONVT                     R(4)            4     4              scalar   COM                                                 
+ COSPH0                     R(4)            4     36             scalar   COM              157                                
+ DLAM                       R(4)            4     16             scalar   COM                                                 
+ DPHI                       R(4)            4     8              scalar   COM                                                 
+ IDIM                       I(4)            4     20             scalar   COM                                                 
+ JDIM                       I(4)            4     24             scalar   COM                                                 
+ LAM0                       R(4)            4     32             scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM                                                 
+ LUNOUT                     I(4)            4     16             scalar   COM                                                 
+ NORTH                      L(4)            4     0              scalar   COM                                                 
+ PHI0                       R(4)            4     28             scalar   COM                                                 
+ POLEI                      R(4)            4     8              scalar   COM                                                 
+ POLEJ                      R(4)            4     12             scalar   COM                                                 
+ SINPH0                     R(4)            4     40             scalar   COM              117,158,161,177                    
+ STDOUT                     I(4)            4     0              scalar   COM                                                 
+ TANPH0                     R(4)            4     44             scalar   COM                                                 
+ WLONC                      R(4)            4     12             scalar   COM              156                                
+ XMESHL                     R(4)            4     16             scalar   COM                                                 
+ YLATC                      R(4)            4     4              scalar   COM                                                 
+
+Page 7           Source Listing                  EUVGUV
+2022-02-15 16:38 Subprograms/Common Blocks       EUVGUV.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EGRID                      Common 92                                   48       SAVE                                               
+ EUVGUV                     Subr   1                                                                                                
+ IOUNIT                     Common 101                                  20       SAVE                                               
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 8           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 9           Source Listing                  EUVGUV
+2022-02-15 16:38                                 EUVGUV.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : EUVGUV.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

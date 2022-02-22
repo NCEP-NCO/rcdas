@@ -1,0 +1,546 @@
+Page 1           Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+      1       SUBROUTINE CANRES(SOLAR,SFCTMP,Q2,SFCPRS,SMC,
+      2      &                  GC,RC,IVEG,ISOIL,
+      3      &                  RSMIN,NROOTS,SMCWLT,SMCREF,
+      4      &                  RCS,RCQ,RCT,RCSOIL)
+      5 !      IMPLICIT NONE
+      6 
+      7 C ######################################################################
+      8 C                        SUBROUTINE CANRES
+      9 C                        -----------------
+     10 C       THIS ROUTINE CALCULATES THE CANOPY RESISTANCE WHICH DEPENDS ON
+     11 C       INCOMING SOLAR RADIATION, AIR TEMPERATURE, ATMOSPHERIC WATER
+     12 C       VAPOR PRESSURE DEFICIT AT THE LOWEST MODEL LEVEL, AND SOIL
+     13 C       MOISTURE (PREFERABLY UNFROZEN SOIL MOISTURE RATHER THAN TOTAL)
+     14 C ----------------------------------------------------------------------
+     15 C        SOURCE:  JARVIS (1976), JACQUEMIN AND NOILHAN (1990 BLM)
+     16 C ----------------------------------------------------------------------
+     17 C PROGRAM HISTORY LOG:
+     18 C   03-01-17  M EK AND H CHUANG - LIFTED IT FROM MODEL FOR POST 
+     19 C ----------------------------------------------------------------------
+     20 C INPUT:  SOLAR: INCOMING SOLAR RADIATION
+     21 C 	  CH:	  SURFACE EXCHANGE COEFFICIENT FOR HEAT AND MOISTURE
+     22 C 	  SFCTMP: AIR TEMPERATURE AT 1ST LEVEL ABOVE GROUND
+     23 C 	  Q2:	  AIR HUMIDITY AT 1ST LEVEL ABOVE GROUND
+     24 C 	  Q2SAT:  SATURATION AIR HUMIDITY AT 1ST LEVEL ABOVE GROUND
+     25 C 	  SFCPRS: SURFACE PRESSURE
+     26 C 	  SMC:    VOLUMETRIC SOIL MOISTURE 
+     27 C 	  ZSOIL:  SOIL DEPTH (NEGATIVE SIGN, AS IT IS BELOW GROUND)
+     28 C 	  NSOIL:  NO. OF SOIL LAYERS
+     29 C 	  IROOT:  NO. OF SOIL LAYERS IN ROOT ZONE (1.LE.NROOT.LE.NSOIL)
+     30 C 	  XLAI:   LEAF AREA INDEX
+     31 C 	  SMCWLT: WILTING POINT
+     32 C 	  SMCREF: REFERENCE SOIL MOISTURE
+     33 C 		  (WHERE SOIL WATER DEFICIT STRESS SETS IN)
+     34 C
+     35 C RSMIN, RSMAX, TOPT, RGL, HS: CANOPY STRESS PARAMETERS SET IN
+     36 C SUBROUTINE REDPRM
+     37 C
+     38 C  (SEE EQNS 12-14 AND TABLE 2 OF SEC. 3.1.2 OF 
+     39 C       CHEN ET AL., 1996, JGR, VOL 101(D3), 7251-7268)               
+     40 C
+     41 C        OUTPUT:  PC: PLANT COEFFICIENT
+     42 C                 RC: CANOPY RESISTANCE
+     43 C                 GC: CANOPY CONDUCTANCE
+     44 C ----------------------------------------------------------------------
+     45 C ######################################################################
+     46 
+     47       INCLUDE "parmeta"
+     65       INCLUDE "parmsoil"
+     67       INCLUDE "params"
+    109       INTEGER K
+    110 !      INTEGER NROOT(13)
+    111       INTEGER IROOT(13)
+    112       INTEGER IVEG
+    113       INTEGER ISOIL
+    114 
+    115 !      REAL SIGMA, RD, CP, SLV
+    116       REAL SOLAR, CH, SFCTMP, Q2, SFCPRS 
+
+Page 2           Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+    117       REAL SMC(NSOIL), ZSOIL(NSOIL), PART(NSOIL) 
+    118       REAL SMWLT(9),SMREF(9),RSMN(13),RC,PC,Q2SAT,GC
+    119       REAL TOPT,RSMAX,RGL(13),HS(13),XLAI,RCS,RCT,RCQ,RCSOIL,FF
+    120       REAL P,QS,GX,TAIR4,ST1,SLVCP,RR,DELTA
+    121 
+    122 !      PARAMETER (CP=1004.5, SLV=2.501000E6)
+    123 
+    124       DATA XLAI /4.0/
+    125       DATA RSMAX /5000./
+    126       DATA TOPT /298.0/
+    127       DATA IROOT /4,4,4,4,4,4,3,3,3,2,3,3,2/
+    128       DATA ZSOIL /-0.1,-0.4,-1.0,-2.0/
+    129 C  SSIB VEGETATION TYPES (DORMAN AND SELLERS, 1989; JAM)
+    130 C
+    131 C   1:   BROADLEAF-EVERGREEN TREES  (TROPICAL FOREST)
+    132 C   2:   BROADLEAF-DECIDUOUS TREES
+    133 C   3:   BROADLEAF AND NEEDLELEAF TREES (MIXED FOREST)
+    134 C   4:   NEEDLELEAF-EVERGREEN TREES
+    135 C   5:   NEEDLELEAF-DECIDUOUS TREES (LARCH)
+    136 C   6:   BROADLEAF TREES WITH GROUNDCOVER (SAVANNA)
+    137 C   7:   GROUNDCOVER ONLY (PERENNIAL)
+    138 C   8:   BROADLEAF SHRUBS WITH PERENNIAL GROUNDCOVER
+    139 C   9:   BROADLEAF SHRUBS WITH BARE SOIL
+    140 C  10:   DWARF TREES AND SHRUBS WITH GROUNDCOVER (TUNDRA)
+    141 C  11:   BARE SOIL
+    142 C  12:   CULTIVATIONS (THE SAME PARAMETERS AS FOR TYPE 7)
+    143 C  13:   GLACIAL (THE SAME PARAMETERS AS FOR TYPE 11)
+    144       DATA RSMN /150.0, 100.0, 125.0, 150.0, 100.0, 70.0,
+    145      *             40.0, 300.0, 400.0, 150.0, 400.0, 40.0,
+    146      *            150.0/
+    147       DATA RGL /30.0,  30.0,  30.0,  30.0,  30.0,  65.0,
+    148      *          100.0, 100.0, 100.0, 100.0, 100.0, 100.0,
+    149      *          100.0/
+    150       DATA HS /41.69, 54.53, 51.93, 47.35,  47.35, 54.53,
+    151      *         36.35, 42.00, 42.00, 42.00,  42.00, 36.35,
+    152      *         42.00/
+    153 C SOIL TYPES   ZOBLER (1986)      COSBY ET AL (1984) (quartz cont.(1))
+    154 C  1        COARSE            LOAMY SAND         (0.82)
+    155 C  2        MEDIUM            SILTY CLAY LOAM    (0.10)
+    156 C  3        FINE              LIGHT CLAY         (0.25)
+    157 C  4        COARSE-MEDIUM     SANDY LOAM         (0.60)
+    158 C  5        COARSE-FINE       SANDY CLAY         (0.52)
+    159 C  6        MEDIUM-FINE       CLAY LOAM          (0.35)
+    160 C  7        COARSE-MED-FINE   SANDY CLAY LOAM    (0.60)
+    161 C  8        ORGANIC           LOAM               (0.40)
+    162 C  9        GLACIAL LAND ICE  LOAMY SAND         (NA using 0.82)
+    163       DATA SMREF /0.283, 0.387, 0.412, 0.312, 0.338, 0.382,
+    164      &             0.315, 0.329, 0.283/
+    165       DATA SMWLT /0.029, 0.119, 0.139, 0.047, 0.100, 0.103,
+    166      &             0.069, 0.066, 0.029/
+    167 
+    168 C ----------------------------------------------------------------------
+    169 C INITIALIZE CANOPY CONDUCTANCE TERMS
+    170 C ----------------------------------------------------------------------
+    171       RCS = 0.0
+    172       RCT = 0.0
+    173       RCQ = 0.0
+
+Page 3           Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+    174       RCSOIL = 0.0
+    175       RC = 0.0
+    176 
+    177 C ----------------------------------------------------------------------
+    178 C SET SMCWLT, SMCREF, RSMIN, NROOTS VALUES
+    179 C ----------------------------------------------------------------------
+    180       SMCWLT = SMWLT(ISOIL)
+    181       SMCREF = SMREF(ISOIL)
+    182       RSMIN = RSMN(IVEG)
+    183       NROOTS = IROOT(IVEG)
+    184 
+    185 C ----------------------------------------------------------------------
+    186 C CONTRIBUTION DUE TO INCOMING SOLAR RADIATION
+    187 C ----------------------------------------------------------------------
+    188 
+    189       FF = 0.55*2.0*SOLAR/(RGL(IVEG)*XLAI)
+    190       RCS = (FF + RSMIN/RSMAX) / (1.0 + FF)
+    191 
+    192       RCS = MAX(RCS,0.0001)
+    193       RCS = MIN(RCS,1.0)
+    194 
+    195 C ----------------------------------------------------------------------
+    196 C CONTRIBUTION DUE TO AIR TEMPERATURE AT FIRST MODEL LEVEL ABOVE GROUND
+    197 C ----------------------------------------------------------------------
+    198 
+    199       RCT = 1.0 - 0.0016*((TOPT-SFCTMP)**2.0)
+    200 
+    201       RCT = MAX(RCT,0.0001)
+    202       RCT = MIN(RCT,1.0)
+    203 
+    204 C ----------------------------------------------------------------------
+    205 C CONTRIBUTION DUE TO VAPOR PRESSURE DEFICIT AT FIRST MODEL LEVEL.
+    206 C ----------------------------------------------------------------------
+    207 
+    208 c      P = SFCPRS
+    209 C Insert QSAT computation used in ETA2P
+    210       TBLO=SFCTMP
+    211       Q2SAT=PQ0/SFCPRS*EXP(A2*(TBLO-A3)/(TBLO-A4)) 
+    212       QS = Q2SAT
+    213 C RCQ EXPRESSION FROM SSIB 
+    214       RCQ = 1.0/(1.0+HS(IVEG)*(QS-Q2))
+    215 
+    216 c      RCQ = MAX(RCQ,0.01)
+    217       RCQ = MAX(RCQ,0.0001)
+    218       RCQ = MIN(RCQ,1.0)
+    219 
+    220 C ----------------------------------------------------------------------
+    221 C CONTRIBUTION DUE TO SOIL MOISTURE AVAILABILITY.
+    222 C DETERMINE CONTRIBUTION FROM EACH SOIL LAYER, THEN ADD THEM UP.
+    223 C ----------------------------------------------------------------------
+    224 
+    225       GX = (SMC(1)-SMCWLT)/(SMCREF-SMCWLT)
+    226       IF (GX .GT. 1.) GX = 1.
+    227       IF (GX .LT. 0.) GX = 0.
+    228 
+    229 C####   USING SOIL DEPTH AS WEIGHTING FACTOR
+    230       PART(1) = (ZSOIL(1)/ZSOIL(NROOTS)) * GX
+
+Page 4           Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+    231 
+    232 C#### USING ROOT DISTRIBUTION AS WEIGHTING FACTOR
+    233 CC      PART(1) = RTDIS(1) * GX
+    234       
+    235       DO K = 2, NROOTS
+    236         GX = (SMC(K)-SMCWLT)/(SMCREF-SMCWLT)
+    237         IF (GX .GT. 1.) GX = 1.
+    238         IF (GX .LT. 0.) GX = 0.
+    239 C####   USING SOIL DEPTH AS WEIGHTING FACTOR        
+    240         PART(K) = ((ZSOIL(K)-ZSOIL(K-1))/ZSOIL(NROOTS)) * GX
+    241 
+    242 C#### USING ROOT DISTRIBUTION AS WEIGHTING FACTOR
+    243 CC         PART(K) = RTDIS(K) * GX 
+    244                
+    245       END DO
+    246 
+    247       DO K = 1, NROOTS
+    248         RCSOIL = RCSOIL+PART(K)
+    249       END DO
+    250 
+    251       RCSOIL = MAX(RCSOIL,0.0001)
+    252       RCSOIL = MIN(RCSOIL,1.0)
+    253 
+    254 C ----------------------------------------------------------------------
+    255 C         DETERMINE CANOPY RESISTANCE DUE TO ALL FACTORS.
+    256 C         CONVERT CANOPY RESISTANCE (RC) TO PLANT COEFFICIENT (PC).
+    257 C ----------------------------------------------------------------------
+    258 
+    259 CC/98/01/05/........RC = RCMIN/(RCS*RCT*RCQ*RCSOIL)
+    260 c      RC = RCMIN(IVEG)/(XLAI*RCS*RCT*RCQ*RCSOIL)
+    261 
+    262       RCMIN = RSMIN/XLAI
+    263       RCMAX = RSMAX/XLAI
+    264       RC = RCMIN/(RCS*RCT*RCQ*RCSOIL)
+    265 
+    266       RC = MAX(RCMIN,MIN(RC,RCMAX))
+    267 
+    268       GC = 1./RC
+    269       
+    270       RETURN
+    271       END
+
+Page 5           Source Listing                  CANRES
+2022-02-15 16:39 Entry Points                    CANRES.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ canres_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ A2                         Param  108      R(4)            4           scalar                    211                               
+ A3                         Param  108      R(4)            4           scalar                    211                               
+ A4                         Param  108      R(4)            4           scalar                    211                               
+ AD05                       Param  100      R(4)            4           scalar                                                      
+ BETA                       Param  104      R(4)            4           scalar                    104                               
+ BTG                        Param  104      R(4)            4           scalar                                                      
+ CANRES                     Subr   1                                                                                                
+ CAPA                       Param  95       R(4)            4           scalar                    102                               
+ CFT0                       Param  100      R(4)            4           scalar                                                      
+ CH                         Local  116      R(4)            4           scalar                                                      
+ CM1                        Param  90       R(4)            4           scalar                                                      
+ CM2                        Param  90       R(4)            4           scalar                                                      
+ CM3                        Param  90       R(4)            4           scalar                                                      
+ CP                         Param  101      R(4)            4           scalar                    103,107                           
+ CPDR                       Param  103      R(4)            4           scalar                                                      
+ D00                        Param  92       R(4)            4           scalar                                                      
+ D001                       Param  92       R(4)            4           scalar                                                      
+ D0065                      Param  96       R(4)            4           scalar                                                      
+ D01                        Param  92       R(4)            4           scalar                                                      
+ D05                        Param  96       R(4)            4           scalar                    100                               
+ D1                         Param  92       R(4)            4           scalar                                                      
+ D115                       Param  96       R(4)            4           scalar                                                      
+ D125                       Param  94       R(4)            4           scalar                                                      
+ D25                        Param  94       R(4)            4           scalar                                                      
+ D50                        Param  92       R(4)            4           scalar                                                      
+ D608                       Param  96       R(4)            4           scalar                                                      
+ DELTA                      Local  120      R(4)            4           scalar                                                      
+ DP10M                      Param  102      R(4)            4           scalar                                                      
+ DTR                        Param  101      R(4)            4           scalar                    101                               
+ ELDR                       Param  103      R(4)            4           scalar                                                      
+ ELWV                       Param  103      R(4)            4           scalar                    103                               
+ EPS                        Param  106      R(4)            4           scalar                    106                               
+ EPSQ2                      Param  107      R(4)            4           scalar                                                      
+ ERAD                       Param  101      R(4)            4           scalar                                                      
+ EXP                        Func   211                                  scalar                    211                               
+ FF                         Local  119      R(4)            4           scalar                    189,190                           
+ FMD                        Param  106      R(4)            4           scalar                    106                               
+ FMW                        Param  106      R(4)            4           scalar                    106                               
+ G                          Param  99       R(4)            4           scalar                    99                                
+ GC                         Dummy  2        R(4)            4           scalar   ARG,INOUT        268                               
+ GI                         Param  99       R(4)            4           scalar                    103                               
+ GX                         Local  120      R(4)            4           scalar                    225,226,227,230,236,237,238,240   
+ H1                         Param  93       R(4)            4           scalar                    100                               
+ H100                       Param  94       R(4)            4           scalar                                                      
+
+Page 6           Source Listing                  CANRES
+2022-02-15 16:39 Symbol Table                    CANRES.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ H1000                      Param  94       R(4)            4           scalar                                                      
+ H10000                     Param  95       R(4)            4           scalar                                                      
+ H10E5                      Param  95       R(4)            4           scalar                                                      
+ H1E2                       Param  97       R(4)            4           scalar                                                      
+ H1E4                       Param  97       R(4)            4           scalar                                                      
+ H1M12                      Param  93       R(4)            4           scalar                                                      
+ H1M2                       Param  97       R(4)            4           scalar                                                      
+ H1M5                       Param  94       R(4)            4           scalar                                                      
+ H2                         Param  93       R(4)            4           scalar                                                      
+ H4                         Param  93       R(4)            4           scalar                                                      
+ H999                       Param  92       R(4)            4           scalar                                                      
+ H99999                     Param  93       R(4)            4           scalar                                                      
+ HS                         Local  119      R(4)            4     1     13                        150,214                           
+ IDIM1                      Param  61       I(4)            4           scalar                                                      
+ IDIM2                      Param  61       I(4)            4           scalar                                                      
+ IGSTL                      Param  56       I(4)            4           scalar                    61                                
+ IGSTR                      Param  56       I(4)            4           scalar                    61                                
+ IM                         Param  50       I(4)            4           scalar                    58,61,71,73,74,76                 
+ IM1                        Param  73       I(4)            4           scalar                                                      
+ IMT                        Param  71       I(4)            4           scalar                                                      
+ INPES                      Param  53       I(4)            4           scalar                    58,61                             
+ IROOT                      Local  111      I(4)            4     1     13                        127,183                           
+ ISOIL                      Dummy  2        I(4)            4           scalar   ARG,INOUT        180,181                           
+ ITAIL                      Param  58       I(4)            4           scalar                                                      
+ IVEG                       Dummy  2        I(4)            4           scalar   ARG,INOUT        182,183,189,214                   
+ JAM                        Param  73       I(4)            4           scalar                                                      
+ JDIM1                      Param  62       I(4)            4           scalar                                                      
+ JDIM2                      Param  62       I(4)            4           scalar                                                      
+ JGSTL                      Param  57       I(4)            4           scalar                    62                                
+ JGSTR                      Param  57       I(4)            4           scalar                    62                                
+ JM                         Param  50       I(4)            4           scalar                    59,62,71,73,76                    
+ JM2                        Param  73       I(4)            4           scalar                                                      
+ JMT                        Param  71       I(4)            4           scalar                                                      
+ JNPES                      Param  53       I(4)            4           scalar                    59,62                             
+ JTAIL                      Param  59       I(4)            4           scalar                                                      
+ K                          Local  109      I(4)            4           scalar                    235,236,240,247,248               
+ KSAV                       Param  81       I(4)            4           scalar                                                      
+ KSFI                       Param  80       I(4)            4           scalar                                                      
+ KSLI                       Param  81       I(4)            4           scalar                                                      
+ KSLP                       Param  81       I(4)            4           scalar                                                      
+ KSLPD                      Param  80       I(4)            4           scalar                                                      
+ KSMUD                      Param  80       I(4)            4           scalar                                                      
+ KSRH                       Param  81       I(4)            4           scalar                                                      
+ KSSLP                      Param  80       I(4)            4           scalar                                                      
+ KST                        Param  80       I(4)            4           scalar                                                      
+ KSUV                       Param  81       I(4)            4           scalar                                                      
+ LB                         Param  76       I(4)            4           scalar                                                      
+ LHEAT                      Param  107      I(4)            4           scalar                    107                               
+ LHTOCP                     Param  107      I(4)            4           scalar                                                      
+ LM                         Param  50       I(4)            4           scalar                    75,86                             
+ LM1                        Param  75       I(4)            4           scalar                                                      
+ LP1                        Param  75       I(4)            4           scalar                                                      
+ LSM                        Param  50       I(4)            4           scalar                                                      
+ MAX                        Func   192                                  scalar                    192,201,217,251,266               
+ MIN                        Func   193                                  scalar                    193,202,218,252,266               
+
+Page 7           Source Listing                  CANRES
+2022-02-15 16:39 Symbol Table                    CANRES.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ NINC                       Param  74       I(4)            4           scalar                                                      
+ NROOT                      Param  66       I(4)            4           scalar                                                      
+ NROOTS                     Dummy  3        I(4)            4           scalar   ARG,INOUT        183,230,235,240,247               
+ NSOIL                      Param  66       I(4)            4           scalar                    117                               
+ NSTAT                      Param  86       I(4)            4           scalar                                                      
+ NSUMD                      Param  82       I(4)            4           scalar                                                      
+ NWORD                      Param  86       I(4)            4           scalar                    86                                
+ NWORD3                     Param  86       I(4)            4           scalar                                                      
+ NWORD6                     Param  86       I(4)            4           scalar                                                      
+ ONEPS                      Param  106      R(4)            4           scalar                                                      
+ OVERRC                     Param  100      R(4)            4           scalar                    100                               
+ P                          Local  120      R(4)            4           scalar                                                      
+ P1000                      Param  102      R(4)            4           scalar                                                      
+ PART                       Local  117      R(4)            4     1     4                         230,240,248                       
+ PC                         Local  118      R(4)            4           scalar                                                      
+ PQ0                        Param  108      R(4)            4           scalar                    211                               
+ Q2                         Dummy  1        R(4)            4           scalar   ARG,INOUT        214                               
+ Q2SAT                      Local  118      R(4)            4           scalar                    211,212                           
+ QS                         Local  120      R(4)            4           scalar                    212,214                           
+ RC                         Dummy  2        R(4)            4           scalar   ARG,INOUT        175,264,266,268                   
+ RCAPA                      Param  102      R(4)            4           scalar                                                      
+ RCMAX                      Local  263      R(4)            4           scalar                    263,266                           
+ RCMIN                      Local  262      R(4)            4           scalar                    262,264,266                       
+ RCQ                        Dummy  4        R(4)            4           scalar   ARG,INOUT        173,214,217,218,264               
+ RCS                        Dummy  4        R(4)            4           scalar   ARG,INOUT        171,190,192,193,264               
+ RCSOIL                     Dummy  4        R(4)            4           scalar   ARG,INOUT        174,248,251,252,264               
+ RCT                        Dummy  4        R(4)            4           scalar   ARG,INOUT        172,199,201,202,264               
+ RD                         Param  99       R(4)            4           scalar                    99,103,107                        
+ RDOCP                      Param  107      R(4)            4           scalar                                                      
+ RG                         Param  103      R(4)            4           scalar                                                      
+ RGL                        Local  119      R(4)            4     1     13                        147,189                           
+ ROG                        Param  99       R(4)            4           scalar                                                      
+ RR                         Local  120      R(4)            4           scalar                                                      
+ RSMAX                      Local  119      R(4)            4           scalar                    125,190,263                       
+ RSMIN                      Dummy  3        R(4)            4           scalar   ARG,INOUT        182,190,262                       
+ RSMN                       Local  118      R(4)            4     1     13                        144,182                           
+ RTD                        Param  101      R(4)            4           scalar                                                      
+ SFCPRS                     Dummy  1        R(4)            4           scalar   ARG,INOUT        211                               
+ SFCTMP                     Dummy  1        R(4)            4           scalar   ARG,INOUT        199,210                           
+ SLVCP                      Local  120      R(4)            4           scalar                                                      
+ SMC                        Dummy  1        R(4)            4     1     4        ARG,INOUT        225,236                           
+ SMCREF                     Dummy  3        R(4)            4           scalar   ARG,INOUT        181,225,236                       
+ SMCWLT                     Dummy  3        R(4)            4           scalar   ARG,INOUT        180,225,236                       
+ SMREF                      Local  118      R(4)            4     1     9                         163,181                           
+ SMTHA                      Param  82       R(4)            4           scalar                                                      
+ SMTHB                      Param  82       R(4)            4           scalar                                                      
+ SMWLT                      Local  118      R(4)            4     1     9                         165,180                           
+ SOLAR                      Dummy  1        R(4)            4           scalar   ARG,INOUT        189                               
+ ST1                        Local  120      R(4)            4           scalar                                                      
+ TAIR4                      Local  120      R(4)            4           scalar                                                      
+ TBLO                       Local  210      R(4)            4           scalar                    210,211                           
+ TFRZ                       Param  106      R(4)            4           scalar                                                      
+ TOPT                       Local  119      R(4)            4           scalar                    126,199                           
+ XLAI                       Local  119      R(4)            4           scalar                    124,189,262,263                   
+ ZSOIL                      Local  117      R(4)            4     1     4                         128,230,240                       
+
+Page 8           Source Listing                  CANRES
+2022-02-15 16:39 Subprograms/Common Blocks       CANRES.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CANRES                     Subr   1                                                                                                
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+
+Page 9           Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+
+Page 10          Source Listing                  CANRES
+2022-02-15 16:39                                 CANRES.f
+
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CANRES.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

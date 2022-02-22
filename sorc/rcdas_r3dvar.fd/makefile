@@ -1,0 +1,188 @@
+#
+
+# FC	= mpfort
+# FC	= mpiifort
+#FC	= ftn
+
+RM	= /bin/rm -f
+
+# TRAPS    = -qinitauto=FF -qsigtrap
+TRAPS    = 
+
+# DEBUG    = -g -qinit=f90ptr -qcheck -qattr
+DEBUG    = -g
+
+#TRAPS    =
+#DEBUG    = -qnodbg
+
+FFLAGSf = -c -nofixed  -O2 -auto-scalar -convert big_endian -assume byterecl -diag_remark=warn
+
+FFLAGSF = -c -72  -O2 -auto-scalar -convert big_endian -assume byterecl
+
+# FFLAGS8 = -c -nofixed  -O2 -r8 -auto-scalar -convert big_endian -assume byterecl
+FFLAGS8 =  -c -nofixed -O2 -r8 -auto-scalar -convert big_endian -assume byterecl
+
+
+# LFLAGS = -qnolm -qnodbg -o
+# LFLAGS = -bnoquiet -qnolm -qnodbg -o 
+LFLAGS = -o 
+
+OBJS    =             file_utility.o \
+          AD_EXCH.o BOCOoutan.o \
+                      error_handler.o \
+          CHKOUTan.o DIVHOA.o DSTRB.o \
+                      type_kinds.o \
+          EXCH.o GOSSIP.o GPVS.o HZADV2.o \
+                      parameters.o \
+          HZADV.o IDSTRB.o IEXCH.o INIT.o READGRDETA.o \
+                      predictors.o \
+          LOC2GLB.o MPPINIT_r3dv.o \
+                      coefficient_utility.o \
+          O3CLIM.o PDNEW.o PDTE.o PGCOR.o \
+                      spectral_coefficients.o \
+          READ_NHBan.o READ_RESTRT.o \
+                      sensor_planck_routines.o \
+          READ_RESTRT2.o SHELL.o SORT.o \
+                      transmittance_coefficients.o \
+          TLLv.o VTADV.o ZENITH.o ZERO2.o ZERO3.o \
+                      absorber_profile.o \
+          ad_bigeetahop.o ad_bigeetahopq.o ad_bigeetavop.o ad_bighop.o \
+                      radiance.o \
+          ad_raf1d.o ad_refresh_grid.o \
+                      transmittance.o \
+          ad_slow_plus_fast.o alloc_etages.o alloc_mppcoms.o \
+                      initialize.o \
+          bigbht_bayes.o bigcop_bayes.o \
+                      forward_model.o \
+          bigeetahop.o bigeetahopq.o bigeetavop.o bighetahop.o bighop.o \
+                      k_matrix_model.o \
+          bigqalphaop_bayes.o bigqop_bayes.o \
+                      rad_tran_k.o \
+          bigqop_inv_bayes.o  blend_satbias.o brent.o \
+          cg_cond_num.o coast_ice_check.o conmc.o \
+          count2_rads.o count_pws.o count_qs.o count_rads.o \
+          count_sfcps.o count_temps.o count_windcr.o \
+          count_winds.o diagnostic_bvar.o \
+          dot_prod8.o dot_prod8g.o dot_prod8nl.o dot_prod8nlwr.o \
+          dtast.o dvast.o dvastradar.o \
+          emiss.o errorev.o eta_ymdh.o etaupdate.o expand120.o fuzzy.o \
+          gdcrdp.o gen_eps_bayes.o genqsat.o get_sendrecv.o \
+          get2berrs.o get3berr.o get3berrq.o get_aspect.o \
+          get_coarse_background.o get_dt_gt.o get_etalims.o \
+          get_global_ges.o get_gridlims.o get_ijglb_eta.o get_ijk.o \
+          get_slowt_pd_op.o get_sstx_alns.o get_wrf_cons.o get_xbarb.o \
+          getbigeeta.o getbigheta.o getbkgerr.o getdelepsv.o getdtends.o getetaanl.o \
+          getetacons.o getetagrid.o getmaxmin2.o getpges.o \
+          getptends.o getpwges.o getqges.o getradges.o getshift.o gettges.o \
+          get_radar_wges.o getwges.o glb2loc_iwgts.o gradj.o \
+          gradnl.o gradnl_radar.o grid2mapg.o grid2mapg_init.o inetages.o \
+          initialize_parmeta.o invTLLv.o iold_to_new.o \
+          isimpin1.o isimpin1_init.o isonormal2d.o isonormal3d.o \
+          isrchfge.o landem.o lastget_radar_winds.o lastgetps.o lastgetpws.o \
+          lastevents_p.o lastevents_pw.o lastevents_q.o \
+          lastevents_t.o lastevents_w.o lastgetqs.o lastgetrads.o \
+          lastgettemps.o lastgetwinds.o makecoldstart.o mapgrid.o \
+          maxl_parameter_update_bayes.o mdescent.o \
+          mnbrak.o moveback_etages.o \
+          mpp_compgrid_init.o mppinit_new.o newchn.o \
+          obs_space_prod_8.o obscorr2t.o obscorr2wr.o ofn.o \
+          old_to_new.o one_adiabatic_eta_step.o open_events.o \
+          out_chi_inc.o out_p_inc.o out_psi_inc.o out_q_inc.o \
+          out_restart_pieces_newijpe.o out_t_inc.o \
+          outcovarchi.o outcovarp.o outcovarpsi.o outcovarq.o outcovart.o \
+          outgrad2.o outgrad3.o outgradq.o outgradsfcflds.o perturbparms_bayes.o \
+          printqc.o putetaanl.o \
+          r3dv_bayes.o r3dvex_bayes.o raf1d.o raflib.o \
+          rd_conventional_winds.o rd_radar_winds.o \
+          rdpws.o rdqs.o rdqsatg.o rdradar.o rdrads.o rdsfcps.o rdtemps.o \
+          rdtest.o rdwinds.o read_nonbufsat.o read_satbias.o \
+          redistribute_data.o redistribute_rad.o refresh_grid.o \
+          resps.o respw.o resq.o restore_eta_ges.o restmp.o resradarwind.o reswind.o \
+          retrieve_fstats.o retrieve_xstats.o rfftmlt.o satinfo.o \
+          satqlim.o set_1st_diffcons_bayes.o setprint.o \
+          setuprad_1.o setuprad_2.o \
+          simpin1.o simpin1_init.o simpin2f.o simpin3f.o slow_plus_fast.o smooth_restore.o \
+          someof_etages.o \
+          sortps.o sortpws.o sortqs.o sorttemps.o sort_radar_winds.o sortwinds.o \
+          st_glb2loc_iwgts.o st_simpin2f.o st_simpin3f.o stepsize.o stop1.o \
+          svdcmp.o transfer_etages.o \
+          update_bkgerr_bayes.o update_satbias.o \
+          var_2d_locs.o var_2d_rad_locs.o var_3d_locs.o var_3d_wlocs.o \
+          verifygrid.o vinterpfc.o \
+          write_satbias.o wrqs.o wrqsatg.o wrsfcps.o wrtemps.o wrwinds.o 
+
+#          baopenr.o baread.o
+
+# LIBS	= -L/nwprod/lib -lbufr_4_64 -lbacio_4 -lw3nco_4 -lw3emc_4
+LIBS	= ${BUFR_LIB4} ${BACIO_LIB4} ${W3NCO_LIB4} ${W3EMC_LIB4}
+
+EXEC	= rcdas_r3dvar
+
+$(EXEC):	$(OBJS)
+	$(FC) $(LFLAGS) $@ $(OBJS) $(LIBS)
+
+clean:
+	touch junk.o *.mod ${EXEC} ; rm *.o *.mod ${EXEC}
+
+.SUFFIXES:
+.SUFFIXES: .o .f .F
+
+.f.o:
+	$(FC) $(FFLAGSf) $<
+
+.F.o:
+	$(FC) $(FFLAGSF) $<
+
+file_utility.o: file_utility.f
+	$(FC) $(FFLAGS8) $(*).f
+
+error_handler.o: error_handler.f file_utility.f
+	$(FC) $(FFLAGS8) $(*).f
+
+type_kinds.o: type_kinds.f
+	$(FC) $(FFLAGS8) $(*).f
+
+parameters.o: parameters.f type_kinds.f
+	$(FC) $(FFLAGS8) $(*).f
+
+predictors.o: predictors.f parameters.f type_kinds.f error_handler.f
+	$(FC) $(FFLAGS8) $(*).f
+
+coefficient_utility.o: coefficient_utility.f file_utility.f error_handler.f type_kinds.f
+	$(FC) $(FFLAGS8) $(*).f
+
+spectral_coefficients.o: spectral_coefficients.f type_kinds.f error_handler.f \
+                         parameters.f coefficient_utility.f
+	$(FC) $(FFLAGS8) $(*).f
+
+sensor_planck_routines.o: sensor_planck_routines.f parameters.f type_kinds.f spectral_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+
+transmittance_coefficients.o: transmittance_coefficients.f type_kinds.f \
+                              error_handler.f parameters.f coefficient_utility.f
+	$(FC) $(FFLAGS8) $(*).f
+
+absorber_profile.o: absorber_profile.f parameters.f type_kinds.f transmittance_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+radiance.o: radiance.f type_kinds.f parameters.f spectral_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+transmittance.o: transmittance.f type_kinds.f parameters.f transmittance_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+initialize.o: initialize.f error_handler.f transmittance_coefficients.f spectral_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+forward_model.o: forward_model.f type_kinds.f error_handler.f parameters.f spectral_coefficients.f \
+                 absorber_profile.f predictors.f transmittance.f radiance.f
+	$(FC) $(FFLAGS8) $(*).f
+k_matrix_model.o: k_matrix_model.f type_kinds.f error_handler.f parameters.f spectral_coefficients.f \
+                  absorber_profile.f predictors.f transmittance.f radiance.f forward_model.f
+	$(FC) $(FFLAGS8) $(*).f
+rad_tran_k.o: rad_tran_k.f type_kinds.f error_handler.f initialize.f spectral_coefficients.f
+	$(FC) $(FFLAGS8) $(*).f
+emiss.o: emiss.f
+	$(FC) $(FFLAGS8) $(*).f
+
+landem.o: landem.f
+	$(FC) $(FFLAGS8) $(*).f
+
+satinfo.o: satinfo.f
+	$(FC) $(FFLAGS8) $(*).f

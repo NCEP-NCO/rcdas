@@ -1,0 +1,404 @@
+Page 1           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+      1       SUBROUTINE MIXLEN
+      2      I (ZINT,T,PDSL,AETA,PT,Q2,HGT,HTM,EL0
+      3      I, LM,LM1,LP1,IM,JM
+      4      O, EL)
+      5 C
+      6 C     CALCULATES LAYER-AVERAGED BLACKADAR'S MIXING LENGTH, AND PBL TOP
+      7 C     AS CPBLT*(ASYMPTOTIC EL); AND THEN EL, ACCOUNT TAKEN OF STABILITY,
+      8 C     PBL TOP AND VERTICAL GRID DISTANCE RESTRICTIONS (SEE BELOW)
+      9 C
+     10 C     SET FROM EXISTING CODES BY L. LOBOCKI, JUNE 5, 1992
+     11 C       MODIFIED BY FEDOR MESINGER, OCTOBER 13, NOVEMBER 19
+     12 C       MODIFIED BY JIM TUCCILLO FOR MPI IMPLEMENTATION
+     13 C
+     14 C     INPUT:
+     15 C     ------
+     16 C
+     17 C     ZINT (IM,JM,LP1) - ETA INTERFACES HEIGHT FIELD
+     18 C     T    (IM,JM,LM)  - TEMPERATURE
+     19 C     APE  (IM,JM,02)  - (P/P0)**-KAPPA IN LAYERS
+     20 C     Q2   (IM,JM,LM)  - TURBULENCE KINETIC ENERGY * 2
+     21 C     HGT  (IM,JM)     - SURFACE ELEVATION ARRAY
+     22 C     HTM  (IM,JM,LM)  - HEIGHT TOPOGRAPHY MASK ARRAY
+     23 C     EL0  (IM,JM)     - ARRAY OF ASYMPTOTIC VALUES FOR MIXING LENGTH
+     24 C     LM               - ARRAY DIMENSION FOR VERTICAL GRIDS
+     25 C     LM1              - ARRAY DIMENSION FOR VERTICAL GRIDS, MINUS ONE
+     26 C     LP1              - ARRAY DIMENSION FOR VERTICAL GRIDS, PLUS ONE
+     27 C
+     28 C     IM,JM            - ARRAY DIMENSIONS FOR HORIZONTAL GRIDS
+     29 C
+     30 C
+     31 C     OUTPUT:
+     32 C     -------
+     33 C
+     34 C     EL   (IM,JM,LM) - FIELD OF RESULTING MASTER LENGTH SCALES
+     35 C
+     36 C
+     37 C     SCRATCH AREAS:
+     38 C     --------------
+     39 C
+     40 C     VKRMZ(IM,JM)
+     41 C
+     42 C     RELEVANT CONSTANTS:
+     43 C     -------------------
+     44 C
+     45 C     VON KARMAN CONSTANT:
+     46       PARAMETER (VKRM=0.4)
+     47 C     CONSTANTS NEEDED FOR THE EL(BL,ST,ZI) SCHEME:
+     48       PARAMETER (FRG=4.*9.8,DRDRFF=0.54,CPBLT=10.,CSH=0.23*0.5
+     49      &, EPSN2=1.E-7,EPSQ2=1.E-4,CAPA=0.28589641)
+     50 C
+     51 C     ------------------------------------------------------------------
+     52 C
+     53       DIMENSION ZINT(IM,JM,LP1),EL(IM,JM,LM),EL0(IM,JM),PDSL(IM,JM)
+     54      &,         HTM(IM,JM,LM),HGT(IM,JM),Q2(IM,JM,LM)
+     55      &,           T(IM,JM,LM),APE(IM,JM,2),AETA(LM)
+     56 
+     57        INCLUDE "CTLBLK.comm"
+
+Page 2           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+     58 C***********************************************************************
+     59 C
+     74 !$omp  parallel do
+     75       DO L=1,LM
+     76         DO J=JSTA,JEND
+     77         DO I=1,IM
+     78           EL(I,J,L)=0.
+     79         ENDDO
+     80         ENDDO
+     81       ENDDO
+     82 C
+     83 C---THE AVERAGE EL SCHEME---------------------------(FM, AUGUST 19 MEMO)
+     84 C   FIRST GET EL IN THE LAYERS
+     85 C
+     86 !$omp  parallel do
+     87 !$omp& private(vkrmz,zl)
+     88       DO 260 L=1,LM
+     89       DO J=JSTA_M,JEND_M
+     90       DO I=2,IM-1
+     91         ZL=0.5*(ZINT(I,J,L)+ZINT(I,J,L+1))
+     92         VKRMZ=(ZL-HGT(I,J))*VKRM
+     93         EL(I,J,L)=EL0(I,J)*VKRMZ/(EL0(I,J)+VKRMZ)
+     94       ENDDO
+     95       ENDDO
+     96   260 CONTINUE
+     97 C***
+     98 C***  GET NOW THE INTERFACE EL BY TWO-POINT AVERAGING OF LAYER VALUES
+     99 C***
+    100       DO 280 L=1,LM1
+    101 !$omp  parallel do
+    102       DO J=JSTA_M,JEND_M
+    103       DO I=2,IM-1
+    104         EL(I,J,L)=0.5*(EL(I,J,L)+EL(I,J,L+1))*HTM(I,J,L+1)
+    105       ENDDO
+    106       ENDDO
+    107  280  CONTINUE
+    108 C
+    109 !$omp  parallel do
+    110       DO J=JSTA,JEND
+    111       DO I=1,IM
+    112         EL(I,J,LM)=0.0
+    113       ENDDO
+    114       ENDDO
+    115 C---STABILITY, PBL TOP, AND VERTICAL GRID DISTANCE RESTRICTIONS:--------
+    116 C   COMPUTE EL STABLE AND
+    117 C   * USE THE SMALLER OF EL BLACKADAR, EL STABLE IF WITHIN PBL;
+    118 C   * USE THE SMALLEST OF EL STABLE, ELVGD, AND VKRMZ IF ABOVE PBL
+    119 C       (ASSUME PBL TOP IS AT CPBLT*EL0(K));
+    120       DO J=JSTA_M,JEND_M
+    121       DO I=2,IM-1
+    122         APE(I,J,1)=(1.E5/(PDSL(I,J)*AETA(1)+PT))**CAPA
+    123       ENDDO
+    124       ENDDO
+    125 C
+    126       DO 380 L=1,LM1
+    127 !$omp  parallel do
+    128 !$omp& private(elst,elvgd,ensq,q2kl,ziag)
+
+Page 3           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+    129       DO J=JSTA_M,JEND_M
+    130       DO I=2,IM-1
+    131         APE(I,J,2)=(1.E5/(PDSL(I,J)*AETA(L+1)+PT))**CAPA
+    132         ENSQ=HTM(I,J,L+1)*
+    133      1       FRG*(T(I,J,L)*APE(I,J,1)-T(I,J,L+1)*APE(I,J,2))/
+    134      2       ((T(I,J,L)*APE(I,J,1)+T(I,J,L+1)*APE(I,J,2))*
+    135      3        (ZINT(I,J,L)-ZINT(I,J,L+2))+EPSN2)
+    136         ENSQ=AMAX1(ENSQ,EPSN2)
+    137         Q2KL=AMAX1(EPSQ2,Q2(I,J,L))
+    138         ELST=DRDRFF*SQRT(Q2KL/ENSQ)
+    139 CWAS    ELST=DRDRFF*SQRT(Q2(I,J,L)/ENSQ)
+    140         ZIAG=ZINT(I,J,L+1)-HGT(I,J)
+    141 C
+    142         IF(ZIAG.LT.CPBLT*EL0(I,J))THEN
+    143           EL(I,J,L)=AMIN1(EL(I,J,L),ELST)
+    144         ELSE
+    145           ELVGD=CSH*(ZINT(I,J,L)-ZINT(I,J,L+2))
+    146           EL(I,J,L)=AMIN1(ELST,ELVGD,VKRM*ZIAG)
+    147         ENDIF
+    148         APE(I,J,1)=APE(I,J,2)
+    149       ENDDO
+    150       ENDDO
+    151   380 CONTINUE
+    152 C
+    153       RETURN
+    154       END
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ mixlen_             
+
+Page 4           Source Listing                  MIXLEN
+2022-02-15 16:39 Symbol Table                    MIXLEN.f
+
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 260                        Label  96                                                             88                                
+ 280                        Label  107                                                            100                               
+ 380                        Label  151                                                            126                               
+ AETA                       Dummy  2        R(4)            4     1     0        ARG,INOUT        122,131                           
+ AMAX1                      Func   136                                  scalar                    136,137                           
+ AMIN1                      Func   143                                  scalar                    143,146                           
+ APE                        Local  55       R(4)            4     3     0                         122,131,133,134,148               
+ CAPA                       Param  49       R(4)            4           scalar                    122,131                           
+ CPBLT                      Param  48       R(4)            4           scalar                    142                               
+ CSH                        Param  48       R(4)            4           scalar                    145                               
+ CTLBLK                     Common 61                                   96       SAVE                                               
+ DRDRFF                     Param  48       R(4)            4           scalar                    138                               
+ EL                         Dummy  4        R(4)            4     3     0        ARG,INOUT        78,93,104,112,143,146             
+ EL0                        Dummy  2        R(4)            4     2     0        ARG,INOUT        93,142                            
+ ELST                       Local  138      R(4)            4           scalar                    138,143,146                       
+ ELVGD                      Local  145      R(4)            4           scalar                    145,146                           
+ ENSQ                       Local  132      R(4)            4           scalar                    132,136,138                       
+ EPSN2                      Param  49       R(4)            4           scalar                    135,136                           
+ EPSQ2                      Param  49       R(4)            4           scalar                    137                               
+ FRG                        Param  48       R(4)            4           scalar                    133                               
+ HGT                        Dummy  2        R(4)            4     2     0        ARG,INOUT        92,140                            
+ HTM                        Dummy  2        R(4)            4     3     0        ARG,INOUT        104,132                           
+ I                          Local  77       I(4)            4           scalar                    77,78,90,91,92,93,103,104,111,112,
+                                                                                                  121,122,130,131,132,133,134,135,13
+                                                                                                  7,140,142,143,145,146,148         
+ IM                         Dummy  3        I(4)            4           scalar   ARG,INOUT        53,54,55,77,90,103,111,121,130    
+ J                          Local  76       I(4)            4           scalar                    76,78,89,91,92,93,102,104,110,112,
+                                                                                                  120,122,129,131,132,133,134,135,13
+                                                                                                  7,140,142,143,145,146,148         
+ JM                         Dummy  3        I(4)            4           scalar   ARG,INOUT        53,54,55                          
+ L                          Local  75       I(4)            4           scalar                    75,78,88,91,93,100,104,126,131,132
+                                                                                                  ,133,134,135,137,140,143,145,146  
+ LM                         Dummy  3        I(4)            4           scalar   ARG,INOUT        53,54,55,75,88,112                
+ LM1                        Dummy  3        I(4)            4           scalar   ARG,INOUT        100,126                           
+ LP1                        Dummy  3        I(4)            4           scalar   ARG,INOUT        53                                
+ MIXLEN                     Subr   1                                                                                                
+ PARALLEL                   Common 68                                   8240                                                        
+ PDSL                       Dummy  2        R(4)            4     2     0        ARG,INOUT        122,131                           
+ PT                         Dummy  2        R(4)            4           scalar   ARG,INOUT        122,131                           
+ Q2                         Dummy  2        R(4)            4     3     0        ARG,INOUT        137                               
+ Q2KL                       Local  137      R(4)            4           scalar                    137,138                           
+ SQRT                       Func   138                                  scalar                    138                               
+ T                          Dummy  2        R(4)            4     3     0        ARG,INOUT        133,134                           
+ VKRM                       Param  46       R(4)            4           scalar                    92,146                            
+ VKRMZ                      Local  92       R(4)            4           scalar                    92,93                             
+ ZIAG                       Local  140      R(4)            4           scalar                    140,142,146                       
+ ZINT                       Dummy  2        R(4)            4     3     0        ARG,INOUT        91,135,140,145                    
+ ZL                         Local  91       R(4)            4           scalar                    91,92                             
+
+
+
+Page 5           Source Listing                  MIXLEN
+2022-02-15 16:39 Symbol Table                    MIXLEN.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              76,110                             
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              89,102,120,129                     
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              76,110                             
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              89,102,120,129                     
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+
+Page 6           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+    155 
+
+Page 7           Source Listing                  MIXLEN
+2022-02-15 16:39 Subprograms/Common Blocks       MIXLEN.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 61                                   96       SAVE                                               
+ MIXLEN                     Subr   1                                                                                                
+ PARALLEL                   Common 68                                   8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 8           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 9           Source Listing                  MIXLEN
+2022-02-15 16:39                                 MIXLEN.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : MIXLEN.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

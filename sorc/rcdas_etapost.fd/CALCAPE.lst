@@ -1,0 +1,1034 @@
+Page 1           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+      1       SUBROUTINE CALCAPE(ITYPE,P1D,T1D,Q1D,L1D,CAPE,CINS)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    CALCAPE     COMPUTES CAPE AND CINS
+      5 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 93-02-10      
+      6 C     
+      7 C ABSTRACT:  
+      8 C     
+      9 C     THIS ROUTINE COMPUTES CAPE AND CINS GIVEN TEMPERATURE,
+     10 C     PRESSURE, AND SPECIFIC HUMIDTY.  IN "STORM AND CLOUD 
+     11 C     DYNAMICS" (1989, ACADEMIC PRESS) COTTON AND ANTHES DEFINE
+     12 C     CAPE (EQUATION 9.16, P501) AS
+     13 C
+     14 C                  EL
+     15 C         CAPE =  SUM G * LN(THETAP/THETAA) DZ 
+     16 C                 LCL
+     17 C     
+     18 C     WHERE,
+     19 C      EL    = EQUILIBRIUM LEVEL,
+     20 C     LCL    = LIFTING CONDENSTATION LEVEL,
+     21 C       G    = GRAVITATIONAL ACCELERATION,
+     22 C     THETAP = LIFTED PARCEL POTENTIAL TEMPERATURE,
+     23 C     THETAA = AMBIENT POTENTIAL TEMPERATURE.
+     24 C     
+     25 C     NOTE THAT THE INTEGRAND LN(THETAP/THETAA) APPROXIMATELY
+     26 C     EQUALS (THETAP-THETAA)/THETAA.  THIS RATIO IS OFTEN USED
+     27 C     IN THE DEFINITION OF CAPE/CINS.
+     28 C     
+     29 C     TWO TYPES OF CAPE/CINS CAN BE COMPUTED BY THIS ROUTINE.  THE
+     30 C     SUMMATION PROCESS IS THE SAME FOR BOTH CASES.  WHAT DIFFERS
+     31 C     IS THE DEFINITION OF THE PARCEL TO LIFT.  FOR ITYPE=1 THE
+     32 C     PARCEL WITH THE WARMEST THETA-E IN A DPBND PASCAL LAYER ABOVE
+     33 C     THE MODEL SURFACE IS LIFTED.  THE ARRAYS P1D, T1D, Q1D, AND
+     34 C     L1D ARE NOT USED.  FOR ITYPE=2 THE ARRAYS P1D, T1D, Q1D, AND
+     35 C     L1D DEFINE THE PARCEL TO LIFT IN EACH COLUMN.  BOTH TYPES OF
+     36 C     CAPE/CINS MAY BE COMPUTED IN A SINGLE EXECUTION OF THE POST
+     37 C     PROCESSOR.
+     38 C     
+     39 C     THIS ALGORITHM PROCEEDS AS FOLLOWS.
+     40 C     FOR EACH COLUMN, 
+     41 C        (1)  INITIALIZE RUNNING CAPE AND CINS SUM TO 0.0
+     42 C        (2)  COMPUTE TEMPERATURE AND PRESSURE AT THE LCL USING
+     43 C             LOOK UP TABLE (PTBL).  USE EITHER PARCEL THAT GIVES
+     44 C             MAX THETAE IN LOWEST DPBND ABOVE GROUND (ITYPE=1)
+     45 C             OR GIVEN PARCEL FROM T1D,Q1D,...(ITYPE=2).
+     46 C        (3)  COMPUTE THE TEMP OF A PARCEL LIFTED FROM THE LCL.
+     47 C             WE KNOW THAT THE PARCEL'S
+     48 C             EQUIVALENT POTENTIAL TEMPERATURE (THESP) REMAINS
+     49 C             CONSTANT THROUGH THIS PROCESS.  WE CAN
+     50 C             COMPUTE TPAR USING THIS KNOWLEDGE USING LOOK
+     51 C             UP TABLE (SUBROUTINE TTBLEX).
+     52 C        (4)  FIND THE EQUILIBRIUM LEVEL.  THIS IS DEFINED AS THE
+     53 C             HIGHEST POSITIVELY BUOYANT LAYER.
+     54 C             (IF THERE IS NO POSITIVELY BUOYANT LAYER, CAPE/CINS
+     55 C              WILL BE ZERO)
+     56 C        (5)  COMPUTE CAPE/CINS.  
+     57 C             (A) COMPUTE THETAP.  WE KNOW TPAR AND P.
+
+Page 2           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+     58 C             (B) COMPUTE THETAA.  WE KNOW T AND P.  
+     59 C        (6)  ADD G*(THETAP-THETAA)*DZ TO THE RUNNING CAPE OR CINS SUM.
+     60 C             (A) IF THETAP > THETAA, ADD TO THE CAPE SUM.
+     61 C             (B) IF THETAP < THETAA, ADD TO THE CINS SUM.
+     62 C        (7)  ARE WE AT EQUILIBRIUM LEVEL? 
+     63 C             (A) IF YES, STOP THE SUMMATION.
+     64 C             (B) IF NO, CONTIUNUE THE SUMMATION.
+     65 C        (8)  ENFORCE LIMITS ON CAPE AND CINS (I.E. NO NEGATIVE CAPE)
+     66 C     
+     67 C PROGRAM HISTORY LOG:
+     68 C   93-02-10  RUSS TREADON
+     69 C   93-06-19  RUSS TREADON - GENERALIZED ROUTINE TO ALLOW FOR 
+     70 C                            TYPE 2 CAPE/CINS CALCULATIONS.     
+     71 C   94-09-23  MIKE BALDWIN - MODIFIED TO USE LOOK UP TABLES
+     72 C                            INSTEAD OF COMPLICATED EQUATIONS.
+     73 C   94-10-13  MIKE BALDWIN - MODIFIED TO CONTINUE CAPE/CINS CALC
+     74 C                            UP TO AT HIGHEST BUOYANT LAYER.
+     75 C   98-06-12  T BLACK      - CONVERSION FROM 1-D TO 2-D
+     76 C   98-08-18  T BLACK      - COMPUTE APE INTERNALLY
+     77 C   00-01-04  JIM TUCCILLO - MPI VERSION              
+     78 C     
+     79 C USAGE:    CALL CALCAPE(ITYPE,P1D,T1D,Q1D,L1D,CAPE,CINS)
+     80 C   INPUT ARGUMENT LIST:
+     81 C     ITYPE    - INTEGER FLAG SPECIFYING HOW PARCEL TO LIFT IS
+     82 C                IDENTIFIED.  SEE COMMENTS ABOVE.
+     83 C     P1D      - ARRAY OF PRESSURE OF PARCELS TO LIFT.
+     84 C     T1D      - ARRAY OF TEMPERATURE OF PARCELS TO LIFT.
+     85 C     Q1D      - ARRAY OF SPECIFIC HUMIDITY OF PARCELS TO LIFT.
+     86 C     L1D      - ARRAY OF MODEL LEVEL OF PARCELS TO LIFT.
+     87 C
+     88 C   OUTPUT ARGUMENT LIST: 
+     89 C     CAPE     - CONVECTIVE AVAILABLE POTENTIAL ENERGY (J/KG)
+     90 C     CINS     - CONVECTIVE INHIBITION (J/KG)
+     91 C     
+     92 C   OUTPUT FILES:
+     93 C     STDOUT  - RUN TIME STANDARD OUT.
+     94 C     
+     95 C   SUBPROGRAMS CALLED:
+     96 C     UTILITIES:
+     97 C       P2FILT   - SMOOTH DATA ON STAGGERED E-GRID.
+     98 C       BOUND    - BOUND (CLIP) DATA BETWEEN UPPER AND LOWER LIMTS.
+     99 C       TTBLEX   - LOOKUP TABLE ROUTINE TO GET T FROM THETAE AND P
+    100 C
+    101 C     LIBRARY:
+    102 C       COMMON   - VRBLS
+    103 C                  PHYS
+    104 C                  EXTRA
+    105 C                  IOUNIT
+    106 C                  LOOPS
+    107 C                  MASKS
+    108 C     
+    109 C   ATTRIBUTES:
+    110 C     LANGUAGE: FORTRAN 90
+    111 C     MACHINE : CRAY C-90
+    112 C$$$  
+    113 C
+    114 C     
+
+Page 3           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    115 C     
+    116 C     INCLUDE/SET PARAMETERS.  CONSTANTS ARE FROM BOLTON (MWR, 1980).
+    117       INCLUDE "parmeta"
+    135       INCLUDE "parm.tbl"
+    137       INCLUDE "params"
+    179       PARAMETER (DPBND=70.E2,
+    180      & ELIVW=2.72E6,ELOCP=ELIVW/CP)
+    181       PARAMETER (ISMTHP=2,ISMTHT=2,ISMTHQ=2)
+    182 C     
+    183 C     DECLARE VARIABLES.
+    184 C     
+    185       INTEGER L1D(IM,JM),IEQL(IM,JM),IPTB(IM,JM),ITHTB(IM,JM)
+    186       INTEGER KLRES(IM,JM),KHRES(IM,JM),LCL(IM,JM)
+    187 C      INTEGER KNUML(LM),KNUMH(LM)
+    188 C     
+    189       REAL P1D(IM,JM),T1D(IM,JM),Q1D(IM,JM)
+    190       REAL CAPE(IM,JM),CINS(IM,JM)
+    191       REAL THESP(IM,JM),TPAR(IM,JM,LM),PSP(IM,JM)
+    192       REAL QQ(IM,JM),PP(IM,JM)
+    193       INTEGER IDX(IM,JM)
+    194 C     
+    195 C     INCLUDE COMMON BLOCKS.
+    196       INCLUDE "VRBLS.comm"
+    203       INCLUDE "EXTRA.comm"
+    215       INCLUDE "IOUNIT.comm"
+    223       INCLUDE "LOOPS.comm"
+    231       INCLUDE "PHYS.comm"
+    252       INCLUDE "MASKS.comm"
+    260       INCLUDE "CTLBLK.comm"
+    261 C
+    262 C**************************************************************
+    263 C     START CALCAPE HERE.
+    264 C     
+    265 C
+    266 C     COMPUTE CAPE/CINS
+    267 C
+    268 C        WHICH IS: THE SUM FROM THE LCL TO THE EQ LEVEL OF
+    269 C             G * (LN(THETAP) - LN(THETAA)) * DZ
+    270 C
+    271 C             (POSITIVE AREA FOR CAPE, NEGATIVE FOR CINS)
+    272 C
+    273 C        WHERE:
+    274 C             THETAP IS THE PARCEL THETA
+    275 C             THETAA IS THE AMBIENT THETA
+    276 C             DZ IS THE THICKNESS OF THE LAYER
+    277 C
+    278 C         USING LCL AS LEVEL DIRECTLY BELOW SATURATION POINT
+    279 C         AND EQ LEVEL IS THE HIGHEST POSITIVELY BUOYANT LEVEL.
+    280 C  
+    281 C         IEQL = EQ LEVEL
+    282 C
+    283 C     INITIALIZE CAPE AND CINS ARRAYS
+    284 C 
+    299 !$omp  parallel do
+    300       DO J=JSTA,JEND
+    301       DO I=1,IM
+    302         CAPE(I,J) = D00
+
+Page 4           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    303         CINS(I,J) = D00
+    304         LCL(I,J)  = D00
+    305         THESP(I,J)= D00
+    306         IEQL(I,J) = LM+1
+    307       ENDDO
+    308       ENDDO
+    309 C
+    310 !$omp  parallel do
+    311       DO L=1,LM
+    312         DO J=JSTA,JEND
+    313         DO I=1,IM
+    314           TPAR(I,J,L)= D00
+    315         ENDDO
+    316         ENDDO
+    317       ENDDO
+    318 C     
+    319 C     FOR TYPE 2 CAPE/CINS SMOOTH DATA PRIOR TO CALCULATION.
+    320 C     NOTE THAT FOR TYPE 1 CAPE/CINS ARRAYS P1D, T1D, Q1D 
+    321 C     ARE DUMMY ARRAYS.
+    322 C     
+    323       IF (ITYPE.EQ.2) THEN
+    324          CALL P2FILT(ISMTHP,HBM2,P1D)
+    325          CALL P2FILT(ISMTHT,HBM2,T1D)
+    326          CALL P2FILT(ISMTHQ,HBM2,Q1D)
+    327          CALL BOUNDL(Q1D,H1M12,H99999,IM,JM)
+    328       ENDIF
+    329 C-------FOR ITYPE=1-----------------------------------------------------
+    330 C---------FIND MAXIMUM THETA E LAYER IN LOWEST DPBND ABOVE GROUND-------
+    331 C-------FOR ITYPE=2-----------------------------------------------------
+    332 C---------FIND THETA E LAYER OF GIVEN T1D, Q1D, P1D---------------------
+    333 C--------------TRIAL MAXIMUM BUOYANCY LEVEL VARIABLES-------------------
+    334       DO 20 KB=1,LM
+    335        IF (ITYPE.EQ.2.AND.KB.GT.1) GOTO 20
+    336 !$omp  parallel do
+    337 !$omp& private(apebtk,apespk,bqk,bqs00k,bqs10k,iq,it,ittbk,lmhk,
+    338 !$omp&         p00k,p01k,p10k,p11k,pkl,psfck,qbtk,sqk,sqs00k,
+    339 !$omp&         sqs10k,tbtk,tpspk,tqk,tthbtk,tthesk,tthk)
+    340        DO 10 J=JSTA_M,JEND_M
+    341        DO 10 I=2,IM-1
+    342         LMHK   =LMH(I,J)
+    343         PSFCK  =AETA(LMHK)*PDSL(I,J)+PT
+    344           PKL = AETA(KB)*PDSL(I,J)+PT
+    345           IF (ITYPE.EQ.1.AND.(PKL.LT.PSFCK-DPBND.OR.PKL.GT.PSFCK))
+    346      &             GOTO 10
+    347           IF (ITYPE.EQ.1) THEN
+    348             TBTK   =T(I,J,KB)
+    349             QBTK   =Q(I,J,KB)
+    350             APEBTK =(H10E5/(PDSL(I,J)*AETA(KB)+PT))**CAPA
+    351           ELSE
+    352             PKL    =P1D(I,J)
+    353             TBTK   =T1D(I,J)
+    354             QBTK   =Q1D(I,J)
+    355             APEBTK =(H10E5/PKL)**CAPA
+    356           ENDIF
+    357 C--------------SCALING POTENTIAL TEMPERATURE & TABLE INDEX--------------
+    358           TTHBTK =TBTK*APEBTK
+    359           TTHK   =(TTHBTK-THL)*RDTH
+
+Page 5           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    360           QQ(I,J)=TTHK-AINT(TTHK)
+    361           ITTBK  =INT(TTHK)+1
+    362 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    363           IF(ITTBK.LT.1)    THEN
+    364             ITTBK  =1
+    365             QQ(I,J)=D00
+    366           ENDIF
+    367           IF(ITTBK.GE.JTB)  THEN
+    368             ITTBK  =JTB-1
+    369             QQ(I,J)=D00
+    370           ENDIF
+    371 C--------------BASE AND SCALING FACTOR FOR SPEC. HUMIDITY---------------
+    372           BQS00K=QS0(ITTBK)
+    373           SQS00K=SQS(ITTBK)
+    374           BQS10K=QS0(ITTBK+1)
+    375           SQS10K=SQS(ITTBK+1)
+    376 C--------------SCALING SPEC. HUMIDITY & TABLE INDEX---------------------
+    377           BQK    =(BQS10K-BQS00K)*QQ(I,J)+BQS00K
+    378           SQK    =(SQS10K-SQS00K)*QQ(I,J)+SQS00K
+    379           TQK    =(QBTK-BQK)/SQK*RDQ
+    380           PP(I,J)=TQK-AINT(TQK)
+    381           IQ     =INT(TQK)+1
+    382 C--------------KEEPING INDICES WITHIN THE TABLE-------------------------
+    383           IF(IQ.LT.1)    THEN
+    384             IQ     =1
+    385             PP(I,J)=D00
+    386           ENDIF
+    387           IF(IQ.GE.ITB)  THEN
+    388             IQ     =ITB-1
+    389             PP(I,J)=D00
+    390           ENDIF
+    391 C--------------SATURATION PRESSURE AT FOUR SURROUNDING TABLE PTS.-------
+    392           IT=ITTBK
+    393           P00K=PTBL(IQ  ,IT  )
+    394           P10K=PTBL(IQ+1,IT  )
+    395           P01K=PTBL(IQ  ,IT+1)
+    396           P11K=PTBL(IQ+1,IT+1)
+    397 C--------------SATURATION POINT VARIABLES AT THE BOTTOM-----------------
+    398           TPSPK=P00K+(P10K-P00K)*PP(I,J)+(P01K-P00K)*QQ(I,J)
+    399      2      +(P00K-P10K-P01K+P11K)*PP(I,J)*QQ(I,J)
+    400           APESPK=(H10E5/TPSPK)**CAPA
+    401           TTHESK=TTHBTK*EXP(ELOCP*QBTK*APESPK/TTHBTK)
+    402 C--------------CHECK FOR MAXIMUM THETA E--------------------------------
+    403           IF(TTHESK.GT.THESP(I,J)) THEN
+    404             PSP  (I,J)=TPSPK
+    405             THESP(I,J)=TTHESK
+    406           ENDIF
+    407  10   CONTINUE
+    408  20     CONTINUE
+    409 C-----CHOOSE LAYER DIRECTLY BELOW PSP AS LCL AND------------------------
+    410 C-----ENSURE THAT THE LCL IS ABOVE GROUND.------------------------------
+    411 C-------(IN SOME RARE CASES FOR ITYPE=2, IT IS NOT)---------------------
+    412       DO L=1,LM
+    413 !$omp  parallel do
+    414 !$omp& private(pkl)
+    415         DO J=JSTA_M,JEND_M
+    416         DO I=2,IM-1
+
+Page 6           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    417           PKL = AETA(L)*PDSL(I,J)+PT
+    418           IF (PKL.LT.PSP(I,J)) LCL(I,J)=L+1
+    419         ENDDO
+    420         ENDDO
+    421       ENDDO
+    422 !$omp  parallel do
+    423         DO J=JSTA_M,JEND_M
+    424         DO I=2,IM-1
+    425           IF (LCL(I,J).GT.LMH(I,J)) LCL(I,J)=LMH(I,J)
+    426         ENDDO
+    427         ENDDO
+    428 C-----------------------------------------------------------------------
+    429 C---------FIND TEMP OF PARCEL LIFTED ALONG MOIST ADIABAT (TPAR)---------
+    430 C-----------------------------------------------------------------------
+    431 !!$omp  parallel do
+    432       DO 30 L=LM,1,-1
+    433 C--------------SCALING PRESSURE & TT TABLE INDEX------------------------
+    434       KNUML=0
+    435       KNUMH=0
+    436       DO J=JSTA_M,JEND_M
+    437       DO I=2,IM-1
+    438         KLRES(I,J)=0
+    439         KHRES(I,J)=0
+    440         PKL=AETA(L)*PDSL(I,J)+PT
+    441         IF(L.LE.LCL(I,J)) THEN
+    442           IF(PKL.LT.PLQ)THEN
+    443             KNUML=KNUML+1
+    444             KLRES(I,J)=1
+    445           ELSE
+    446             KNUMH=KNUMH+1
+    447             KHRES(I,J)=1
+    448           ENDIF
+    449         ENDIF
+    450       ENDDO
+    451       ENDDO
+    452 C***
+    453 C***  COMPUTE PARCEL TEMPERATURE ALONG MOIST ADIABAT FOR PRESSURE<PLQ
+    454 C**
+    455       IF(KNUML.GT.0)THEN
+    456         CALL TTBLEX(TPAR(1,1,L),TTBL,ITB,JTB,KLRES,PDSL,AETA(L)
+    457      1,             HTM(1,1,L),PT,PL,QQ,PP,RDP,THE0,STHE,RDTHE,THESP
+    458      2,             IPTB,ITHTB)
+    459       ENDIF
+    460 C***
+    461 C***  COMPUTE PARCEL TEMPERATURE ALONG MOIST ADIABAT FOR PRESSURE>PLQ
+    462 C**
+    463       IF(KNUMH.GT.0)THEN
+    464         CALL TTBLEX(TPAR(1,1,L),TTBLQ,ITBQ,JTBQ,KHRES,PDSL,AETA(L)
+    465      1,             HTM(1,1,L),PT,PLQ,QQ,PP,RDPQ,THE0Q,STHEQ,RDTHEQ
+    466      2,             THESP,IPTB,ITHTB)
+    467       ENDIF
+    468 
+    469 C------------SEARCH FOR EQ LEVEL----------------------------------------
+    470       DO J=JSTA_M,JEND_M
+    471       DO I=2,IM-1
+    472         IF(KHRES(I,J).GT.0)THEN
+    473           IF(TPAR(I,J,L).GT.T(I,J,L)) IEQL(I,J)=L
+
+Page 7           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    474         ENDIF
+    475       ENDDO
+    476       ENDDO
+    477 C
+    478       DO J=JSTA_M,JEND_M
+    479       DO I=2,IM-1
+    480         IF(KLRES(I,J).GT.0)THEN
+    481           IF(TPAR(I,J,L).GT.T(I,J,L)) IEQL(I,J)=L
+    482         ENDIF
+    483       ENDDO
+    484       ENDDO
+    485 C-----------------------------------------------------------------------
+    486  30   CONTINUE
+    487 C------------COMPUTE CAPE AND CINS--------------------------------------
+    488 c      DO K=KHL01,KHH01
+    489 c        LCLK=LCL(K)
+    490 c        IEQK=IEQL(K)
+    491 cCDIR$ SHORTLOOP
+    492 c        DO L=IEQK,LCLK
+    493 c          PRESK=AETA(L)*PDSL(K)+PT
+    494 c          DZKL=T(K,L)*(Q(K,L)*D608+H1)*ROG*PDSL(K)*DETA(L)/PRESK
+    495 c          THETAP=TPAR(K,L)*(H10E5/PRESK)**CAPA
+    496 c          THETAA=T(K,L)*(H10E5/PRESK)**CAPA
+    497 c          IF (THETAP.LT.THETAA)
+    498 c     &      CINS(K)=CINS(K)+G*(ALOG(THETAP)-ALOG(THETAA))*DZKL
+    499 c          IF (THETAP.GT.THETAA)
+    500 c     &      CAPE(K)=CAPE(K)+G*(ALOG(THETAP)-ALOG(THETAA))*DZKL
+    501 c        ENDDO
+    502 c      ENDDO
+    503       LBEG=100
+    504       LEND=0
+    505 C
+    506 !$omp  parallel do
+    507 !$omp& private(lbeg,lend)
+    508       DO J=JSTA_M,JEND_M
+    509       DO I=2,IM-1
+    510         LBEG=MIN(IEQL(I,J),LBEG)
+    511         LEND=MAX(LCL(I,J),LEND)
+    512       ENDDO
+    513       ENDDO
+    514 C
+    515       DO L=LBEG,LEND
+    516         DO J=JSTA_M,JEND_M
+    517         DO I=2,IM-1
+    518           IDX(I,J)=0
+    519           IF(L.GE.IEQL(I,J).AND.L.LE.LCL(I,J))THEN
+    520             IDX(I,J)=1
+    521           ENDIF
+    522         ENDDO
+    523 C
+    524         ENDDO
+    525 C
+    526 !$omp  parallel do
+    527 !$omp& private(dzkl,presk,thetaa,thetap)
+    528         DO J=JSTA_M,JEND_M
+    529         DO I=2,IM-1
+    530           IF(IDX(I,J).GT.0)THEN
+
+Page 8           Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+    531             PRESK=AETA(L)*PDSL(I,J)+PT
+    532             DZKL=T(I,J,L)*(Q(I,J,L)*D608+H1)
+    533      *           *ROG*PDSL(I,J)*DETA(L)/PRESK
+    534             THETAP=TPAR(I,J,L)*(H10E5/PRESK)**CAPA
+    535             THETAA=T(I,J,L)*(H10E5/PRESK)**CAPA
+    536             IF(THETAP.LT.THETAA)THEN
+    537               CINS(I,J)=CINS(I,J)
+    538 cjjt *                 +G*(ALOG(THETAP/THETAA))*DZKL
+    539      *                 +G*(ALOG(THETAP)-ALOG(THETAA))*DZKL
+    540             ELSEIF(THETAP.GT.THETAA)THEN
+    541               CAPE(I,J)=CAPE(I,J)
+    542 cjjt *                 +G*(ALOG(THETAP/THETAA))*DZKL
+    543      *                 +G*(ALOG(THETAP)-ALOG(THETAA))*DZKL
+    544             ENDIF
+    545           ENDIF
+    546         ENDDO
+    547         ENDDO
+    548       ENDDO
+    549          
+    550 C    
+    551 C     ENFORCE LOWER LIMIT OF 0.0 ON CAPE AND UPPER
+    552 C     LIMIT OF 0.0 ON CINS.
+    553 C
+    554 !$omp  parallel do
+    555       DO 40 J=JSTA,JEND
+    556       DO 40 I=1,IM
+    557 c         IF (CAPE(K).LT.D00) 
+    558 c     X        WRITE(STDOUT,*)
+    559 c     X        'CALCAPE:  NEGATIVE CAPE AT K=',K,CAPE(K)
+    560 c         IF (CINS(K).GT.D00)
+    561 c     X        WRITE(STDOUT,*)
+    562 c     X        'CALCAPE:  POSTIVE CINS AT K = ',K,CINS(K)
+    563          CAPE(I,J) = AMAX1(D00,CAPE(I,J))
+    564          CINS(I,J) = AMIN1(CINS(I,J),D00)
+    565  40   CONTINUE
+    566 C     
+    567 C     END OF ROUTINE.
+    568 C     
+    569       RETURN
+    570       END
+
+Page 9           Source Listing                  CALCAPE
+2022-02-15 16:38 Entry Points                    CALCAPE.f
+
+
+
+ENTRY POINTS
+
+  Name                
+                      
+ calcape_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  407                                                            340,341,346                       
+ 20                         Label  408                                                            334,335                           
+ 30                         Label  486                                                            432                               
+ 40                         Label  565                                                            555,556                           
+ A2                         Param  178      R(4)            4           scalar                                                      
+ A3                         Param  178      R(4)            4           scalar                                                      
+ A4                         Param  178      R(4)            4           scalar                                                      
+ AD05                       Param  170      R(4)            4           scalar                                                      
+ AINT                       Func   360                                  scalar                    360,380                           
+ ALOG                       Func   539                                  scalar                    539,543                           
+ AMAX1                      Func   563                                  scalar                    563                               
+ AMIN1                      Func   564                                  scalar                    564                               
+ APEBTK                     Local  350      R(4)            4           scalar                    350,355,358                       
+ APESPK                     Local  400      R(4)            4           scalar                    400,401                           
+ BETA                       Param  174      R(4)            4           scalar                    174                               
+ BOUNDL                     Subr   327                                                            327                               
+ BQK                        Local  377      R(4)            4           scalar                    377,379                           
+ BQS00K                     Local  372      R(4)            4           scalar                    372,377                           
+ BQS10K                     Local  374      R(4)            4           scalar                    374,377                           
+ BTG                        Param  174      R(4)            4           scalar                                                      
+ CALCAPE                    Subr   1                                                                                                
+ CAPA                       Param  165      R(4)            4           scalar                    172,350,355,400,534,535           
+ CAPE                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        302,541,563                       
+ CFT0                       Param  170      R(4)            4           scalar                                                      
+ CINS                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        303,537,564                       
+ CM1                        Param  160      R(4)            4           scalar                                                      
+ CM2                        Param  160      R(4)            4           scalar                                                      
+ CM3                        Param  160      R(4)            4           scalar                                                      
+ CP                         Param  171      R(4)            4           scalar                    173,177,180                       
+ CPDR                       Param  173      R(4)            4           scalar                                                      
+ CTLBLK                     Common 286                                  96       SAVE                                               
+ D00                        Param  162      R(4)            4           scalar                    302,303,304,305,314,365,369,385,38
+                                                                                                  9,563,564                         
+ D001                       Param  162      R(4)            4           scalar                                                      
+ D0065                      Param  166      R(4)            4           scalar                                                      
+ D01                        Param  162      R(4)            4           scalar                                                      
+ D05                        Param  166      R(4)            4           scalar                    170                               
+ D1                         Param  162      R(4)            4           scalar                                                      
+ D115                       Param  166      R(4)            4           scalar                                                      
+ D125                       Param  164      R(4)            4           scalar                                                      
+ D25                        Param  164      R(4)            4           scalar                                                      
+ D50                        Param  162      R(4)            4           scalar                                                      
+ D608                       Param  166      R(4)            4           scalar                    532                               
+ DP10M                      Param  172      R(4)            4           scalar                                                      
+
+Page 10          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ DPBND                      Param  179      R(4)            4           scalar                    345                               
+ DTR                        Param  171      R(4)            4           scalar                    171                               
+ DZKL                       Local  532      R(4)            4           scalar                    532,539,543                       
+ ELDR                       Param  173      R(4)            4           scalar                                                      
+ ELIVW                      Param  180      R(4)            4           scalar                    180                               
+ ELOCP                      Param  180      R(4)            4           scalar                    401                               
+ ELWV                       Param  173      R(4)            4           scalar                    173                               
+ EPS                        Param  176      R(4)            4           scalar                    176                               
+ EPSQ2                      Param  177      R(4)            4           scalar                                                      
+ ERAD                       Param  171      R(4)            4           scalar                                                      
+ EXP                        Func   401                                  scalar                    401                               
+ EXTRA                      Common 206                                  71506268 SAVE                                               
+ FMD                        Param  176      R(4)            4           scalar                    176                               
+ FMW                        Param  176      R(4)            4           scalar                    176                               
+ G                          Param  169      R(4)            4           scalar                    169,539,543                       
+ GI                         Param  169      R(4)            4           scalar                    173                               
+ H1                         Param  163      R(4)            4           scalar                    170,532                           
+ H100                       Param  164      R(4)            4           scalar                                                      
+ H1000                      Param  164      R(4)            4           scalar                                                      
+ H10000                     Param  165      R(4)            4           scalar                                                      
+ H10E5                      Param  165      R(4)            4           scalar                    350,355,400,534,535               
+ H1E2                       Param  167      R(4)            4           scalar                                                      
+ H1E4                       Param  167      R(4)            4           scalar                                                      
+ H1M12                      Param  163      R(4)            4           scalar                    327                               
+ H1M2                       Param  167      R(4)            4           scalar                                                      
+ H1M5                       Param  164      R(4)            4           scalar                                                      
+ H2                         Param  163      R(4)            4           scalar                                                      
+ H4                         Param  163      R(4)            4           scalar                                                      
+ H999                       Param  162      R(4)            4           scalar                                                      
+ H99999                     Param  163      R(4)            4           scalar                    327                               
+ I                          Local  301      I(4)            4           scalar                    301,302,303,304,305,306,313,314,34
+                                                                                                  1,342,343,344,348,349,350,352,353,
+                                                                                                  354,360,365,369,377,378,380,385,38
+                                                                                                  9,398,399,403,404,405,416,417,418,
+                                                                                                  424,425,437,438,439,440,441,444,44
+                                                                                                  7,471,472,473,479,480,481,509,510,
+                                                                                                  511,517,518,519,520,529,530,531,53
+                                                                                                  2,533,534,535,537,541,556,563,564 
+ IDIM1                      Param  131      I(4)            4           scalar                                                      
+ IDIM2                      Param  131      I(4)            4           scalar                                                      
+ IDX                        Local  193      I(4)            4     2     91719                     518,520,530                       
+ IEQL                       Local  185      I(4)            4     2     91719                     306,473,481,510,519               
+ IGSTL                      Param  126      I(4)            4           scalar                    131                               
+ IGSTR                      Param  126      I(4)            4           scalar                    131                               
+ IM                         Param  120      I(4)            4           scalar                    128,131,141,143,144,146,185,186,18
+                                                                                                  9,190,191,192,193,199,201,205,207,
+                                                                                                  208,209,210,211,212,228,242,243,24
+                                                                                                  4,245,246,247,255,257,301,313,327,
+                                                                                                  341,416,424,437,471,479,509,517,52
+                                                                                                  9,556                             
+ IM1                        Param  143      I(4)            4           scalar                                                      
+ IMJM                       Param  205      I(4)            4           scalar                    208                               
+ IMT                        Param  141      I(4)            4           scalar                                                      
+ INPES                      Param  123      I(4)            4           scalar                    128,131                           
+ INT                        Func   361                                  scalar                    361,381                           
+
+Page 11          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ IOUNIT                     Common 219                                  20       SAVE                                               
+ IPTB                       Local  185      I(4)            4     2     91719                     458,466                           
+ IQ                         Local  381      I(4)            4           scalar                    381,383,384,387,388,393,394,395,39
+                                                                                                  6                                 
+ ISMTHP                     Param  181      I(4)            4           scalar                    324                               
+ ISMTHQ                     Param  181      I(4)            4           scalar                    326                               
+ ISMTHT                     Param  181      I(4)            4           scalar                    325                               
+ IT                         Local  392      I(4)            4           scalar                    392,393,394,395,396               
+ ITAIL                      Param  128      I(4)            4           scalar                                                      
+ ITB                        Param  136      I(4)            4           scalar                    239,249,387,388,456               
+ ITBQ                       Param  136      I(4)            4           scalar                    240,249,464                       
+ ITHTB                      Local  185      I(4)            4     2     91719                     458,466                           
+ ITTBK                      Local  361      I(4)            4           scalar                    361,363,364,367,368,372,373,374,37
+                                                                                                  5,392                             
+ ITYPE                      Dummy  1        I(4)            4           scalar   ARG,INOUT        323,335,345,347                   
+ J                          Local  300      I(4)            4           scalar                    300,302,303,304,305,306,312,314,34
+                                                                                                  0,342,343,344,348,349,350,352,353,
+                                                                                                  354,360,365,369,377,378,380,385,38
+                                                                                                  9,398,399,403,404,405,415,417,418,
+                                                                                                  423,425,436,438,439,440,441,444,44
+                                                                                                  7,470,472,473,478,480,481,508,510,
+                                                                                                  511,516,518,519,520,528,530,531,53
+                                                                                                  2,533,534,535,537,541,555,563,564 
+ JAM                        Param  143      I(4)            4           scalar                    226                               
+ JDIM1                      Param  132      I(4)            4           scalar                                                      
+ JDIM2                      Param  132      I(4)            4           scalar                                                      
+ JGSTL                      Param  127      I(4)            4           scalar                    132                               
+ JGSTR                      Param  127      I(4)            4           scalar                    132                               
+ JM                         Param  120      I(4)            4           scalar                    129,132,141,143,146,185,186,189,19
+                                                                                                  0,191,192,193,199,201,205,207,208,
+                                                                                                  209,210,211,212,228,242,243,244,24
+                                                                                                  5,246,247,255,257,327             
+ JM2                        Param  143      I(4)            4           scalar                                                      
+ JMT                        Param  141      I(4)            4           scalar                                                      
+ JNPES                      Param  123      I(4)            4           scalar                    129,132                           
+ JTAIL                      Param  129      I(4)            4           scalar                                                      
+ JTB                        Param  136      I(4)            4           scalar                    239,249,367,368,456               
+ JTBQ                       Param  136      I(4)            4           scalar                    249,464                           
+ KB                         Local  334      I(4)            4           scalar                    334,335,344,348,349,350           
+ KHRES                      Local  186      I(4)            4     2     91719                     439,447,464,472                   
+ KLRES                      Local  186      I(4)            4     2     91719                     438,444,456,480                   
+ KNUMH                      Local  435      I(4)            4           scalar                    435,446,463                       
+ KNUML                      Local  434      I(4)            4           scalar                    434,443,455                       
+ KSAV                       Param  151      I(4)            4           scalar                                                      
+ KSFI                       Param  150      I(4)            4           scalar                                                      
+ KSLI                       Param  151      I(4)            4           scalar                                                      
+ KSLP                       Param  151      I(4)            4           scalar                                                      
+ KSLPD                      Param  150      I(4)            4           scalar                                                      
+ KSMUD                      Param  150      I(4)            4           scalar                                                      
+ KSRH                       Param  151      I(4)            4           scalar                                                      
+ KSSLP                      Param  150      I(4)            4           scalar                                                      
+ KST                        Param  150      I(4)            4           scalar                                                      
+ KSUV                       Param  151      I(4)            4           scalar                                                      
+ L                          Local  311      I(4)            4           scalar                    311,314,412,417,418,432,440,441,45
+                                                                                                  6,457,464,465,473,481,515,519,531,
+
+Page 12          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+                                                                                                  532,533,534,535                   
+ L1D                        Dummy  1        I(4)            4     2     91719    ARG,INOUT                                          
+ LB                         Param  146      I(4)            4           scalar                                                      
+ LBEG                       Local  503      I(4)            4           scalar                    503,510,515                       
+ LCL                        Local  186      I(4)            4     2     91719                     304,418,425,441,511,519           
+ LEND                       Local  504      I(4)            4           scalar                    504,511,515                       
+ LHEAT                      Param  177      I(4)            4           scalar                    177                               
+ LHTOCP                     Param  177      I(4)            4           scalar                                                      
+ LM                         Param  120      I(4)            4           scalar                    145,156,191,201,208,238,257,306,31
+                                                                                                  1,334,412,432                     
+ LM1                        Param  145      I(4)            4           scalar                                                      
+ LMHK                       Local  342      I(4)            4           scalar                    342,343                           
+ LOOPS                      Common 225                                  748952   SAVE                                               
+ LP1                        Param  145      I(4)            4           scalar                    207,238                           
+ LSM                        Param  120      I(4)            4           scalar                                                      
+ MASKS                      Common 254                                  34853220 SAVE                                               
+ MAX                        Func   511                                  scalar                    511                               
+ MIN                        Func   510                                  scalar                    510                               
+ NINC                       Param  144      I(4)            4           scalar                                                      
+ NSTAT                      Param  156      I(4)            4           scalar                                                      
+ NSUMD                      Param  152      I(4)            4           scalar                                                      
+ NWORD                      Param  156      I(4)            4           scalar                    156                               
+ NWORD3                     Param  156      I(4)            4           scalar                                                      
+ NWORD6                     Param  156      I(4)            4           scalar                                                      
+ ONEPS                      Param  176      R(4)            4           scalar                                                      
+ OVERRC                     Param  170      R(4)            4           scalar                    170                               
+ P00K                       Local  393      R(4)            4           scalar                    393,398,399                       
+ P01K                       Local  395      R(4)            4           scalar                    395,398,399                       
+ P1000                      Param  172      R(4)            4           scalar                                                      
+ P10K                       Local  394      R(4)            4           scalar                    394,398,399                       
+ P11K                       Local  396      R(4)            4           scalar                    396,399                           
+ P1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        324,352                           
+ P2FILT                     Subr   324                                                            324,325,326                       
+ PARALLEL                   Common 293                                  8240                                                        
+ PHYS                       Common 233                                  7690036  SAVE                                               
+ PKL                        Local  344      R(4)            4           scalar                    344,345,352,355,417,418,440,442   
+ PP                         Local  192      R(4)            4     2     91719                     380,385,389,398,399,457,465       
+ PQ0                        Param  178      R(4)            4           scalar                                                      
+ PRESK                      Local  531      R(4)            4           scalar                    531,533,534,535                   
+ PSFCK                      Local  343      R(4)            4           scalar                    343,345                           
+ PSP                        Local  191      R(4)            4     2     91719                     404,418                           
+ Q1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        326,327,354                       
+ QBTK                       Local  349      R(4)            4           scalar                    349,354,379,401                   
+ QQ                         Local  192      R(4)            4     2     91719                     360,365,369,377,378,398,399,457,46
+                                                                                                  5                                 
+ RCAPA                      Param  172      R(4)            4           scalar                                                      
+ RD                         Param  169      R(4)            4           scalar                    169,173,177                       
+ RDOCP                      Param  177      R(4)            4           scalar                                                      
+ RG                         Param  173      R(4)            4           scalar                                                      
+ ROG                        Param  169      R(4)            4           scalar                    533                               
+ RTD                        Param  171      R(4)            4           scalar                                                      
+ SMTHA                      Param  152      R(4)            4           scalar                                                      
+ SMTHB                      Param  152      R(4)            4           scalar                                                      
+ SQK                        Local  378      R(4)            4           scalar                    378,379                           
+ SQS00K                     Local  373      R(4)            4           scalar                    373,378                           
+
+Page 13          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ SQS10K                     Local  375      R(4)            4           scalar                    375,378                           
+ T1D                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        325,353                           
+ TBTK                       Local  348      R(4)            4           scalar                    348,353,358                       
+ TFRZ                       Param  176      R(4)            4           scalar                                                      
+ THESP                      Local  191      R(4)            4     2     91719                     305,403,405,457,466               
+ THETAA                     Local  535      R(4)            4           scalar                    535,536,539,540,543               
+ THETAP                     Local  534      R(4)            4           scalar                    534,536,539,540,543               
+ TPAR                       Local  191      R(4)            4     3     4127355                   314,456,464,473,481,534           
+ TPSPK                      Local  398      R(4)            4           scalar                    398,400,404                       
+ TQK                        Local  379      R(4)            4           scalar                    379,380,381                       
+ TTBLEX                     Subr   456                                                            456,464                           
+ TTHBTK                     Local  358      R(4)            4           scalar                    358,359,401                       
+ TTHESK                     Local  401      R(4)            4           scalar                    401,403,405                       
+ TTHK                       Local  359      R(4)            4           scalar                    359,360,361                       
+ VRBLS                      Common 198                                  67138308                                                    
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     264      1     45       COM              343,344,350,417,440,456,464,531    
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     2204780  2     91719    COM                                                 
+ CZMEAN                     R(4)            4     6607292  2     91719    COM                                                 
+ DETA                       R(4)            4     84       1     45       COM              533                                
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM                                                 
+ GLON                       R(4)            4     1837904  2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM              324,325,326                        
+ HBOT                       R(4)            4     3672284  2     91719    COM                                                 
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM              457,465                            
+ HTOP                       R(4)            4     3305408  2     91719    COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+
+Page 14          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              300,312,555                        
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              340,415,423,436,470,478,508,516,52 
+                                                                                           8                                  
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              300,312,555                        
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              340,415,423,436,470,478,508,516,52 
+                                                                                           8                                  
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM              342,425                            
+ LMV                        I(4)            4     382076   2     91719    COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM                                                 
+ LUNOUT                     I(4)            4     16             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM                                                 
+ PDSL                       R(4)            4     67837500 2     91719    COM              343,344,350,417,440,456,464,531,53 
+                                                                                           3                                  
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM                                                 
+ PL                         R(4)            4     48             scalar   COM              457                                
+ PLQ                        R(4)            4     72             scalar   COM              442,465                            
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     4              scalar   COM              343,344,350,417,440,457,465,531    
+ PTBL                       R(4)            4     7341044  2     10184    COM              393,394,395,396                    
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+
+Page 15          Source Listing                  CALCAPE
+2022-02-15 16:38 Symbol Table                    CALCAPE.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ Q                          R(4)            4     50628888 3     4127355  COM              349,532                            
+ QS0                        R(4)            4     628      1     134      COM              372,374                            
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM              457                                
+ RDPQ                       R(4)            4     76             scalar   COM              465                                
+ RDQ                        R(4)            4     56             scalar   COM              379                                
+ RDTH                       R(4)            4     60             scalar   COM              359                                
+ RDTHE                      R(4)            4     68             scalar   COM              457                                
+ RDTHEQ                     R(4)            4     80             scalar   COM              465                                
+ RES                        R(4)            4     366876   2     91719    COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM              373,375                            
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+ STDOUT                     I(4)            4     0              scalar   COM                                                 
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM              457                                
+ STHEQ                      R(4)            4     2916     1     152      COM              465                                
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM              348,473,481,532,535                
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM              457                                
+ THE0Q                      R(4)            4     2308     1     152      COM              465                                
+ THL                        R(4)            4     52             scalar   COM              359                                
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TTBL                       R(4)            4     7381780  2     10184    COM              456                                
+ TTBLQ                      R(4)            4     7422516  2     66880    COM              464                                
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM                                                 
+ V                          R(4)            4     17610048 3     4127355  COM                                                 
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM                                                 
+
+Page 16          Source Listing                  CALCAPE
+2022-02-15 16:38 Subprograms/Common Blocks       CALCAPE.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CALCAPE                    Subr   1                                                                                                
+ CTLBLK                     Common 286                                  96       SAVE                                               
+ EXTRA                      Common 206                                  71506268 SAVE                                               
+ IOUNIT                     Common 219                                  20       SAVE                                               
+ LOOPS                      Common 225                                  748952   SAVE                                               
+ MASKS                      Common 254                                  34853220 SAVE                                               
+ PARALLEL                   Common 293                                  8240                                                        
+ PHYS                       Common 233                                  7690036  SAVE                                               
+ VRBLS                      Common 198                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+
+Page 17          Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+
+Page 18          Source Listing                  CALCAPE
+2022-02-15 16:38                                 CALCAPE.f
+
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CALCAPE.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

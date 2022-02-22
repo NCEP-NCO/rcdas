@@ -1,0 +1,1018 @@
+Page 1           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+      1       SUBROUTINE READCNTRL2(IEOF)
+      2 C
+      3 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      4 C                .      .    .     
+      5 C SUBPROGRAM:    READCNTRL2  READS CONTROL FILE
+      6 C   PRGRMMR: TREADON         ORG: W/NP2      DATE: 92-12-20       
+      7 C     
+      8 C ABSTRACT:
+      9 C     THIS ROUTINE READS THE CONTROL FILE SPECIFYING OUTPUT
+     10 C     GRID(S), DATA FORMAT(S), AND FIELD(S) TO POST.  THE
+     11 C     ORDER OF OPERATIONS IS 
+     12 C        (1) READ HEADER BLOCK OF CONTROL FILE,
+     13 C        (2) SET FLAGS, CLOSE OPEN UNITS, SET E-GRID SPECS,
+     14 C        (3) READ OR COMPUTE INTERPOLATION WEIGHTS, AND
+     15 C        (4) READ BODY OF CONTROL FILE (FIELD SPECIFICATIONS)
+     16 C   .     
+     17 C     
+     18 C PROGRAM HISTORY LOG:
+     19 C   92-12-20  RUSS TREADON
+     20 C   93-06-15  RUSS TREADON - ADD PROJECTION CONTROL CARD
+     21 C   98-06-01  BLACK - CONVERSION OF POST FROM 1-D TO 2-D
+     22 C   98-07-17  MIKE BALDWIN - REMOVED PACK84
+     23 C     
+     24 C USAGE:    CALL READCNTRL2(IEOF)
+     25 C   INPUT ARGUMENT LIST:
+     26 C     NONE
+     27 C
+     28 C   OUTPUT ARGUMENT LIST: 
+     29 C     IEOF     - INTEGER FLAG FOR EOF IN CONTROL FILE.
+     30 C                IEOF=0 WHEN AN EOF IS READ IN THE
+     31 C                CONTROL FILE.  IEOF=1 OTHERWISE.
+     32 C     
+     33 C   OUTPUT FILES:
+     34 C     NONE
+     35 C     
+     36 C   SUBPROGRAMS CALLED:
+     37 C     UTILITIES:
+     38 C       TRNSEG   - SET E-GRID SPECIFCATIONS.
+     39 C       TRNSGD   - SET OUTPUT GRID SPECIFICATIONS.
+     40 C       E2TLL    - COMPUTE TRANSFORMED (LAT,LON) ON E-GRID.
+     41 C       FILLH    - FILL "H" POINTS FOR "V" POINT ARRAY.
+     42 C       FILLV    - FILL "V" POINTS FOR "H" POINT ARRAY.
+     43 C       GENLL    - COMPUTE OUTPUT GRID GEODETIC (LAT,LON).
+     44 C       GD2TLL   - MAP GEODETIC (LAT,LON) TO TRANSFORM
+     45 C                     ETA GRID REFERENCE FRAME.
+     46 C       GD2EG    - MAP OUTPUT GRID (I,J) TO FILLED E-GRID (I,J).
+     47 C       GD2EGK   - MAP OUTPUT GRID (I,J) TO E-GRID (K) FOR CETLIH4.
+     48 C       GENBIL   - COMPUTE BILINEAR INTERPOLATION WEIGHTS.
+     49 C       GENEUV   - LOAD ROTATION ARRAYS FOR WINDS.
+     50 C
+     51 C     LIBRARY:
+     52 C       COMMON   - OUTGRD
+     53 C                  RQSTFLD
+     54 C                  LLGRDS
+     55 C                  IOUNIT
+     56 C                  PHYS2
+     57 C                  OPTIONS
+
+Page 2           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+     58 C                  MAPOT
+     59 C                  CTLBLK
+     60 C     
+     61 C   ATTRIBUTES:
+     62 C     LANGUAGE: FORTRAN
+     63 C     MACHINE : CRAY C-90
+     64 C$$$  
+     65 C
+     66 C     
+     67 C     INCLUDE ETA GRID DIMENSIONS.  SET/DERIVE PARAMETERS.
+     68 C
+     69       INCLUDE "parmeta"
+     87       INCLUDE "parmout"
+     91       INCLUDE "parm.tbl"
+     93       PARAMETER (IMJM=IM*JM-JM/2,IMT=2*IM-1,JMT=JM,LP1=LM+1)
+     94       PARAMETER (DTR=1.745329E-2,RTD=1./DTR)
+     95 C     
+     96 C     DECLARE VARIABLES.
+     97 C     
+     98       LOGICAL NORTH
+     99       CHARACTER*2  CHAR2
+    100       CHARACTER*4  CHAR4
+    101       CHARACTER*6  NUFILE,OUTYPE,PROJ,READCO,READLL
+    102       CHARACTER*80 LINE
+    103       REAL EGRID1(IM,JM), EGRID2(IM,JM)
+    104 C     
+    105 C     INCLUDE COMMON BLOCKS.
+    106       INCLUDE "OUTGRD.comm"
+    111       INCLUDE "RQSTFLD.comm"
+    124       INCLUDE "LLGRDS.comm"
+    138       INCLUDE "IOUNIT.comm"
+    146       INCLUDE "PHYS2.comm"
+    167       INCLUDE "OPTIONS.comm"
+    171       INCLUDE "MAPOT.comm"
+    184       INCLUDE "CTLBLK.comm"
+    185 C
+    186 C******************************************************************************
+    187 C     START READCNTRL HERE.
+    188 C     
+    203       IFHR = NTSD/TSPH + 0.5
+    204       WRITE(STDOUT,*)'READCNTRL2:  POSTING FCST HR ',IFHR,' FROM ',
+    205      X     IHRST,'UTC ',IDAT(1),'-',IDAT(2),'-',IDAT(3),' RUN'
+    206 C     
+    207 C     INITIALIZE VARIABLES.
+    208 C        IEOF IS THE END OF FILE FLAG FOR THE CONTROL FILE.
+    209 C        ARRAY IGET IS THE "GET FIELD" FLAG ARRAY.
+    210 C
+    211       IEOF=0
+    212       DO 100 IFLD=1,MXFLD
+    213         IGET(IFLD)=-1
+    214  100  CONTINUE
+    215 C
+    216 C     READ OUTPUT GRID SPECIFICATIONS.
+    217 C
+    218       READ(LCNTRL,1000,ERR=990,END=999) KGTYPE
+    219       READ(LCNTRL,1000,ERR=990,END=999) IMDLTY
+    220       READ(LCNTRL,1030,ERR=990,END=999) DATSET
+
+Page 3           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    221       READ(LCNTRL,1030,ERR=990,END=999) OUTYPE
+    222       READ(LCNTRL,1030,ERR=990,END=999) NUFILE
+    223       READ(LCNTRL,1030,ERR=990,END=999) PROJ
+    224       READ(LCNTRL,1010,ERR=990,END=999) NORTH
+    225       READ(LCNTRL,1000,ERR=990,END=999) IGOUT
+    226       READ(LCNTRL,1000,ERR=990,END=999) JGOUT
+    227       READ(LCNTRL,1020,ERR=990,END=999) POLEI
+    228       READ(LCNTRL,1020,ERR=990,END=999) POLEJ
+    229       READ(LCNTRL,1020,ERR=990,END=999) ALATVT
+    230       READ(LCNTRL,1020,ERR=990,END=999) ALONVT
+    231       READ(LCNTRL,1020,ERR=990,END=999) XMESHL
+    232       READ(LCNTRL,1030,ERR=990,END=999) READLL
+    233       READ(LCNTRL,1030,ERR=990,END=999) READCO
+    234  1000 FORMAT(T28,I5)
+    235  1010 FORMAT(T28,L1)
+    236  1020 FORMAT(T28,F11.6)
+    237  1030 FORMAT(T28,A6)
+    238 C     
+    239 C     IF THE GRID TYPE (KGTYPE) IS NEITHER 0 NOR 99999 THEN THE
+    240 C     ONLY ALLOWED PROJECTIONS FOR THE OUTPUT GRID ARE POLAR 
+    241 C     STEREOGRAPHIC (POLA), LATITUDE-LONGITUDE (LOLA), AND LAMBERT
+    242 C     (TANGENT) CONFORMAL (LMBC).  IF THE REQUESTED PROJECTION 
+    243 C     DOES NOT SATISFY THESE CONDITIONS, TELL THE USER AND ASSUME
+    244 C     OUTPUT ON THE STAGGERED E-GRID.
+    245 C     
+    246       IF ( (KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    247      1      .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    248      1      .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196) ) THEN
+    249          IF (INDEX(PROJ,'POLA').NE.0) THEN
+    250             WRITE(STDOUT,*)'READCNTRL2:  POLAR STEREOGRAPHIC ',
+    251      X           'PROJECTION REQUESTED.  PROJ=',PROJ
+    252          ELSEIF (INDEX(PROJ,'LOLA').NE.0) THEN
+    253             WRITE(STDOUT,*)'READCNTRL2:  LATITUDE-LONGITUDE ',
+    254      X           'PROJECTION REQUESTED.  PROJ=',PROJ
+    255          ELSEIF (INDEX(PROJ,'LMBC').NE.0) THEN
+    256             WRITE(STDOUT,*)'READCNTRL2:  LAMBERT (TANGENT) CONFORMAL ',
+    257      X           'PROJECTION REQUESTED.  PROJ=',PROJ
+    258          ELSE
+    259             WRITE(STDOUT,*)
+    260      X           'READCNTRL2:  PROJ=',PROJ,' IS NOT AVAILABLE.'
+    261             WRITE(STDOUT,*)
+    262      X           '             USING STAGGERED E-GRID AS DEFAULT'
+    263 C
+    264 CMEB  NEED TO KNOW WHICH VERSION OF THE MODEL IS RUNNING AT THIS POINT
+    265 C
+    266             KGTYPE = 90
+    267             PROJ   = 'ETA'
+    268          ENDIF
+    269       ENDIF
+    270 C     
+    271 C     00HR LFM LOOK-ALIKE FIELDS GO ON GRIDS 026 AND 005.
+    272 C     THE WAY THE CODE IS STRUCTURED WE MUST PROCESS GRIDS
+    273 C     026 AND 005 SEPARATELY.  TO UNIQUELY IDENTIFY THAT
+    274 C     THE USER ONLY WANTS THE 00HR LFM FIELDS ON GRID 005
+    275 C     DATSET MUST BE SET TO "ETA_AN".  IF THE CURRENT POST
+    276 C     TIME IS NOT 00, SKIP OUTPUT ON GRID 005.
+    277 C     
+
+Page 4           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    278       IF ((KGTYPE.EQ.005).AND.(INDEX(DATSET,'ETA_AN').NE.0)) THEN
+    279          IFHR = NTSD/TSPH+0.50
+    280          IF (IFHR.NE.0) GOTO 999
+    281       ENDIF
+    282 C     
+    283 C     SET FLAG FOR TYPE OF OUTPUT.
+    284 C     
+    285       IOUTYP=0
+    286       IF (INDEX(OUTYPE,'NO'    ).NE.0) IOUTYP=1
+    287       IF (INDEX(OUTYPE,'GRIBIT').NE.0) IOUTYP=3
+    288       IF (INDEX(OUTYPE,'GRIBRK').NE.0) IOUTYP=5
+    289       IF (IOUTYP.EQ.0) THEN
+    290          WRITE(STDOUT,*)'OUTPUT TYPE ',
+    291      X        OUTYPE,'NOT SUPPORTED.'
+    292          IOUTYP=1
+    293          WRITE(STDOUT,*)'USING MACHINE BINARY AS DEFAULT.  ',
+    294      X        'IOUTYP=',IOUTYP
+    295       ENDIF
+    296 C     
+    297 C     IF NEW OUTPUT FILE IS SPECIFIED
+    298 C       1.  CLOSE THE PREVIOUS OUTPUT FILE UNIT,
+    299 C       2.  SET FLAG TO OPEN NEW OUTPUT FILE
+    300 C
+    301       RITEHD = .FALSE.
+    302       RITE2  = .FALSE.
+    303       IF (INDEX(NUFILE,'YES').NE.0) THEN
+    304          CLOSE(LUNOUT)
+    305          CLOSE(LUNOUT+1)
+    306          CLOSE(LUNOUT+2)
+    307          WRITE(STDOUT,*)' READCNTRL2:  JUST CLOSED UNITS ',LUNOUT,
+    308      X        LUNOUT+1,LUNOUT+2
+    309          RITEHD = .TRUE.
+    310          RITE2  = .TRUE.
+    311          WRITE(STDOUT,*)
+    312      X        ' READCNTRL2:  NEXT UNIT(S) OPENED WILL BE ',LUNOUT,
+    313      X        LUNOUT+1,LUNOUT+2
+    314       ENDIF
+    315 C     
+    316 C     INCREMENT UNIT NUMBERS FOR WEIGHTS AND LATLON GRID.
+    317 C     SET FLAG TO WRITE HEADER TO LEAD OFF OUTPUT FILE.
+    318       IF (INDEX(READCO,'NO').EQ.0) THEN
+    319          LUNCO  = LUNCO + 1
+    320          REWIND(LUNCO)
+    321       ENDIF
+    322       IF (INDEX(READLL,'NO').EQ.0) THEN
+    323          LUNLL  = LUNLL + 1
+    324          REWIND(LUNLL)
+    325       ENDIF
+    326 C     
+    327 C     LOAD E-GRID AND OUTPUT GRID COMMON BLOCKS.
+    328       CALL TRNSEG
+    329       IF ( (KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    330      1      .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    331      1      .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196) ) CALL TRNSGD
+    332 C     
+    333 C     IF THE USER WANTS TO READ IN PRECOMPUTED WEIGHTS, DO SO.
+    334 C     
+
+Page 5           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    335       IF(INDEX(READCO,'NO').EQ.0)THEN
+    336         WRITE(STDOUT,*)'READ PRECOMPUTED WEIGHTS'
+    337         READ(LUNCO,ERR=992) ((GDLAT(I,J),I=1,IGOUT),J=1,JGOUT)
+    338         READ(LUNCO,ERR=992) ((GDLON(I,J),I=1,IGOUT),J=1,JGOUT)
+    339         READ(LUNCO,ERR=992) ((GDTLAT(I,J),I=1,IGOUT),J=1,JGOUT)
+    340         READ(LUNCO,ERR=992) ((GDTLON(I,J),I=1,IGOUT),J=1,JGOUT)
+    341         READ(LUNCO,ERR=992) ((HTLAT(I,J),I=1,IM),J=1,JM)
+    342         READ(LUNCO,ERR=992) ((HTLON(I,J),I=1,IM),J=1,JM)
+    343         READ(LUNCO,ERR=992) ((IEGRDK(I,J),I=1,IM),J=1,JM)
+    344         READ(LUNCO,ERR=992) ((JEGRDK(I,J),I=1,IM),J=1,JM)
+    345         READ(LUNCO,ERR=992) ((VTLAT(I,J),I=1,IM),J=1,JM)
+    346         READ(LUNCO,ERR=992) ((VTLON(I,J),I=1,IM),J=1,JM)
+    347         READ(LUNCO,ERR=992) ((FVTLON(I,J),I=1,IMT),J=1,JMT)
+    348         READ(LUNCO,ERR=992) ((EVLAT(I,J),I=1,IMT),J=1,JMT)
+    349         READ(LUNCO,ERR=992) ((EVLON(I,J),I=1,IMT),J=1,JMT)
+    350         READ(LUNCO,ERR=992) ((EGRDI(I,J),I=1,IGOUT),J=1,JGOUT)
+    351         READ(LUNCO,ERR=992) ((EGRDJ(I,J),I=1,IGOUT),J=1,JGOUT)
+    352         READ(LUNCO,ERR=992) ((IEGRD(I,J),I=1,IGOUT),J=1,JGOUT)
+    353         READ(LUNCO,ERR=992) ((JEGRD(I,J),I=1,IGOUT),J=1,JGOUT)
+    354         READ(LUNCO,ERR=992) ((IWGT(I,J),I=1,IGOUT),J=1,JGOUT)
+    355         READ(LUNCO,ERR=992) ((WIJ(I,J),I=1,IGOUT),J=1,JGOUT)
+    356         READ(LUNCO,ERR=992) ((WIPJ(I,J),I=1,IGOUT),J=1,JGOUT)
+    357         READ(LUNCO,ERR=992) ((WIJP(I,J),I=1,IGOUT),J=1,JGOUT)
+    358         READ(LUNCO,ERR=992) ((WIPJP(I,J),I=1,IGOUT),J=1,JGOUT)
+    359 C     
+    360 C     OTHERWISE, WE MUST COMPUTE THE WEIGHTS AS WE RUN THE
+    361 C     PROGRAM.  CHECK TO SEE IF A USER DEFINED (LAT,LON)
+    362 C     GRID EXITS.  IF SO, READ IT.  IF NOT, USE THE GRID
+    363 C     SPECIFICATIONS TO GENERATE (LAT,LON) FOR THE OUTPUT
+    364 C     GRID.  IN EITHER CASE, TRANSFORM GEODETIC (LAT,LON)
+    365 C     OF THE OUTPUT GRID TO THE ETA REFERENCE FRAME.
+    366 C     
+    367       ELSE
+    368 C     
+    369 C        SET UP E-GRID (LAT,LON) ARRAYS.
+    370          WRITE(STDOUT,*)'SET UP E-GRID (LAT,LON) ARRAYS'
+    371          CALL E2TLL(HTLAT,HTLON,VTLAT,VTLON)
+    372          CALL FILLH(VTLON,FVTLON,IMT,JMT)
+    373 C     
+    374 C        READ IN USER (LAT,LON) GRID IF ONE EXISTS.
+    375          IF (INDEX(READLL,'NO').EQ.0) THEN
+    376             WRITE(STDOUT,*)'READ USER OUTPUT GRID (LAT,LON)'
+    377             READ(LUNLL,ERR=994) ((GDLAT(I,J),I=1,IGOUT),J=1,JGOUT)
+    378             READ(LUNLL,ERR=994) ((GDLON(I,J),I=1,IGOUT),J=1,JGOUT)
+    379 C           READ(LUNLL,1050,ERR=994) (((GDLAT(I,J),GDLON(I,J)),
+    380 C    X           I=1,IGOUT),J=1,JGOUT)
+    381 C1050       FORMAT(3(2(F11.6,1X),1X))
+    382 C     
+    383 C        OTHERWISE GENERATE OUTPUT GRID (LAT,LON)
+    384 C        WE DON'T NEED THE WEIGHTS IF OUTPUT GRID
+    385 C        IS A FILLED E-GRID (KGTYPE=0).  HOWEVER,
+    386 C        THE USER MAY REQUEST FILLED E-GRID (LAT,
+    387 C        LON), SO COMPUTE THESE FIELDS.
+    388 C
+    389          ELSE
+    390             IF ( (KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    391      1            .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+
+Page 6           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    392      1            .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196) ) THEN
+    393                WRITE(STDOUT,*)'GENERATE OUTPUT GRID (LAT,LON)'
+    394                CALL GENLL(GDLAT,GDLON)
+    395             ELSE
+    396                WRITE(STDOUT,*)'COMPUTE E-GRID GEO-(LAT,LON)'
+    397                DO J=1,JM
+    398                DO I=1,IM
+    399                  EGRID1(I,J) = GLAT(I,J)*RTD
+    400                  EGRID2(I,J) = GLON(I,J)*RTD
+    401                ENDDO
+    402                ENDDO
+    403                IF (MOD(KGTYPE,2).EQ.1.AND.KGTYPE.NE.99) THEN
+    404                   IGOUT = IMT
+    405                   JGOUT = JMT
+    406                   CALL FILLV(EGRID1,GDLAT,IFLAG,IMT,JMT)
+    407                   CALL FILLV(EGRID2,GDLON,IFLAG,IMT,JMT)
+    408                ELSE
+    409                   DO J=1,JM
+    410                   DO I=1,IM
+    411                     GDLAT(I,J)=EGRID1(I,J)
+    412                     GDLON(I,J)=EGRID2(I,J)
+    413                   ENDDO
+    414                   ENDDO
+    415                ENDIF
+    416             ENDIF
+    417          ENDIF
+    418 C     
+    419 C        COMPUTE INTERPOLATION WEIGHTS.  WE DON'T NEED TO
+    420 C        DO THIS FOR KGTYPE=0.  HOWEVER, WE DO NEED GEODETIC
+    421 C        (LAT,LON) FOR FILLED E-EGRID IF KGTYPE=0
+    422 C
+    423          IF ( (KGTYPE.LT.90).OR.(KGTYPE.GT.97
+    424      1         .AND.KGTYPE.NE.99.AND.KGTYPE.NE.190.AND.KGTYPE.NE.192
+    425      1         .AND.KGTYPE.NE.194.AND.KGTYPE.NE.196) ) THEN
+    426             CALL GD2TLL(GDLAT,GDLON,GDTLAT,GDTLON,IGOUT,JGOUT)
+    427             CALL GD2EG(IGOUT,JGOUT)
+    428             CALL GD2EGK(IGOUT,JGOUT)
+    429             CALL GENBIL(FVTLON,IGOUT,JGOUT)
+    430             CALL GENEUV(EVLAT,EVLON)
+    431          ENDIF
+    432       ENDIF
+    433 C     
+    434 C     ECHO GRID SPECIFICATIONS TO STDOUT.
+    435 C
+    436       WRITE(STDOUT,*)'READCNTRL:  OUTPUT GRID SPECIFICATIONS AND SETUP'
+    437       WRITE(STDOUT,*)' KGTYPE       :  ',KGTYPE
+    438       WRITE(STDOUT,*)' IGOUT,JGOUT  :  ',IGOUT,JGOUT
+    439       WRITE(STDOUT,*)' DATSET,OUTYPE:  ',DATSET,' ',OUTYPE
+    440       WRITE(STDOUT,*)' NUFILE,RITEHD:  ',NUFILE,RITEHD,' ',RITE2
+    441       WRITE(STDOUT,*)' READLL,READCO:  ',READLL,' ',READCO
+    442       WRITE(STDOUT,*)' IOUTYP       :  ',IOUTYP
+    443       WRITE(STDOUT,*)' LUNCO,LL,OUT :  ',LUNCO,LUNLL,LUNOUT
+    444 C     
+    445 C     ALL THE GRID STUFF IS DONE.  NOW READ WHICH FIELDS ON 
+    446 C     WHICH LEVELS TO INTERPOLATE TO THE OUTPUT GRID.  THE
+    447 C     CHARACTER STRING "DONE" MARKS THE END OF THE OUTPUT
+    448 C     FIELD SPECIFICATIONS.
+
+Page 7           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    449 C
+    450       IFLD = 0
+    451  10   CONTINUE
+    452          READ(LCNTRL,1060,ERR=996) LINE
+    453          IF (INDEX(LINE,'DONE').NE.0) GOTO 40
+    454          IF (INDEX(LINE,'SCAL=').EQ.0)   GOTO 10
+    455          IFLD        = IFLD+1
+    456          FIELD(IFLD) = LINE(3:22)
+    457          CHAR2       = LINE(64:65)
+    458          CALL CHR2INT(CHAR2,2,ISMSTG(IFLD))
+    459          CHAR2       = LINE(67:68)
+    460          CALL CHR2INT(CHAR2,2,ISMFUL(IFLD))
+    461          CHAR2       = LINE(70:71)
+    462          CALL CHR2INT(CHAR2,2,ISMOUT(IFLD))
+    463          READ(LINE,1061) DEC(IFLD)
+    464          READ(LCNTRL,1090,ERR=996) (LVLS(L,IFLD),L=1,MXLVL)
+    465  1060    FORMAT(A80)
+    466  1061    FORMAT(50X,F4.1)
+    467  1070    FORMAT(A4)
+    468  1080    FORMAT(A2)
+    469  1090    FORMAT(T5,12(5I1,1X))
+    470 C     
+    471 C        SEE IF WE WANT THIS FIELD.  THE SUM OF THE LEVELS
+    472 C        INDICATORS MUST BE GREATER THAN ZERO IF WE WANT 
+    473 C        THIS FIELD.
+    474 C     
+    475          ISUM = 0
+    476          DO 15 L = 1,MXLVL
+    477             ISUM = ISUM + LVLS(L,IFLD)
+    478  15      CONTINUE
+    479          IF (ISUM.LT.1) THEN
+    480             IFLD = IFLD - 1
+    481             GOTO 10
+    482          ENDIF
+    483 C     
+    484 C        SEE IF REQUESTED FIELD IS AVAILABLE.  IF NOT, 
+    485 C        WRITE MESSAGE TO STDOUT AND DECREMENT FIELD 
+    486 C        COUNTER BY ONE.  THEN READ NEXT REQUESTED FIELD.
+    487 C     
+    488          DO 20 IAVBL = 1,MXFLD
+    489             IF (INDEX(FIELD(IFLD),AVBL(IAVBL)).NE.0) GOTO 30
+    490  20      CONTINUE
+    491          WRITE(STDOUT,*)'FIELD ',FIELD(IFLD),' NOT AVAILABLE'
+    492          IFLD = IFLD-1
+    493          GOTO 10
+    494 C     
+    495 C        IF FIELD IS AVAILABLE, TURN THE GET SWITCH ON.
+    496 C     
+    497  30      CONTINUE
+    498          IGET(IAVBL) = IFLD
+    499          IDENT(IFLD) = IAVBL
+    500          GOTO 10
+    501 C     
+    502 C     ALL DONE READING REQUESTED FIELDS FOR CURRENT OUTPUT GRID.
+    503 C     SET NFLD TO TOTAL NUMBER OF REQUESTED OUTPUT FIELDS THAT 
+    504 C     ARE AVAILABLE.
+    505 C
+
+Page 8           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    506  40   CONTINUE
+    507       NFLD = IFLD
+    508 C     
+    509 C     ECHO OUTPUT FIELDS/LEVELS TO STDOUT.
+    510 C
+    511       WRITE(STDOUT,*)'BELOW ARE FIELD/LEVEL/SMOOTHING ',
+    512      X     'SPECIFICATIONS.'
+    513       DO 50 IFLD = 1,NFLD
+    514          WRITE(STDOUT,2060) FIELD(IFLD),IQ(IDENT(IFLD)),
+    515      X        IS(IDENT(IFLD)),ISMSTG(IFLD),ISMFUL(IFLD),ISMOUT(IFLD)
+    516          WRITE(STDOUT,2070) (LVLS(L,IFLD),L=1,MXLVL)
+    517  2060    FORMAT('(',A20,') Q=(',I4,'), S=(',I4,
+    518      X        '), SMTH=(',I2,1X,I2,1X,I2,')')
+    519  2070    FORMAT('L=(',12(5I1,1X),')')
+    520  50   CONTINUE
+    521 C     
+    522 C     WE HAVE AN OUTPUT GRID AND THE FIELDS TO GENERATE ON IT.
+    523 C     SKIP OVER THE FOLLOWING EOF MESSAGE TO EXIT THIS ROUTINE.
+    524 C     
+    525       GOTO 60
+    526 C     
+    527 C     WE REACH THIS BLOCK ONLY IF THERE IS AN ERROR WHILE READING
+    528 C     IN THE CONTROL FILE.  PRINT AN ERROR MESSAGE TO STANDARD
+    529 C     OUT AND CARRY ON.
+    530 C     
+    531  990  CONTINUE
+    532       WRITE(STDOUT,*)' READCNTRL2:  ERROR READING CNTRL GRID INFO'
+    533       WRITE(STDOUT,*)' BELOW IS CNTRL GRID INFO'
+    534       WRITE(STDOUT,*)'  KGTYPE,DATSET:  ',KGTYPE,' ',DATSET
+    535       WRITE(STDOUT,*)'  OUTYPE,NUFILE:  ',OUTYPE,' ',NUFILE
+    536       WRITE(STDOUT,*)'  PROJ         :  ',PROJ
+    537       WRITE(STDOUT,*)'  NORTH        :  ',NORTH
+    538       WRITE(STDOUT,*)'  IGOUT,JGOUT  :  ',IGOUT,JGOUT
+    539       WRITE(STDOUT,*)'  POLEI,POLEJ  :  ',POLEI,POLEJ
+    540       WRITE(STDOUT,*)'  ALATVT,ALONVT:  ',ALATVT,ALONVT
+    541       WRITE(STDOUT,*)'  XMESHL       :  ',XMESHL
+    542       WRITE(STDOUT,*)'  READLL,READCO:  ',READLL,READCO
+    543       GOTO 999
+    544  992  CONTINUE
+    545       WRITE(STDOUT,*)' READCNTRL2:  ERROR READING INTERP WEIGHTS'
+    546       GOTO 999
+    547  994  CONTINUE
+    548       WRITE(STDOUT,*)' READCNTRL2:  ERROR READING LATLON GRID'
+    549       GOTO 999
+    550  996  CONTINUE
+    551       WRITE(STDOUT,*)' READCNTRL2:  ERROR READING CNTRL FLD/LVL INFO'
+    552 C     
+    553 C     WE REACH THIS BLOCK ONLY WHEN AN EOF HAS BEEN READ FROM 
+    554 C     THE CONTROL FILE.  THAT MEANS WE'VE PROCESSED ALL GRIDS
+    555 C     AND ALL FIELDS.  WE'RE DONE.  SET THE EOF FLAG TO ANY
+    556 C     NONZERO INTEGER, SAY ONE.  CLOSE THE UNIT CONNECTED TO
+    557 C     THE LAST OUTPUT FILE AND EXIT THE ROUTINE.
+    558 C     
+    559  999  CONTINUE
+    560       IEOF=1
+    561       CLOSE(LUNOUT)
+    562       CLOSE(LUNOUT+1)
+
+Page 9           Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+    563       CLOSE(LUNOUT+2)
+    564       WRITE(STDOUT,*)' READCNTRL2:  ALL GRIDS PROCESSED.  ',
+    565      X     'CLOSED ',LUNOUT
+    566 C     
+    567 C     END OF ROUTINE.
+    568 C     
+    569  60   CONTINUE
+    570       RETURN
+    571       END
+
+
+ENTRY POINTS
+
+  Name                   
+                         
+ readcntrl2_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  451                                                            454,481,493,500                   
+ 100                        Label  214                                                            212                               
+ 1000                       Label  234                                                            218,219,225,226                   
+ 1010                       Label  235                                                            224                               
+ 1020                       Label  236                                                            227,228,229,230,231               
+ 1030                       Label  237                                                            220,221,222,223,232,233           
+ 1060                       Label  465                                                            452                               
+ 1061                       Label  466                                                            463                               
+ 1070                       Label  467                                                                                              
+ 1080                       Label  468                                                                                              
+ 1090                       Label  469                                                            464                               
+ 15                         Label  478                                                            476                               
+ 20                         Label  490                                                            488                               
+ 2060                       Label  517                                                            514                               
+ 2070                       Label  519                                                            516                               
+ 30                         Label  497                                                            489                               
+ 40                         Label  506                                                            453                               
+ 50                         Label  520                                                            513                               
+ 60                         Label  569                                                            525                               
+ 990                        Label  531                                                            218,219,220,221,222,223,224,225,22
+                                                                                                  6,227,228,229,230,231,232,233     
+ 992                        Label  544                                                            337,338,339,340,341,342,343,344,34
+                                                                                                  5,346,347,348,349,350,351,352,353,
+                                                                                                  354,355,356,357,358               
+ 994                        Label  547                                                            377,378                           
+ 996                        Label  550                                                            452,464                           
+ 999                        Label  559                                                            218,219,220,221,222,223,224,225,22
+                                                                                                  6,227,228,229,230,231,232,233,280,
+                                                                                                  543,546,549                       
+ CHAR2                      Local  99       CHAR            2           scalar                    457,458,459,460,461,462           
+ CHAR4                      Local  100      CHAR            4           scalar                                                      
+ CHR2INT                    Subr   458                                                            458,460,462                       
+ CTLBLK                     Common 190                                  96       SAVE                                               
+ DTR                        Param  94       R(4)            4           scalar                    94                                
+ E2TLL                      Subr   371                                                            371                               
+
+Page 10          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EGRID1                     Local  103      R(4)            4     2     91719                     399,406,411                       
+ EGRID2                     Local  103      R(4)            4     2     91719                     400,407,412                       
+ FILLH                      Subr   372                                                            372                               
+ FILLV                      Subr   406                                                            406,407                           
+ GD2EG                      Subr   427                                                            427                               
+ GD2EGK                     Subr   428                                                            428                               
+ GD2TLL                     Subr   426                                                            426                               
+ GENBIL                     Subr   429                                                            429                               
+ GENEUV                     Subr   430                                                            430                               
+ GENLL                      Subr   394                                                            394                               
+ I                          Local  337      I(4)            4           scalar                    337,338,339,340,341,342,343,344,34
+                                                                                                  5,346,347,348,349,350,351,352,353,
+                                                                                                  354,355,356,357,358,377,378,398,39
+                                                                                                  9,400,410,411,412                 
+ IAVBL                      Local  488      I(4)            4           scalar                    488,489,498,499                   
+ IDIM1                      Param  83       I(4)            4           scalar                                                      
+ IDIM2                      Param  83       I(4)            4           scalar                                                      
+ IEOF                       Dummy  1        I(4)            4           scalar   ARG,INOUT        211,560                           
+ IFHR                       Local  203      I(4)            4           scalar                    203,204,279,280                   
+ IFLD                       Local  212      I(4)            4           scalar                    212,213,450,455,456,458,460,462,46
+                                                                                                  3,464,477,480,489,491,492,498,499,
+                                                                                                  507,513,514,515,516               
+ IGSTL                      Param  78       I(4)            4           scalar                    83                                
+ IGSTR                      Param  78       I(4)            4           scalar                    83                                
+ IM                         Param  72       I(4)            4           scalar                    80,83,90,93,103,129,130,131,157,15
+                                                                                                  8,159,160,161,162,341,342,343,344,
+                                                                                                  345,346,398,410                   
+ IMJM                       Param  93       I(4)            4           scalar                                                      
+ IMT                        Param  93       I(4)            4           scalar                    131,132,347,348,349,372,404,406,40
+                                                                                                  7                                 
+ IMX                        Param  90       I(4)            4           scalar                    127,128,133,134,135,136           
+ INDEX                      Func   249                                  scalar                    249,252,255,278,286,287,288,303,31
+                                                                                                  8,322,335,375,453,454,489         
+ INPES                      Param  75       I(4)            4           scalar                    80,83                             
+ IOUNIT                     Common 142                                  20       SAVE                                               
+ ISUM                       Local  475      I(4)            4           scalar                    475,477,479                       
+ ITAIL                      Param  80       I(4)            4           scalar                                                      
+ ITB                        Param  92       I(4)            4           scalar                    154,164                           
+ ITBQ                       Param  92       I(4)            4           scalar                    155,164                           
+ J                          Local  337      I(4)            4           scalar                    337,338,339,340,341,342,343,344,34
+                                                                                                  5,346,347,348,349,350,351,352,353,
+                                                                                                  354,355,356,357,358,377,378,397,39
+                                                                                                  9,400,409,411,412                 
+ JDIM1                      Param  84       I(4)            4           scalar                                                      
+ JDIM2                      Param  84       I(4)            4           scalar                                                      
+ JGSTL                      Param  79       I(4)            4           scalar                    84                                
+ JGSTR                      Param  79       I(4)            4           scalar                    84                                
+ JM                         Param  72       I(4)            4           scalar                    81,84,90,93,103,129,130,131,157,15
+                                                                                                  8,159,160,161,162,341,342,343,344,
+                                                                                                  345,346,397,409                   
+ JMT                        Param  93       I(4)            4           scalar                    131,132,347,348,349,372,405,406,40
+                                                                                                  7                                 
+ JMX                        Param  90       I(4)            4           scalar                    127,128,133,134,135,136           
+ JNPES                      Param  75       I(4)            4           scalar                    81,84                             
+ JTAIL                      Param  81       I(4)            4           scalar                                                      
+
+Page 11          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ JTB                        Param  92       I(4)            4           scalar                    154,164                           
+ JTBQ                       Param  92       I(4)            4           scalar                    164                               
+ L                          Local  464      I(4)            4           scalar                    464,476,477,516                   
+ LINE                       Local  102      CHAR            80          scalar                    452,453,454,456,457,459,461,463   
+ LLGRDS                     Common 126                                  9167256  SAVE                                               
+ LM                         Param  72       I(4)            4           scalar                    90,93,153,179                     
+ LP1                        Param  93       I(4)            4           scalar                    153,179                           
+ LSM                        Param  72       I(4)            4           scalar                    178                               
+ MAPOT                      Common 173                                  1448     SAVE                                               
+ MOD                        Func   403                                  scalar                    403                               
+ MXFLD                      Param  90       I(4)            4           scalar                    113,119,120,121,122,212,488       
+ MXLVL                      Param  90       I(4)            4           scalar                    121,464,476,516                   
+ NUFILE                     Local  101      CHAR            6           scalar                    222,303,440,535                   
+ OPTIONS                    Common 169                                  24       SAVE                                               
+ OUTGRD                     Common 108                                  50       SAVE                                               
+ OUTYPE                     Local  101      CHAR            6           scalar                    221,286,287,288,291,439,535       
+ PARALLEL                   Common 197                                  8240                                                        
+ PHYS                       Common 148                                  7690036  SAVE                                               
+ READCNTRL2                 Subr   1                                                                                                
+ READCO                     Local  101      CHAR            6           scalar                    233,318,335,441,542               
+ READLL                     Local  101      CHAR            6           scalar                    232,322,375,441,542               
+ RQSTFLD                    Common 118                                  64130                                                       
+ RTD                        Param  94       R(4)            4           scalar                    399,400                           
+ TRNSEG                     Subr   328                                                            328                               
+ TRNSGD                     Subr   331                                                            331                               
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     808      1     45       COM                                                 
+ AETA2                      R(4)            4     264      1     45       COM                                                 
+ ALATVT                     R(4)            4     0              scalar   COM              229,540                            
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ ALONVT                     R(4)            4     4              scalar   COM              230,540                            
+ ALSL                       R(4)            4     472      1     39       COM                                                 
+ AVBL                       CHAR            20    59130    1     250      COM              489                                
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CMLD                       R(4)            4     292            scalar   COM                                                 
+ CPHI0                      R(4)            4     1420           scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     2204780  2     91719    COM                                                 
+ CZMEAN                     R(4)            4     6607292  2     91719    COM                                                 
+ DATSET                     CHAR            6     54124          scalar   COM              220,278,439,534                    
+ DEC                        R(4)            4     1016     1     250      COM              463                                
+ DETA                       R(4)            4     628      1     45       COM                                                 
+ DETA2                      R(4)            4     84       1     45       COM                                                 
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DISLP                      R(4)            4     308            scalar   COM                                                 
+ DLMD                       R(4)            4     284            scalar   COM                                                 
+ DP30                       R(4)            4     296            scalar   COM                                                 
+ DPHD                       R(4)            4     288            scalar   COM                                                 
+
+Page 12          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ EGRDI                      R(4)            4     5865372  2     91719    COM              350                                
+ EGRDJ                      R(4)            4     6232248  2     91719    COM              351                                
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+ ERLAM0                     R(4)            4     1416           scalar   COM                                                 
+ ETA                        R(4)            4     988      1     46       COM                                                 
+ EVLAT                      R(4)            4     4400964  2     183051   COM              348,430                            
+ EVLON                      R(4)            4     5133168  2     183051   COM              349,430                            
+ FIELD                      CHAR            20    54130    1     250      COM              456,489,491,514                    
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FVTLON                     R(4)            4     3668760  2     183051   COM              347,372,429                        
+ GDLAT                      R(4)            4     0        2     91719    COM              337,377,394,406,411,426            
+ GDLON                      R(4)            4     366876   2     91719    COM              338,378,394,407,412,426            
+ GDTLAT                     R(4)            4     733752   2     91719    COM              339,426                            
+ GDTLON                     R(4)            4     1100628  2     91719    COM              340,426                            
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GI2                        R(4)            4     36             scalar   COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM              399                                
+ GLON                       R(4)            4     1837904  2     91719    COM              400                                
+ HBOT                       R(4)            4     3672284  2     91719    COM                                                 
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTLAT                      R(4)            4     1467504  2     91719    COM              341,371                            
+ HTLON                      R(4)            4     1834380  2     91719    COM              342,371                            
+ HTOP                       R(4)            4     3305408  2     91719    COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ ID                         I(4)            4     54016    1     25       COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM              205                                
+ IDENT                      I(4)            4     52016    1     250      COM              499,514,515                        
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IEGRD                      I(4)            4     6599124  2     91719    COM              352                                
+ IEGRDK                     I(4)            4     2201256  2     91719    COM              343                                
+ IFILV                      I(4)            4     53016    1     250      COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM              406,407                            
+ IGET                       I(4)            4     16       1     250      COM              213,498                            
+ IGOUT                      I(4)            4     20             scalar   COM              225,337,338,339,340,350,351,352,35 
+                                                                                           3,354,355,356,357,358,377,378,404, 
+                                                                                           426,427,428,429,438,538            
+ IHRST                      I(4)            4     20             scalar   COM              205                                
+ IMDLTY                     I(4)            4     28             scalar   COM              219                                
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IOUTYP                     I(4)            4     4              scalar   COM              285,286,287,288,289,292,294,442    
+ IQ                         I(4)            4     2016     1     250      COM              514                                
+ IS                         I(4)            4     3016     1     250      COM              515                                
+ ISHDE                      I(4)            4     12       1     61       COM                                                 
+ ISMFUL                     I(4)            4     5016     1     250      COM              460,515                            
+ ISMOUT                     I(4)            4     6016     1     250      COM              462,515                            
+
+Page 13          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ ISMSTG                     I(4)            4     4016     1     250      COM              458,515                            
+ IUNIT                      I(4)            4     1440           scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IWGT                       I(4)            4     7332876  2     91719    COM              354                                
+ IXM                        I(4)            4     4              scalar   COM                                                 
+ IYM                        I(4)            4     8              scalar   COM                                                 
+ JEGRD                      I(4)            4     6966000  2     91719    COM              353                                
+ JEGRDK                     I(4)            4     2568132  2     91719    COM              344                                
+ JEND                       I(4)            4     12             scalar   COM                                                 
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JGOUT                      I(4)            4     24             scalar   COM              226,337,338,339,340,350,351,352,35 
+                                                                                           3,354,355,356,357,358,377,378,405, 
+                                                                                           426,427,428,429,438,538            
+ JSTA                       I(4)            4     8              scalar   COM                                                 
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KGTYPE                     I(4)            4     0              scalar   COM              218,246,247,248,266,278,329,330,33 
+                                                                                           1,390,391,392,403,423,424,425,437, 
+                                                                                           534                                
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ KUNIT                      I(4)            4     1428           scalar   COM                                                 
+ LCNTRL                     I(4)            4     4              scalar   COM              218,219,220,221,222,223,224,225,22 
+                                                                                           6,227,228,229,230,231,232,233,452, 
+                                                                                           464                                
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LSL                        I(4)            4     0              scalar   COM                                                 
+ LUNCO                      I(4)            4     8              scalar   COM              319,320,337,338,339,340,341,342,34 
+                                                                                           3,344,345,346,347,348,349,350,351, 
+                                                                                           352,353,354,355,356,357,358,443    
+ LUNIT                      I(4)            4     1432           scalar   COM                                                 
+ LUNLL                      I(4)            4     12             scalar   COM              323,324,377,378,443                
+ LUNOUT                     I(4)            4     16             scalar   COM              304,305,306,307,308,312,313,443,56 
+                                                                                           1,562,563,565                      
+ LVLS                       I(4)            4     7016     2     11250    COM              464,477,516                        
+ ME                         I(4)            4     4              scalar   COM                                                 
+ MUNIT                      I(4)            4     1436           scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NFLD                       I(4)            4     12             scalar   COM              507,513                            
+ NORTH                      L(4)            4     40             scalar   COM              224,537                            
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM              203,279                            
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+
+Page 14          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ NUNIT                      I(4)            4     1444           scalar   COM                                                 
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ POLEI                      R(4)            4     8              scalar   COM              227,539                            
+ POLEJ                      R(4)            4     12             scalar   COM              228,539                            
+ PROJ                       CHAR            6     44             scalar   COM              223,249,251,252,254,255,257,260,26 
+                                                                                           7,536                              
+ PT                         R(4)            4     260            scalar   COM                                                 
+ PT2                        R(4)            4     4              scalar   COM                                                 
+ PTBL                       R(4)            4     7341044  2     10184    COM                                                 
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ R                          R(4)            4     256            scalar   COM                                                 
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RE                         R(4)            4     32             scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RITE2                      L(4)            4     54120          scalar   COM              302,310,440                        
+ RITEHD                     L(4)            4     54116          scalar   COM              301,309,440                        
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SBD                        R(4)            4     272            scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM                                                 
+ SPHI0                      R(4)            4     1424           scalar   COM                                                 
+ SPL                        R(4)            4     316      1     39       COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+ STDOUT                     I(4)            4     0              scalar   COM              204,250,253,256,259,261,290,293,30 
+                                                                                           7,311,336,370,376,393,396,436,437, 
+                                                                                           438,439,440,441,442,443,491,511,51 
+                                                                                           4,516,532,533,534,535,536,537,538, 
+                                                                                           539,540,541,542,545,548,551,564    
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SVALUE                     R(4)            4     8              scalar   COM                                                 
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ TLM0D                      R(4)            4     276            scalar   COM                                                 
+ TPH0D                      R(4)            4     280            scalar   COM                                                 
+ TSHDE                      R(4)            4     1172     1     61       COM                                                 
+
+Page 15          Source Listing                  READCNTRL2
+2022-02-15 16:39 Symbol Table                    READCNTRL2.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ TSPH                       R(4)            4     264            scalar   COM              203,279                            
+ TTBL                       R(4)            4     7381780  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     7422516  2     66880    COM                                                 
+ VTLAT                      R(4)            4     2935008  2     91719    COM              345,371                            
+ VTLON                      R(4)            4     3301884  2     91719    COM              346,371,372                        
+ WBD                        R(4)            4     268            scalar   COM                                                 
+ WIJ                        R(4)            4     7699752  2     91719    COM              355                                
+ WIJP                       R(4)            4     8433504  2     91719    COM              357                                
+ WIPJ                       R(4)            4     8066628  2     91719    COM              356                                
+ WIPJP                      R(4)            4     8800380  2     91719    COM              358                                
+ X1P                        R(4)            4     300            scalar   COM                                                 
+ XMESHL                     R(4)            4     16             scalar   COM              231,541                            
+ Y1P                        R(4)            4     304            scalar   COM                                                 
+ Z0SLP                      R(4)            4     312            scalar   COM                                                 
+
+Page 16          Source Listing                  READCNTRL2
+2022-02-15 16:39 Subprograms/Common Blocks       READCNTRL2.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 190                                  96       SAVE                                               
+ IOUNIT                     Common 142                                  20       SAVE                                               
+ LLGRDS                     Common 126                                  9167256  SAVE                                               
+ MAPOT                      Common 173                                  1448     SAVE                                               
+ OPTIONS                    Common 169                                  24       SAVE                                               
+ OUTGRD                     Common 108                                  50       SAVE                                               
+ PARALLEL                   Common 197                                  8240                                                        
+ PHYS                       Common 148                                  7690036  SAVE                                               
+ READCNTRL2                 Subr   1                                                                                                
+ RQSTFLD                    Common 118                                  64130                                                       
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+
+Page 17          Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+
+Page 18          Source Listing                  READCNTRL2
+2022-02-15 16:39                                 READCNTRL2.f
+
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : READCNTRL2.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

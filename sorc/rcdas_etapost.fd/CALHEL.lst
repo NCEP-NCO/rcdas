@@ -1,0 +1,840 @@
+Page 1           Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+      1       SUBROUTINE CALHEL(UST,VST,HELI)
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C                .      .    .     
+      4 C SUBPROGRAM:    CALHEL       COMPUTES STORM RELATIVE HELICITY
+      5 C   PRGRMMR: BALDWIN         ORG: W/NP2      DATE: 94-08-22       
+      6 C     
+      7 C ABSTRACT:
+      8 C     THIS ROUTINE COMPUTES ESTIMATED STORM MOTION AND
+      9 C     STORM-RELATIVE ENVIRONMENTAL HELICITY.  
+     10 C     (DAVIES-JONES ET AL 1990) THE ALGORITHM PROCEEDS AS 
+     11 C     FOLLOWS.
+     12 C     
+     13 C     THE STORM MOTION COMPUTATION NO LONGER EMPLOYS THE DAVIES AND
+     14 C   JOHNS (1993) METHOD WHICH DEFINED STORM MOTION AS 30 DEGREES TO
+     15 C   THE RIGHT OF THE 0-6 KM MEAN WIND AT 75% OF THE SPEED FOR MEAN
+     16 C   SPEEDS LESS THAN 15 M/S AND 20 DEGREES TO THE RIGHT FOR SPEEDS
+     17 C   GREATER THAN 15 M/S.   INSTEAD, WE NOW USE THE DYNAMIC METHOD
+     18 C   (BUNKERS ET AL. 1998) WHICH HAS BEEN FOUND TO DO BETTER IN
+     19 C   CASES WITH 'NON-CLASSIC' HODOGRAPHS (SUCH AS NORTHWEST-FLOW
+     20 C   EVENTS) AND DO AS WELL OR BETTER THAN THE OLD METHOD IN MORE
+     21 C   CLASSIC SITUATIONS. 
+     22 C     
+     23 C PROGRAM HISTORY LOG:
+     24 C   94-08-22  MICHAEL BALDWIN
+     25 C   97-03-27  MICHAEL BALDWIN - SPEED UP CODE
+     26 C   98-06-15  T BLACK         - CONVERSION FROM 1-D TO 2-D
+     27 C   00-01-10  G MANIKIN - CHANGED CODE TO USE BUNKERS METHOD
+     28 C                           AS DESCRIBED ABOVE 
+     29 C     
+     30 C USAGE:    CALHEL(UST,VST,HELI)
+     31 C   INPUT ARGUMENT LIST:
+     32 C     NONE     
+     33 C
+     34 C   OUTPUT ARGUMENT LIST: 
+     35 C     UST      - ESTIMATED U COMPONENT (M/S) OF STORM MOTION.
+     36 C     VST      - ESTIMATED V COMPONENT (M/S) OF STORM MOTION.
+     37 C     HELI     - STORM-RELATIVE HELICITY (M**2/S**2)
+     38 C     
+     39 C   OUTPUT FILES:
+     40 C     NONE
+     41 C     
+     42 C   SUBPROGRAMS CALLED:
+     43 C     UTILITIES:
+     44 C
+     45 C     LIBRARY:
+     46 C       COMMON   - VRBLS
+     47 C                  LOOPS
+     48 C                  PHYS 
+     49 C                  EXTRA
+     50 C                  MASKS
+     51 C                  OPTIONS
+     52 C                  INDX
+     53 C     
+     54 C   ATTRIBUTES:
+     55 C     LANGUAGE: FORTRAN 90
+     56 C     MACHINE : CRAY C-90
+     57 C$$$  
+
+Page 2           Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+     58 C     
+     59 C     
+     60 C     INCLUDE PARAMETERS.
+     61       INCLUDE "parmeta"
+     79       INCLUDE "params"
+    121       INCLUDE "parm.tbl"
+    123       PARAMETER (PI=3.141592654)
+    124       PARAMETER (P150=15000.0,P300=30000.0,S15=15.0)
+    125       PARAMETER (D3000=3000.0,PI6=0.5235987756,PI9=0.34906585)
+    126       PARAMETER (D5500=5500.0,D6000=6000.0,D7000=7000.0)
+    127       PARAMETER (D500=500.0)
+    128 C     
+    129 C     DECLARE VARIABLES
+    130 C     
+    131       REAL UST(IM,JM),VST(IM,JM),HELI(IM,JM),HTSFC(IM,JM)
+    132       REAL UST6(IM,JM),VST6(IM,JM),ETOT6(IM,JM)
+    133       REAL UST5(IM,JM),VST5(IM,JM),ETOT5(IM,JM)
+    134       REAL UST1(IM,JM),VST1(IM,JM),ETOT1(IM,JM)
+    135 C     
+    136 C     INCLUDE COMMON BLOCKS.
+    137       INCLUDE "VRBLS.comm"
+    144       INCLUDE "LOOPS.comm"
+    152       INCLUDE "EXTRA.comm"
+    164       INCLUDE "MASKS.comm"
+    172       INCLUDE "PHYS.comm"
+    193       INCLUDE "OPTIONS.comm"
+    197       INCLUDE "INDX.comm"
+    203       INCLUDE "CTLBLK.comm"
+    204 C     
+    205 C****************************************************************
+    206 C     START CALHEL HERE
+    207 C     
+    208 C     INITIALIZE ARRAYS.
+    209 C     
+    224 !$omp  parallel do
+    225       DO J=JSTA,JEND
+    226       DO I=1,IM
+    227          UST(I,J)    = 0.0
+    228          VST(I,J)    = 0.0
+    229          HELI(I,J)   = 0.0
+    230          UST1(I,J)   = 0.0
+    231          VST1(I,J)   = 0.0
+    232          ETOT1(I,J)  = 0.0
+    233          UST5(I,J)   = 0.0
+    234          VST5(I,J)   = 0.0
+    235          ETOT5(I,J)  = 0.0
+    236          UST6(I,J)   = 0.0
+    237          VST6(I,J)   = 0.0
+    238          ETOT6(I,J)  = 0.0
+    239 
+    240       ENDDO
+    241       ENDDO
+    242 C
+    243 C     LOOP OVER HORIZONTAL GRID.
+    244 C
+    245       CALL EXCH(RES)
+    246       CALL EXCH(PD)
+
+Page 3           Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+    247       DO L = 1,LP1
+    248         CALL EXCH(ZINT(1,1,L))
+    249       END DO
+    250 C 
+    251 !$omp  parallel do
+    252 !$omp& private(htsfc,ie,iw,pdslvk,pkl,psfck)
+    253       DO L = 1,LM
+    254         DO J=JSTA_M,JEND_M
+    255         DO I=2,IM-1
+    256           IE=I+IVE(J)
+    257           IW=I+IVW(J)
+    258           PDSLVK=(PD(IW,J)*RES(IW,J)+PD(IE,J)*RES(IE,J)+
+    259      1           PD(I,J+1)*RES(I,J+1)+PD(I,J-1)*RES(I,J-1))*0.25
+    260           PSFCK=AETA(LMV(I,J))*PDSLVK+PT
+    261           HTSFC(I,J)=0.25*(ZINT(IW,J,LMV(I,J)+1)+ZINT(IE,J,LMV(I,J)+1)+
+    262      1                ZINT(I,J+1,LMV(I,J)+1)+ZINT(I,J-1,LMV(I,J)+1))
+    263 C     
+    264 C     COMPUTE MASS WEIGHTED MEAN WIND IN THE 0-6 KM LAYER, THE
+    265 C  0-0.5 KM LAYER, AND THE 5.5-6 KM LAYER 
+    266 C
+    267           Z2=0.125*(ZINT(IW,J,L)+ZINT(IW,J,L+1)+
+    268      1            ZINT(IE,J,L)+ZINT(IE,J,L+1)+
+    269      1            ZINT(I,J+1,L)+ZINT(I,J+1,L+1)+
+    270      1            ZINT(I,J-1,L)+ZINT(I,J-1,L+1))
+    271           DZABV=Z2-HTSFC(I,J)
+    272   
+    273           IF (DZABV.LE.D6000 .AND. L.LE.LMV(I,J)) THEN
+    274                UST6(I,J) = UST6(I,J) + U(I,J,L) * DETA(L)
+    275                VST6(I,J) = VST6(I,J) + V(I,J,L) * DETA(L)
+    276                ETOT6(I,J) = ETOT6(I,J) + DETA(L)
+    277           ENDIF
+    278 
+    279           IF (DZABV.LT.D6000 .AND. DZABV.GE.D5500 .AND.
+    280      &       L.LE.LMV(I,J)) THEN
+    281                UST5(I,J) = UST5(I,J) + U(I,J,L) * DETA(L)
+    282                VST5(I,J) = VST5(I,J) + V(I,J,L) * DETA(L)
+    283                ETOT5(I,J) = ETOT5(I,J) + DETA(L)
+    284           ENDIF         
+    285 
+    286           IF (DZABV.LT.D500 .AND. L.LE.LMV(I,J)) THEN
+    287                UST1(I,J) = UST1(I,J) + U(I,J,L) * DETA(L)
+    288                VST1(I,J) = VST1(I,J) + V(I,J,L) * DETA(L)
+    289                ETOT1(I,J) = ETOT1(I,J) + DETA(L)
+    290           ENDIF
+    291 
+    292         ENDDO
+    293         ENDDO
+    294       ENDDO
+    295 
+    296 C CASE WHERE THERE IS NO LEVEL WITH HEIGHT BETWEEN 5500 AND 6000
+    297       DO J=JSTA_M,JEND_M
+    298       DO I=2,IM-1
+    299         IF (ETOT5(I,J) .EQ. 0) THEN
+    300          DO L=LM,1,-1
+    301           IE=I+IVE(J)
+    302           IW=I+IVW(J)
+    303           Z2=0.125*(ZINT(IW,J,L)+ZINT(IW,J,L+1)+
+
+Page 4           Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+    304      1            ZINT(IE,J,L)+ZINT(IE,J,L+1)+
+    305      1            ZINT(I,J+1,L)+ZINT(I,J+1,L+1)+
+    306      1            ZINT(I,J-1,L)+ZINT(I,J-1,L+1))
+    307           DZABV=Z2-HTSFC(I,J)
+    308           IF (DZABV.LT.D7000 .AND. DZABV.GE.D6000) THEN 
+    309                UST5(I,J) = U(I,J,L) * DETA(L)
+    310                VST5(I,J) = V(I,J,L) * DETA(L)
+    311                ETOT5(I,J) = DETA(L)
+    312                GOTO 30
+    313           ENDIF
+    314          ENDDO
+    315         ENDIF
+    316  30   CONTINUE
+    317       ENDDO
+    318       ENDDO
+    319 
+    320 
+    321 !$omp  parallel do
+    322 !$omp& private(umean6,vmean6,umean5,vmean5,umean1,vmean1,ushr,vshr)
+    323       DO J=JSTA_M,JEND_M
+    324       DO I=2,IM-1
+    325          IF (ETOT6(I,J).GT.0.0 .AND. ETOT1(I,J) .GT. 0.0
+    326      1      .AND. ETOT5(I,J) .GT. 0.0) THEN
+    327            UMEAN6 = UST6(I,J) / ETOT6(I,J)
+    328            VMEAN6 = VST6(I,J) / ETOT6(I,J)
+    329            UMEAN5 = UST5(I,J) / ETOT5(I,J)
+    330            VMEAN5 = VST5(I,J) / ETOT5(I,J)
+    331            UMEAN1 = UST1(I,J) / ETOT1(I,J)
+    332            VMEAN1 = VST1(I,J) / ETOT1(I,J)
+    333 
+    334 C
+    335 C      COMPUTE STORM MOTION VECTOR
+    336 C      IT IS DEFINED AS 7.5 M/S TO THE RIGHT OF THE 0-6 KM MEAN
+    337 C      WIND CONSTRAINED ALONG A LINE WHICH IS BOTH PERPENDICULAR
+    338 C      TO THE 0-6 KM MEAN VERTICAL WIND SHEAR VECTOR AND PASSES
+    339 C      THROUGH THE 0-6 KM MEAN WIND.  THE WIND SHEAR VECTOR IS
+    340 C      SET AS THE DIFFERENCE BETWEEN THE 5.5-6 KM WIND (THE HEAD
+    341 C      OF THE SHEAR VECTOR) AND THE 0-0.5 KM WIND (THE TAIL).
+    342 C      THIS IS FOR THE RIGHT-MOVING CASE;  WE IGNORE THE LEFT MOVER.
+    343 
+    344            USHR = UMEAN5 - UMEAN1
+    345            VSHR = VMEAN5 - VMEAN1
+    346 
+    347            UST(I,J) = UMEAN6 + (7.5*VSHR/SQRT(USHR*USHR+VSHR*VSHR))
+    348            VST(I,J) = VMEAN6 - (7.5*USHR/SQRT(USHR*USHR+VSHR*VSHR))
+    349          ELSE
+    350            UST(I,J) = 0.0
+    351            VST(I,J) = 0.0
+    352         ENDIF
+    353       ENDDO
+    354       ENDDO
+    355 C
+    356 C
+    357 C       COMPUTE STORM-RELATIVE HELICITY
+    358 C
+    359 !$omp  parallel do
+    360 !$omp& private(du1,du2,dv1,dv2,dz,dz1,dz2,dzabv,ie,iw,z1,z2,z3)
+
+Page 5           Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+    361       DO L = 2,LM-1
+    362         DO J=JSTA_M,JEND_M
+    363         DO I=2,IM-1
+    364           IW=I+IVW(J)
+    365           IE=I+IVE(J)
+    366           Z2=0.125*(ZINT(IW,J,L)+ZINT(IW,J,L+1)+
+    367      &              ZINT(IE,J,L)+ZINT(IE,J,L+1)+
+    368      &              ZINT(I,J+1,L)+ZINT(I,J+1,L+1)+
+    369      &              ZINT(I,J-1,L)+ZINT(I,J-1,L+1))
+    370           DZABV=Z2-HTSFC(I,J)
+    371 C
+    372           IF(DZABV.LT.D3000.AND.L.LE.LMV(I,J))THEN
+    373             Z1=0.125*(ZINT(IW,J,L+1)+ZINT(IW,J,L+2)+
+    374      &                ZINT(IE,J,L+1)+ZINT(IE,J,L+2)+
+    375      &                ZINT(I,J+1,L+1)+ZINT(I,J+1,L+2)+
+    376      &                ZINT(I,J-1,L+1)+ZINT(I,J-1,L+2))
+    377             Z3=0.125*(ZINT(IW,J,L-1)+ZINT(IW,J,L)+
+    378      &                ZINT(IE,J,L-1)+ZINT(IE,J,L)+
+    379      &                ZINT(I,J+1,L-1)+ZINT(I,J+1,L)+
+    380      &                ZINT(I,J-1,L-1)+ZINT(I,J-1,L))
+    381             DZ=0.25*((ZINT(IW,J,L)+ZINT(IE,J,L)+
+    382      &                ZINT(I,J-1,L)+ZINT(I,J+1,L))-
+    383      &               (ZINT(IW,J,L+1)+ZINT(IE,J,L+1)+
+    384      &                ZINT(I,J-1,L+1)+ZINT(I,J+1,L+1)))
+    385             DZ1=Z1-Z2
+    386             DZ2=Z2-Z3
+    387             DU1=U(I,J,L+1)-U(I,J,L)
+    388             DU2=U(I,J,L)-U(I,J,L-1)
+    389             DV1=V(I,J,L+1)-V(I,J,L)
+    390             DV2=V(I,J,L)-V(I,J,L-1)
+    391             HELI(I,J)=((V(I,J,L)-VST(I,J))*
+    392      1                (DZ2*(DU1/DZ1)+DZ1*(DU2/DZ2))
+    393      2                -(U(I,J,L)-UST(I,J))*
+    394      3                (DZ2*(DV1/DZ1)+DZ1*(DV2/DZ2)))
+    395      4                *DZ/(DZ1+DZ2)+HELI(I,J) 
+    396            ENDIF
+    397         ENDDO
+    398         ENDDO
+    399       ENDDO
+    400 C
+    401 C     END OF ROUTINE.
+    402 C
+    403       RETURN
+    404       END
+
+Page 6           Source Listing                  CALHEL
+2022-02-15 16:38 Entry Points                    CALHEL.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ calhel_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 30                         Label  316                                                            312                               
+ A2                         Param  120      R(4)            4           scalar                                                      
+ A3                         Param  120      R(4)            4           scalar                                                      
+ A4                         Param  120      R(4)            4           scalar                                                      
+ AD05                       Param  112      R(4)            4           scalar                                                      
+ BETA                       Param  116      R(4)            4           scalar                    116                               
+ BTG                        Param  116      R(4)            4           scalar                                                      
+ CALHEL                     Subr   1                                                                                                
+ CAPA                       Param  107      R(4)            4           scalar                    114                               
+ CFT0                       Param  112      R(4)            4           scalar                                                      
+ CM1                        Param  102      R(4)            4           scalar                                                      
+ CM2                        Param  102      R(4)            4           scalar                                                      
+ CM3                        Param  102      R(4)            4           scalar                                                      
+ CP                         Param  113      R(4)            4           scalar                    115,119                           
+ CPDR                       Param  115      R(4)            4           scalar                                                      
+ CTLBLK                     Common 211                                  96       SAVE                                               
+ D00                        Param  104      R(4)            4           scalar                                                      
+ D001                       Param  104      R(4)            4           scalar                                                      
+ D0065                      Param  108      R(4)            4           scalar                                                      
+ D01                        Param  104      R(4)            4           scalar                                                      
+ D05                        Param  108      R(4)            4           scalar                    112                               
+ D1                         Param  104      R(4)            4           scalar                                                      
+ D115                       Param  108      R(4)            4           scalar                                                      
+ D125                       Param  106      R(4)            4           scalar                                                      
+ D25                        Param  106      R(4)            4           scalar                                                      
+ D3000                      Param  125      R(4)            4           scalar                    372                               
+ D50                        Param  104      R(4)            4           scalar                                                      
+ D500                       Param  127      R(4)            4           scalar                    286                               
+ D5500                      Param  126      R(4)            4           scalar                    279                               
+ D6000                      Param  126      R(4)            4           scalar                    273,279,308                       
+ D608                       Param  108      R(4)            4           scalar                                                      
+ D7000                      Param  126      R(4)            4           scalar                    308                               
+ DP10M                      Param  114      R(4)            4           scalar                                                      
+ DTR                        Param  113      R(4)            4           scalar                    113                               
+ DU1                        Local  387      R(4)            4           scalar                    387,392                           
+ DU2                        Local  388      R(4)            4           scalar                    388,392                           
+ DV1                        Local  389      R(4)            4           scalar                    389,394                           
+ DV2                        Local  390      R(4)            4           scalar                    390,394                           
+ DZ                         Local  381      R(4)            4           scalar                    381,395                           
+ DZ1                        Local  385      R(4)            4           scalar                    385,392,394,395                   
+ DZ2                        Local  386      R(4)            4           scalar                    386,392,394,395                   
+ DZABV                      Local  271      R(4)            4           scalar                    271,273,279,286,307,308,370,372   
+ ELDR                       Param  115      R(4)            4           scalar                                                      
+ ELWV                       Param  115      R(4)            4           scalar                    115                               
+
+Page 7           Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EPS                        Param  118      R(4)            4           scalar                    118                               
+ EPSQ2                      Param  119      R(4)            4           scalar                                                      
+ ERAD                       Param  113      R(4)            4           scalar                                                      
+ ETOT1                      Local  134      R(4)            4     2     91719                     232,289,325,331,332               
+ ETOT5                      Local  133      R(4)            4     2     91719                     235,283,299,311,326,329,330       
+ ETOT6                      Local  132      R(4)            4     2     91719                     238,276,325,327,328               
+ EXCH                       Subr   245                                                            245,246,248                       
+ EXTRA                      Common 155                                  71506268 SAVE                                               
+ FMD                        Param  118      R(4)            4           scalar                    118                               
+ FMW                        Param  118      R(4)            4           scalar                    118                               
+ G                          Param  111      R(4)            4           scalar                    111                               
+ GI                         Param  111      R(4)            4           scalar                    115                               
+ H1                         Param  105      R(4)            4           scalar                    112                               
+ H100                       Param  106      R(4)            4           scalar                                                      
+ H1000                      Param  106      R(4)            4           scalar                                                      
+ H10000                     Param  107      R(4)            4           scalar                                                      
+ H10E5                      Param  107      R(4)            4           scalar                                                      
+ H1E2                       Param  109      R(4)            4           scalar                                                      
+ H1E4                       Param  109      R(4)            4           scalar                                                      
+ H1M12                      Param  105      R(4)            4           scalar                                                      
+ H1M2                       Param  109      R(4)            4           scalar                                                      
+ H1M5                       Param  106      R(4)            4           scalar                                                      
+ H2                         Param  105      R(4)            4           scalar                                                      
+ H4                         Param  105      R(4)            4           scalar                                                      
+ H999                       Param  104      R(4)            4           scalar                                                      
+ H99999                     Param  105      R(4)            4           scalar                                                      
+ HELI                       Dummy  1        R(4)            4     2     91719    ARG,INOUT        229,391,395                       
+ HTSFC                      Local  131      R(4)            4     2     91719                     261,271,307,370                   
+ I                          Local  226      I(4)            4           scalar                    226,227,228,229,230,231,232,233,23
+                                                                                                  4,235,236,237,238,255,256,257,259,
+                                                                                                  260,261,262,269,270,271,273,274,27
+                                                                                                  5,276,280,281,282,283,286,287,288,
+                                                                                                  289,298,299,301,302,305,306,307,30
+                                                                                                  9,310,311,324,325,326,327,328,329,
+                                                                                                  330,331,332,347,348,350,351,363,36
+                                                                                                  4,365,368,369,370,372,375,376,379,
+                                                                                                  380,382,384,387,388,389,390,391,39
+                                                                                                  3,395                             
+ IDIM1                      Param  75       I(4)            4           scalar                                                      
+ IDIM2                      Param  75       I(4)            4           scalar                                                      
+ IE                         Local  256      I(4)            4           scalar                    256,258,261,268,301,304,365,367,37
+                                                                                                  4,378,381,383                     
+ IGSTL                      Param  70       I(4)            4           scalar                    75                                
+ IGSTR                      Param  70       I(4)            4           scalar                    75                                
+ IM                         Param  64       I(4)            4           scalar                    72,75,83,85,86,88,131,132,133,134,
+                                                                                                  140,142,149,154,156,157,158,159,16
+                                                                                                  0,161,167,169,183,184,185,186,187,
+                                                                                                  188,226,255,298,324,363           
+ IM1                        Param  85       I(4)            4           scalar                                                      
+ IMJM                       Param  154      I(4)            4           scalar                    157                               
+ IMT                        Param  83       I(4)            4           scalar                                                      
+ INDX                       Common 199                                  6192     SAVE                                               
+ INPES                      Param  67       I(4)            4           scalar                    72,75                             
+ ITAIL                      Param  72       I(4)            4           scalar                                                      
+ ITB                        Param  122      I(4)            4           scalar                    180,190                           
+
+Page 8           Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ ITBQ                       Param  122      I(4)            4           scalar                    181,190                           
+ IW                         Local  257      I(4)            4           scalar                    257,258,261,267,302,303,364,366,37
+                                                                                                  3,377,381,383                     
+ J                          Local  225      I(4)            4           scalar                    225,227,228,229,230,231,232,233,23
+                                                                                                  4,235,236,237,238,254,256,257,258,
+                                                                                                  259,260,261,262,267,268,269,270,27
+                                                                                                  1,273,274,275,276,280,281,282,283,
+                                                                                                  286,287,288,289,297,299,301,302,30
+                                                                                                  3,304,305,306,307,309,310,311,323,
+                                                                                                  325,326,327,328,329,330,331,332,34
+                                                                                                  7,348,350,351,362,364,365,366,367,
+                                                                                                  368,369,370,372,373,374,375,376,37
+                                                                                                  7,378,379,380,381,382,383,384,387,
+                                                                                                  388,389,390,391,393,395           
+ JAM                        Param  85       I(4)            4           scalar                    147                               
+ JDIM1                      Param  76       I(4)            4           scalar                                                      
+ JDIM2                      Param  76       I(4)            4           scalar                                                      
+ JGSTL                      Param  71       I(4)            4           scalar                    76                                
+ JGSTR                      Param  71       I(4)            4           scalar                    76                                
+ JM                         Param  64       I(4)            4           scalar                    73,76,83,85,88,131,132,133,134,140
+                                                                                                  ,142,149,154,156,157,158,159,160,1
+                                                                                                  61,167,169,183,184,185,186,187,188
+                                                                                                  ,200                              
+ JM2                        Param  85       I(4)            4           scalar                                                      
+ JMT                        Param  83       I(4)            4           scalar                                                      
+ JNPES                      Param  67       I(4)            4           scalar                    73,76                             
+ JTAIL                      Param  73       I(4)            4           scalar                                                      
+ JTB                        Param  122      I(4)            4           scalar                    180,190                           
+ JTBQ                       Param  122      I(4)            4           scalar                    190                               
+ KSAV                       Param  93       I(4)            4           scalar                                                      
+ KSFI                       Param  92       I(4)            4           scalar                                                      
+ KSLI                       Param  93       I(4)            4           scalar                                                      
+ KSLP                       Param  93       I(4)            4           scalar                                                      
+ KSLPD                      Param  92       I(4)            4           scalar                                                      
+ KSMUD                      Param  92       I(4)            4           scalar                                                      
+ KSRH                       Param  93       I(4)            4           scalar                                                      
+ KSSLP                      Param  92       I(4)            4           scalar                                                      
+ KST                        Param  92       I(4)            4           scalar                                                      
+ KSUV                       Param  93       I(4)            4           scalar                                                      
+ L                          Local  247      I(4)            4           scalar                    247,248,253,267,268,269,270,273,27
+                                                                                                  4,275,276,280,281,282,283,286,287,
+                                                                                                  288,289,300,303,304,305,306,309,31
+                                                                                                  0,311,361,366,367,368,369,372,373,
+                                                                                                  374,375,376,377,378,379,380,381,38
+                                                                                                  2,383,384,387,388,389,390,391,393 
+ LB                         Param  88       I(4)            4           scalar                                                      
+ LHEAT                      Param  119      I(4)            4           scalar                    119                               
+ LHTOCP                     Param  119      I(4)            4           scalar                                                      
+ LM                         Param  64       I(4)            4           scalar                    87,98,142,157,169,179,253,300,361 
+ LM1                        Param  87       I(4)            4           scalar                                                      
+ LOOPS                      Common 146                                  748952   SAVE                                               
+ LP1                        Param  87       I(4)            4           scalar                    156,179,247                       
+ LSM                        Param  64       I(4)            4           scalar                                                      
+ MASKS                      Common 166                                  34853220 SAVE                                               
+ NINC                       Param  86       I(4)            4           scalar                                                      
+
+Page 9           Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ NSTAT                      Param  98       I(4)            4           scalar                                                      
+ NSUMD                      Param  94       I(4)            4           scalar                                                      
+ NWORD                      Param  98       I(4)            4           scalar                    98                                
+ NWORD3                     Param  98       I(4)            4           scalar                                                      
+ NWORD6                     Param  98       I(4)            4           scalar                                                      
+ ONEPS                      Param  118      R(4)            4           scalar                                                      
+ OPTIONS                    Common 195                                  24       SAVE                                               
+ OVERRC                     Param  112      R(4)            4           scalar                    112                               
+ P1000                      Param  114      R(4)            4           scalar                                                      
+ P150                       Param  124      R(4)            4           scalar                                                      
+ P300                       Param  124      R(4)            4           scalar                                                      
+ PARALLEL                   Common 218                                  8240                                                        
+ PDSLVK                     Local  258      R(4)            4           scalar                    258,260                           
+ PHYS                       Common 174                                  7690036  SAVE                                               
+ PI                         Param  123      R(4)            4           scalar                                                      
+ PI6                        Param  125      R(4)            4           scalar                                                      
+ PI9                        Param  125      R(4)            4           scalar                                                      
+ PQ0                        Param  120      R(4)            4           scalar                                                      
+ PSFCK                      Local  260      R(4)            4           scalar                    260                               
+ RCAPA                      Param  114      R(4)            4           scalar                                                      
+ RD                         Param  111      R(4)            4           scalar                    111,115,119                       
+ RDOCP                      Param  119      R(4)            4           scalar                                                      
+ RG                         Param  115      R(4)            4           scalar                                                      
+ ROG                        Param  111      R(4)            4           scalar                                                      
+ RTD                        Param  113      R(4)            4           scalar                                                      
+ S15                        Param  124      R(4)            4           scalar                                                      
+ SMTHA                      Param  94       R(4)            4           scalar                                                      
+ SMTHB                      Param  94       R(4)            4           scalar                                                      
+ SQRT                       Func   347                                  scalar                    347,348                           
+ TFRZ                       Param  118      R(4)            4           scalar                                                      
+ UMEAN1                     Local  331      R(4)            4           scalar                    331,344                           
+ UMEAN5                     Local  329      R(4)            4           scalar                    329,344                           
+ UMEAN6                     Local  327      R(4)            4           scalar                    327,347                           
+ USHR                       Local  344      R(4)            4           scalar                    344,347,348                       
+ UST                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        227,347,350,393                   
+ UST1                       Local  134      R(4)            4     2     91719                     230,287,331                       
+ UST5                       Local  133      R(4)            4     2     91719                     233,281,309,329                   
+ UST6                       Local  132      R(4)            4     2     91719                     236,274,327                       
+ VMEAN1                     Local  332      R(4)            4           scalar                    332,345                           
+ VMEAN5                     Local  330      R(4)            4           scalar                    330,345                           
+ VMEAN6                     Local  328      R(4)            4           scalar                    328,348                           
+ VRBLS                      Common 139                                  67138308                                                    
+ VSHR                       Local  345      R(4)            4           scalar                    345,347,348                       
+ VST                        Dummy  1        R(4)            4     2     91719    ARG,INOUT        228,348,351,391                   
+ VST1                       Local  134      R(4)            4     2     91719                     231,288,332                       
+ VST5                       Local  133      R(4)            4     2     91719                     234,282,310,330                   
+ VST6                       Local  132      R(4)            4     2     91719                     237,275,328                       
+ Z1                         Local  373      R(4)            4           scalar                    373,385                           
+ Z2                         Local  267      R(4)            4           scalar                    267,271,303,307,366,370,385,386   
+ Z3                         Local  377      R(4)            4           scalar                    377,386                           
+
+
+
+Page 10          Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ AETA                       R(4)            4     264      1     45       COM              260                                
+ ALBASE                     R(4)            4     5139788  2     91719    COM                                                 
+ ALBEDO                     R(4)            4     5506664  2     91719    COM                                                 
+ ALPINT                     R(4)            4     16876296 3     4219074  COM                                                 
+ CI                         R(4)            4     40             scalar   COM                                                 
+ CS                         R(4)            4     28             scalar   COM                                                 
+ CZEN                       R(4)            4     2204780  2     91719    COM                                                 
+ CZMEAN                     R(4)            4     6607292  2     91719    COM                                                 
+ DETA                       R(4)            4     84       1     45       COM              274,275,276,281,282,283,287,288,28 
+                                                                                           9,309,310,311                      
+ DFRLG                      R(4)            4     444      1     46       COM                                                 
+ DI                         R(4)            4     44             scalar   COM                                                 
+ DS                         R(4)            4     32             scalar   COM                                                 
+ DT                         R(4)            4     48             scalar   COM                                                 
+ DTD                        R(4)            4     16             scalar   COM                                                 
+ DTQ2                       R(4)            4     8              scalar   COM                                                 
+ ELWDWN                     R(4)            4     2938532  2     91719    COM                                                 
+ EPSR                       R(4)            4     370400   2     91719    COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ FIS                        R(4)            4     733752   2     91719    COM                                                 
+ FSL                        R(4)            4     70405632 2     91719    COM                                                 
+ GFFC                       R(4)            4     4406036  2     91719    COM                                                 
+ GLAT                       R(4)            4     1471028  2     91719    COM                                                 
+ GLON                       R(4)            4     1837904  2     91719    COM                                                 
+ HBM2                       R(4)            4     0        2     91719    COM                                                 
+ HBOT                       R(4)            4     3672284  2     91719    COM                                                 
+ HDAC                       R(4)            4     5873540  2     91719    COM                                                 
+ HDACV                      R(4)            4     6240416  2     91719    COM                                                 
+ HTM                        R(4)            4     1834380  3     4127355  COM                                                 
+ HTOP                       R(4)            4     3305408  2     91719    COM                                                 
+ IBESSL                     I(4)            4     4              scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IFLAG                      I(4)            4     16             scalar   COM                                                 
+ IHE                        I(4)            4     0        1     387      COM                                                 
+ IHHA                       I(4)            4     3040     1     760      COM                                                 
+ IHLA                       I(4)            4     0        1     760      COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IHW                        I(4)            4     1548     1     387      COM                                                 
+ IOFFS                      I(4)            4     12             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ IVE                        I(4)            4     3096     1     387      COM              256,301,365                        
+ IVHA                       I(4)            4     9120     1     760      COM                                                 
+ IVLA                       I(4)            4     6080     1     760      COM                                                 
+ IVW                        I(4)            4     4644     1     387      COM              257,302,364                        
+ JEND                       I(4)            4     12             scalar   COM              225                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM              254,297,323,362                    
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+
+Page 11          Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ JRA                        I(4)            4     12160    1     760      COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              225                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM              254,297,323,362                    
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ KMNT                       I(4)            4     50629068 2     4118670  COM                                                 
+ KMNTM                      I(4)            4     50628888 1     45       COM                                                 
+ KSB                        I(4)            4     8              scalar   COM                                                 
+ KTM                        I(4)            4     0              scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ LMH                        I(4)            4     15200    2     91719    COM                                                 
+ LMV                        I(4)            4     382076   2     91719    COM              260,261,262,273,280,286,372        
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ OLDRD                      R(4)            4     71506260       scalar   COM                                                 
+ PD                         R(4)            4     0        2     91719    COM              246,258,259                        
+ PDSL                       R(4)            4     67837500 2     91719    COM                                                 
+ PDVP1                      R(4)            4     68204376 2     91719    COM                                                 
+ PFSL                       R(4)            4     69305004 2     91719    COM                                                 
+ PINT                       R(4)            4     0        3     4219074  COM                                                 
+ PL                         R(4)            4     48             scalar   COM                                                 
+ PLQ                        R(4)            4     72             scalar   COM                                                 
+ PSLP                       R(4)            4     68571252 2     91719    COM                                                 
+ PT                         R(4)            4     4              scalar   COM              260                                
+ PTBL                       R(4)            4     7341044  2     10184    COM                                                 
+ PTSL                       R(4)            4     68938128 2     91719    COM                                                 
+ Q                          R(4)            4     50628888 3     4127355  COM                                                 
+ QS0                        R(4)            4     628      1     134      COM                                                 
+ QSL                        R(4)            4     70772508 2     91719    COM                                                 
+ RADIN                      R(4)            4     737276   2     91719    COM                                                 
+ RADOT                      R(4)            4     1104152  2     91719    COM                                                 
+ RDP                        R(4)            4     64             scalar   COM                                                 
+ RDPQ                       R(4)            4     76             scalar   COM                                                 
+ RDQ                        R(4)            4     56             scalar   COM                                                 
+ RDTH                       R(4)            4     60             scalar   COM                                                 
+ RDTHE                      R(4)            4     68             scalar   COM                                                 
+ RDTHEQ                     R(4)            4     80             scalar   COM                                                 
+ RES                        R(4)            4     366876   2     91719    COM              245,258,259                        
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RMXSNAL                    R(4)            4     3524     2     91719    COM                                                 
+ ROI                        R(4)            4     36             scalar   COM                                                 
+ ROS                        R(4)            4     24             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+
+Page 12          Source Listing                  CALHEL
+2022-02-15 16:38 Symbol Table                    CALHEL.f
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ SATDEL                     R(4)            4     20             scalar   COM                                                 
+ SICE                       R(4)            4     1467504  2     91719    COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+ SIGT4                      R(4)            4     6974168  2     91719    COM                                                 
+ SLP                        R(4)            4     67103748 2     91719    COM                                                 
+ SM                         R(4)            4     1100628  2     91719    COM                                                 
+ SPVAL                      R(4)            4     0              scalar   COM                                                 
+ SQS                        R(4)            4     1164     1     134      COM                                                 
+ SST                        R(4)            4     4772912  2     91719    COM                                                 
+ STDRD                      R(4)            4     71506264       scalar   COM                                                 
+ STHE                       R(4)            4     2004     1     76       COM                                                 
+ STHEQ                      R(4)            4     2916     1     152      COM                                                 
+ SWNET                      R(4)            4     2571656  2     91719    COM                                                 
+ T                          R(4)            4     34119468 3     4127355  COM                                                 
+ T500                       R(4)            4     67470624 2     91719    COM                                                 
+ TDTD                       R(4)            4     20             scalar   COM                                                 
+ TDTQ2                      R(4)            4     12             scalar   COM                                                 
+ TG                         R(4)            4     4039160  2     91719    COM                                                 
+ THE0                       R(4)            4     1700     1     76       COM                                                 
+ THE0Q                      R(4)            4     2308     1     152      COM                                                 
+ THL                        R(4)            4     52             scalar   COM                                                 
+ TSL                        R(4)            4     69671880 2     91719    COM                                                 
+ TTBL                       R(4)            4     7381780  2     10184    COM                                                 
+ TTBLQ                      R(4)            4     7422516  2     66880    COM                                                 
+ TTV                        R(4)            4     70038756 2     91719    COM                                                 
+ U                          R(4)            4     1100628  3     4127355  COM              274,281,287,309,387,388,393        
+ V                          R(4)            4     17610048 3     4127355  COM              275,282,288,310,389,390,391        
+ VBM2                       R(4)            4     366876   2     91719    COM                                                 
+ VBM3                       R(4)            4     733752   2     91719    COM                                                 
+ VTM                        R(4)            4     18343800 3     4127355  COM                                                 
+ Z1000                      R(4)            4     71139384 2     91719    COM                                                 
+ ZINT                       R(4)            4     33752592 3     4219074  COM              248,261,262,267,268,269,270,303,30 
+                                                                                           4,305,306,366,367,368,369,373,374, 
+                                                                                           375,376,377,378,379,380,381,382,38 
+                                                                                           3,384                              
+
+Page 13          Source Listing                  CALHEL
+2022-02-15 16:38 Subprograms/Common Blocks       CALHEL.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CALHEL                     Subr   1                                                                                                
+ CTLBLK                     Common 211                                  96       SAVE                                               
+ EXTRA                      Common 155                                  71506268 SAVE                                               
+ INDX                       Common 199                                  6192     SAVE                                               
+ LOOPS                      Common 146                                  748952   SAVE                                               
+ MASKS                      Common 166                                  34853220 SAVE                                               
+ OPTIONS                    Common 195                                  24       SAVE                                               
+ PARALLEL                   Common 218                                  8240                                                        
+ PHYS                       Common 174                                  7690036  SAVE                                               
+ VRBLS                      Common 139                                  67138308                                                    
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+
+Page 14          Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+
+Page 15          Source Listing                  CALHEL
+2022-02-15 16:38                                 CALHEL.f
+
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CALHEL.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

@@ -1,0 +1,404 @@
+Page 1           Source Listing                  DEWPOINT
+2022-02-15 16:38                                 DEWPOINT.f
+
+      1       SUBROUTINE DEWPOINT( VP, TD, IM,JM )
+      2 C$$$  SUBPROGRAM DOCUMENTATION BLOCK
+      3 C
+      4 C SUBPROGRAM:    DEWPOINT    COMPUTES DEWPOINTS FROM VAPOR PRESSURE
+      5 C   PRGMMR: J TUCCILLO       ORG: W/NP2       DATE: 90-05-19
+      6 C
+      7 C ABSTRACT: COMPUTES THE DEWPOINTS FOR THE N VALUES
+      8 C           OF VAPOR PRESSURE IN ARRAY VP.
+      9 C   .
+     10 C   .       THE FORMULA
+     11 C   .
+     12 C   .            VP = 0.611 * (X**A) * EXP( (A+B)*(1-X) )
+     13 C   .
+     14 C   IS USED TO GET DEWPOINT TEMPERATURE T, WHERE
+     15 C   .
+     16 C   X = T3/T,                   T3=TRIPLE PT TEMPERATURE,
+     17 C   VP=VAPOR PRESSURE IN CBS,   0.611=VP AT T3,
+     18 C   A=(SPEC. HT. OF WATER-CSUBP OF VAPOR)/GAS CONST OF VAPOR
+     19 C   .                        AND
+     20 C   B=LATENT HEAT AT T3/(GAS CONST OF VAPOR TIMES T3).
+     21 C   .
+     22 C   ON THE FIRST CALL, A TABLE  TDP  IS CONSTRUCTED GIVING
+     23 C   DEWPOINT AS A FUNCTION OF VAPOR PRESSURE.
+     24 C   .
+     25 C   VALUES OF VP LESS THAN THE FIRST TABLE ENTRY
+     26 C   (RVP1 IN THE CODE) WILL BE GIVEN DEWPOINTS FOR
+     27 C   THAT BEGINNING VALUE.  SIMILARLY , VP VALUES THAT
+     28 C   EXCEED THE MAXIMUM TABLE VALUE (RVP2 IN THE CODE)
+     29 C   WILL BE ASSIGNED DEWPOINTS FOR THAT MAXIMUM VALUE.
+     30 C   .
+     31 C   THE VALUES 0.02 AND 8.0 FOR RVP1 AND RVP2 YIELD
+     32 C   DEWPOINTS OF 233.6K AND 314.7K,RESPECTIVELY.
+     33 C   .
+     34 C
+     35 C PROGRAM HISTORY LOG:
+     36 C   90-05-19  J TUCCILLO
+     37 C   93-05-12  R TREADON - EXPANDED TABLE SIZE AND RESET
+     38 C                         RANGE OF PRESSURES COVERED BY
+     39 C                         TABLE.
+     40 C   98-06-12  T BLACK   - CONVERSION FROM 1-D TO 2-D
+     41 C   00-01-04  JIM TUCCILLO - MPI VERSION
+     42 C
+     43 C USAGE:  CALL DEWPOINT( VP, TD, N )
+     44 C   INPUT ARGUMENT LIST:
+     45 C     VP       - ARRAY OF N VAPOR PRESSURES(CENTIBARS)
+     46 C     IM,JM    - DIMENSIONS OF THE INPUT ARRAY VP.
+     47 C
+     48 C   OUTPUT ARGUMENT LIST:
+     49 C     TD       - DEWPOINT IN DEGREES ABSOLUTE
+     50 C
+     51 C   SUBPROGRAMS CALLED:
+     52 C     LIBRARY:
+     53 C
+     54 C ATTRIBUTES:
+     55 C   LANGUAGE: FORTRAN
+     56 C   MACHINE:  CRAY C-90
+     57 C
+
+Page 2           Source Listing                  DEWPOINT
+2022-02-15 16:38                                 DEWPOINT.f
+
+     58 C$$$
+     59        INCLUDE "CTLBLK.comm"
+     60 C
+     61 C          NT IS THE TABLE SIZE
+     76       PARAMETER (NT=2000)
+     77 C...TRANSLATED BY FPP 3.00Z36 11/09/90  14:48:53  
+     78 C...SWITCHES: OPTON=I47,OPTOFF=VAE0
+     79       DIMENSION TDP(NT),VP(IM,JM),TD(IM,JM)
+     80 CX      LOGICAL LFRST
+     81 CX      DATA LFRST / .TRUE. /
+     82 C
+     83 C
+     84 CX      IF ( LFRST ) THEN
+     85 C
+     86 CX      LFRST = .FALSE.
+     87 C          PREPARE THE TABLE (TDP=DEWPT AS FCN OF VAPOR PRESS).
+     88 C          RANGE IN CENTIBARS IS FROM RVP1 THRU RVP2
+     89 coff      RVP1=0.02E0
+     90 coff      RVP2=8.E0
+     91       rvp1=0.0001E0
+     92       rvp2=10.E0
+     93 C          THE TRIPLE POINT
+     94       RT3=273.16E0
+     95 C          VAPOR PRESS AT THE TRIPLE POINT
+     96       RVP3=0.611E0
+     97       RLOG3=LOG(RVP3)
+     98 C          (SPEC HT OF WATER -CSUBP OF VAPOR)/GAS CONST OF VAPOR.
+     99       RA=5.0065E0
+    100 C          LATENT HEAT AT T3/(GAS CONST OF VAPOR * TRIPLE PT TEMP).
+    101       RB=19.83923E0
+    102       RAPB=RA+RB
+    103 C          CRITERION FOR CONVERGENCE OF NEWTON ITERATION
+    104       RTEST=1.E-6
+    105 CMEB  RTEST=1.E-8  !  PROBABLY WON'T CONVERGE WITH 32-BIT AT THIS CRITERION
+    106 C
+    107       RNT=FLOAT(NT)
+    108 C          TABLE INCREMENT IN VAPOR PRESS
+    109       RDVP=(RVP2-RVP1)/(RNT-1.E0)
+    110 C          RGS WILL BE THE GUESSED VALUE OF (T3  /  DEWPOINT)
+    111       RGS=1.E0
+    112       RVP=RVP1-RDVP
+    113 C
+    114       DO 20 NN=1,NT
+    115       RVP=RVP+RDVP
+    116       RLVP=LOG(RVP)-RLOG3-RAPB
+    117 C     ***** ENTER NEWTON ITERATION LOOP
+    118    10 RN=RA*LOG(RGS)-RAPB*RGS-RLVP
+    119 C          THAT WAS VALUE OF FUNCTION
+    120 C          NOW GET ITS DERIVATIVE
+    121       RD=(RA/RGS)-RAPB
+    122 C          THE DESIRED CHANGE IN THE GUESS
+    123       RCH=RN/RD
+    124       IF( ABS(RCH) .LT. RTEST ) GO TO 15
+    125 C          NEED MORE ITERATIONS
+    126       RGS=RGS-RCH
+    127       GO TO 10
+    128 C          *****
+
+Page 3           Source Listing                  DEWPOINT
+2022-02-15 16:38                                 DEWPOINT.f
+
+    129 C          HAVE ACCURATE ENUF VALUE OF RGS=T3/DEWPOINT.
+    130    15 RT=RT3/RGS
+    131       TDP(NN)=RT
+    132 C
+    133    20 CONTINUE
+    134 C      PRINT 25,RVP1,RVP2,TDP(1),TDP(NT)
+    135 C  25  FORMAT(/'0', 'IN SUBROUTINE DEWPOINT, THE DEWPT TABLE ',
+    136 C    1             'HAS RVP1=', 1PE13.6, ', RVP2=', 1PE13.6,
+    137 C    2             ', TDP(1)=', 1PE13.6, ', AND TDP(NT)=',
+    138 C    3             1PE13.6, '.'/)
+    139 C           CONSTANTS FOR USING THE TABLE
+    140       A=1./RDVP
+    141       B=1.-A*RVP1
+    142       DNTM1=FLOAT(NT) -.01
+    143 C
+    144 CX      END IF
+    145 C
+    146 C          *********** ENTER TO USE THE TABLE.  ************
+    147 C
+    148       DO J=JSTA,JEND
+    149       DO I=1,IM
+    150         W1=AMIN1(AMAX1((A*VP(I,J)+B),1.0),DNTM1)
+    151         W2=AINT(W1)
+    152         JNT=INT(W2)
+    153         TD(I,J) = TDP(JNT)+(W1-W2)*(TDP(JNT+1)-TDP(JNT))
+    154       ENDDO
+    155       ENDDO
+    156 C
+    157 C
+    158       RETURN
+    159       END
+
+Page 4           Source Listing                  DEWPOINT
+2022-02-15 16:38 Entry Points                    DEWPOINT.f
+
+
+
+ENTRY POINTS
+
+  Name                 
+                       
+ dewpoint_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ 10                         Label  118                                                            127                               
+ 15                         Label  130                                                            124                               
+ 20                         Label  133                                                            114                               
+ A                          Local  140      R(4)            4           scalar                    140,141,150                       
+ ABS                        Func   124                                  scalar                    124                               
+ AINT                       Func   151                                  scalar                    151                               
+ AMAX1                      Func   150                                  scalar                    150                               
+ AMIN1                      Func   150                                  scalar                    150                               
+ B                          Local  141      R(4)            4           scalar                    141,150                           
+ CTLBLK                     Common 63                                   96       SAVE                                               
+ DEWPOINT                   Subr   1                                                                                                
+ DNTM1                      Local  142      R(4)            4           scalar                    142,150                           
+ FLOAT                      Func   107                                  scalar                    107,142                           
+ I                          Local  149      I(4)            4           scalar                    149,150,153                       
+ IM                         Dummy  1        I(4)            4           scalar   ARG,INOUT        79,149                            
+ INT                        Func   152                                  scalar                    152                               
+ J                          Local  148      I(4)            4           scalar                    148,150,153                       
+ JM                         Dummy  1        I(4)            4           scalar   ARG,INOUT        79                                
+ JNT                        Local  152      I(4)            4           scalar                    152,153                           
+ LOG                        Func   97                                   scalar                    97,116,118                        
+ NN                         Local  114      I(4)            4           scalar                    114,131                           
+ NT                         Param  76       I(4)            4           scalar                    79,107,114,142                    
+ PARALLEL                   Common 70                                   8240                                                        
+ RA                         Local  99       R(4)            4           scalar                    99,102,118,121                    
+ RAPB                       Local  102      R(4)            4           scalar                    102,116,118,121                   
+ RB                         Local  101      R(4)            4           scalar                    101,102                           
+ RCH                        Local  123      R(4)            4           scalar                    123,124,126                       
+ RD                         Local  121      R(4)            4           scalar                    121,123                           
+ RDVP                       Local  109      R(4)            4           scalar                    109,112,115,140                   
+ RGS                        Local  111      R(4)            4           scalar                    111,118,121,126,130               
+ RLOG3                      Local  97       R(4)            4           scalar                    97,116                            
+ RLVP                       Local  116      R(4)            4           scalar                    116,118                           
+ RN                         Local  118      R(4)            4           scalar                    118,123                           
+ RNT                        Local  107      R(4)            4           scalar                    107,109                           
+ RT                         Local  130      R(4)            4           scalar                    130,131                           
+ RT3                        Local  94       R(4)            4           scalar                    94,130                            
+ RTEST                      Local  104      R(4)            4           scalar                    104,124                           
+ RVP                        Local  112      R(4)            4           scalar                    112,115,116                       
+ RVP1                       Local  91       R(4)            4           scalar                    91,109,112,141                    
+ RVP2                       Local  92       R(4)            4           scalar                    92,109                            
+ RVP3                       Local  96       R(4)            4           scalar                    96,97                             
+ TD                         Dummy  1        R(4)            4     2     0        ARG,INOUT        153                               
+ TDP                        Local  79       R(4)            4     1     2000                      131,153                           
+ VP                         Dummy  1        R(4)            4     2     0        ARG,INOUT        150                               
+
+Page 5           Source Listing                  DEWPOINT
+2022-02-15 16:38 Symbol Table                    DEWPOINT.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ W1                         Local  150      R(4)            4           scalar                    150,151,153                       
+ W2                         Local  151      R(4)            4           scalar                    151,152,153                       
+
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              148                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              148                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+
+Page 6           Source Listing                  DEWPOINT
+2022-02-15 16:38 Subprograms/Common Blocks       DEWPOINT.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CTLBLK                     Common 63                                   96       SAVE                                               
+ DEWPOINT                   Subr   1                                                                                                
+ PARALLEL                   Common 70                                   8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 7           Source Listing                  DEWPOINT
+2022-02-15 16:38                                 DEWPOINT.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 8           Source Listing                  DEWPOINT
+2022-02-15 16:38                                 DEWPOINT.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : DEWPOINT.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

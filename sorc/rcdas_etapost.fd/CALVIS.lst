@@ -1,0 +1,533 @@
+Page 1           Source Listing                  CALVIS
+2022-02-15 16:38                                 CALVIS.f
+
+      1 c**********************************************************************c
+      2       SUBROUTINE CALVIS(QV,QC,QR,QI,QS,TT,PP,VIS)
+      3 c
+      4 c   This routine computes horizontal visibility at the
+      5 c   surface or lowest model layer, from qc, qr, qi, and qs.  
+      6 c   qv--water vapor mixing ratio (kg/kg)
+      7 c   qc--cloud water mixing ratio (kg/kg)
+      8 c   qr--rain water mixing ratio  (kg/kg)
+      9 c   qi--cloud ice mixing ratio   (kg/kg)
+     10 c   qs--snow mixing ratio        (kg/kg)
+     11 c   tt--temperature              (k)
+     12 c   pp--pressure                 (Pa)
+     13 c
+     14 c   If iice=0:
+     15 c      qprc=qr     qrain=qr and qclw=qc if T>0C
+     16 c      qcld=qc          =0          =0  if T<0C
+     17 c                  qsnow=qs and qclice=qc  if T<0C
+     18 c                       =0            =0   if T>0C
+     19 c   If iice=1:
+     20 c      qprc=qr+qs   qrain=qr and qclw=qc
+     21 c      qcld=qc+qi   qsnow=qs and qclice=qc
+     22 c
+     23 c   Independent of the above definitions, the scheme can use different
+     24 c   assumptions of the state of hydrometeors:
+     25 c        meth='d': qprc is all frozen if T<0, liquid if T>0
+     26 c        meth='b': Bocchieri scheme used to determine whether qprc
+     27 c           is rain or snow. A temperature assumption is used to
+     28 c           determine whether qcld is liquid or frozen.
+     29 c        meth='r': Uses the four mixing ratios qrain, qsnow, qclw,
+     30 c           and qclice
+     31 c
+     32 c   The routine uses the following
+     33 c   expressions for extinction coefficient, beta (in km**-1),
+     34 c   with C being the mass concentration (in g/m**3):
+     35 c
+     36 c      cloud water:  beta = 144.7 * C ** (0.8800)
+     37 c      rain water:   beta =  2.24 * C ** (0.7500)
+     38 c      cloud ice:    beta = 327.8 * C ** (1.0000)
+     39 c      snow:         beta = 10.36 * C ** (0.7776)
+     40 c
+     41 c   These expressions were obtained from the following sources:
+     42 c
+     43 c      for cloud water: from Kunkel (1984)
+     44 c      for rainwater: from M-P dist'n, with No=8e6 m**-4 and
+     45 c         rho_w=1000 kg/m**3
+     46 c      for cloud ice: assume randomly oriented plates which follow
+     47 c         mass-diameter relationship from Rutledge and Hobbs (1983)
+     48 c      for snow: from Stallabrass (1985), assuming beta = -ln(.02)/vis
+     49 c
+     50 c   The extinction coefficient for each water species present is
+     51 c   calculated, and then all applicable betas are summed to yield
+     52 c   a single beta. Then the following relationship is used to
+     53 c   determine visibility (in km), where epsilon is the threshhold
+     54 c   of contrast, usually taken to be .02:
+     55 c
+     56 c      vis = -ln(epsilon)/beta      [found in Kunkel (1984)]
+     57 c
+
+Page 2           Source Listing                  CALVIS
+2022-02-15 16:38                                 CALVIS.f
+
+     58 C------------------------------------------------------------------
+     59       INCLUDE "parmeta"
+     77       INCLUDE "params"
+    119       INCLUDE "CTLBLK.comm"
+    120 C
+    135       REAL QV(IM,JM),QC(IM,JM),QI(IM,JM),QR(IM,JM),QS(IM,JM)
+    136      1,    TT(IM,JM),PP(IM,JM),VIS(IM,JM)
+    137       CHARACTER METH*1
+    138 C------------------------------------------------------------------
+    139 C------------------------------------------------------------------
+    140       CELKEL=273.15
+    141       TICE=CELKEL-10.
+    142       COEFLC=144.7
+    143       COEFLP=2.24
+    144       COEFFC=327.8
+    145       COEFFP=10.36
+    146       EXPONLC=0.8800
+    147       EXPONLP=0.7500
+    148       EXPONFC=1.0000
+    149       EXPONFP=0.7776
+    150       CONST1=-LOG(.02)
+    151       RHOICE=917.
+    152       RHOWAT=1000.
+    153 C
+    154       DO J=JSTA,JEND
+    155       DO I=1,IM
+    156 c       IF(IICE.EQ.0)THEN
+    157 c         QPRC=QR
+    158 c         QCLD=QC
+    159 c         IF(TT.LT.CELKEL)THEN
+    160 c           QRAIN=0.
+    161 c           QSNOW=QPRC
+    162 c           QCLW=0.
+    163 c           QCLICE=QCLD
+    164 c         ELSE
+    165 c           QRAIN=QPRC
+    166 c           QSNOW=0.
+    167 c           QCLW=QCLD
+    168 c           QCLICE=0.
+    169 c         ENDIF
+    170 c       ELSE
+    171           QPRC=QR(I,J)+QS(I,J)
+    172           QCLD=QC(I,J)+QI(I,J)
+    173           QRAIN=QR(I,J)
+    174           QSNOW=QS(I,J)
+    175           QCLW=QC(I,J)
+    176           QCLICE=QI(I,J)
+    177 c       ENDIF
+    178 c       TV=VIRTUAL(TT,QV)
+    179         TV=TT(I,J)*(H1+D608*QV(I,J))
+    180         RHOAIR=PP(I,J)/(RD*TV)
+    181 c       IF(METH.EQ.'D')THEN
+    182 c         IF(TT.LT.CELKEL)THEN
+    183 c           VOVERMD=(1.+QV)/RHOAIR+(QPRC+QCLD)/RHOICE
+    184 c           CONCLC = 0.
+    185 c           CONCLP = 0.
+    186 c           CONCFC = QCLD/VOVERMD*1000.
+
+Page 3           Source Listing                  CALVIS
+2022-02-15 16:38                                 CALVIS.f
+
+    187 c           CONCFP = QPRC/VOVERMD*1000.
+    188 c         ELSE
+    189 c           VOVERMD=(1.+QV)/RHOAIR+(QPRC+QCLD)/RHOWAT
+    190 c           CONCLC = QCLD/VOVERMD*1000.
+    191 c           CONCLP = QPRC/VOVERMD*1000.
+    192 c           CONCFC = 0.
+    193 c           CONCFP = 0.
+    194 c         ENDIF
+    195 c       ELSEIF(METH.EQ.'B')THEN
+    196 c         IF(TT.LT.TICE)THEN
+    197 c           VOVERMD=(1.+QV)/RHOAIR+(QPRC+QCLD)/RHOICE
+    198 c           CONCLC = 0.
+    199 c           CONCLP = 0.
+    200 c           CONCFC = QCLD/VOVERMD*1000.
+    201 c           CONCFP = QPRC/VOVERMD*1000.
+    202 c         ELSEIF(PRSNOW.GE.50.)THEN
+    203 c           VOVERMD=(1.+QV)/RHOAIR+QPRC/RHOICE+QCLD/RHOWAT
+    204 c           CONCLC = QCLD/VOVERMD*1000.
+    205 c           CONCLP = 0.
+    206 c           CONCFC = 0.
+    207 c           CONCFP = QPRC/VOVERMD*1000.
+    208 c         ELSE
+    209 c           VOVERMD=(1.+QV)/RHOAIR+(QPRC+QCLD)/RHOWAT
+    210 c           CONCLC = QCLD/VOVERMD*1000.
+    211 c           CONCLP = QPRC/VOVERMD*1000.
+    212 c           CONCFC = 0.
+    213 c           CONCFP = 0.
+    214 c         ENDIF
+    215 c       ELSEIF(METH.EQ.'R')THEN
+    216           VOVERMD=(1.+QV(I,J))/RHOAIR+(QCLW+QRAIN)/RHOWAT+
+    217      1            (QCLICE+QSNOW)/RHOICE
+    218           CONCLC=QCLW/VOVERMD*1000.
+    219           CONCLP=QRAIN/VOVERMD*1000.
+    220           CONCFC=QCLICE/VOVERMD*1000.
+    221           CONCFP=QSNOW/VOVERMD*1000.
+    222 c       ENDIF
+    223         BETAV=COEFFC*CONCFC**EXPONFC+COEFFP*CONCFP**EXPONFP
+    224      1       +COEFLC*CONCLC**EXPONLC+COEFLP*CONCLP**EXPONLP
+    225      2       +1.E-10
+    226 c CHANGED GSM 3-10-00 -->  no point in distinguishing values
+    227 c       above 20 km, so make that value the max (prev max was 80)
+    228         VIS(I,J)=1.E3*MIN(20.,CONST1/BETAV)   ! max of 20km
+    229       ENDDO
+    230       ENDDO
+    231 C
+    232       RETURN
+    233       END
+
+Page 4           Source Listing                  CALVIS
+2022-02-15 16:38 Entry Points                    CALVIS.f
+
+
+
+ENTRY POINTS
+
+  Name               
+                     
+ calvis_             
+
+
+SYMBOL CROSS REFERENCE
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ A2                         Param  118      R(4)            4           scalar                                                      
+ A3                         Param  118      R(4)            4           scalar                                                      
+ A4                         Param  118      R(4)            4           scalar                                                      
+ AD05                       Param  110      R(4)            4           scalar                                                      
+ BETA                       Param  114      R(4)            4           scalar                    114                               
+ BETAV                      Local  223      R(4)            4           scalar                    223,228                           
+ BTG                        Param  114      R(4)            4           scalar                                                      
+ CALVIS                     Subr   2                                                                                                
+ CAPA                       Param  105      R(4)            4           scalar                    112                               
+ CELKEL                     Local  140      R(4)            4           scalar                    140,141                           
+ CFT0                       Param  110      R(4)            4           scalar                                                      
+ CM1                        Param  100      R(4)            4           scalar                                                      
+ CM2                        Param  100      R(4)            4           scalar                                                      
+ CM3                        Param  100      R(4)            4           scalar                                                      
+ COEFFC                     Local  144      R(4)            4           scalar                    144,223                           
+ COEFFP                     Local  145      R(4)            4           scalar                    145,223                           
+ COEFLC                     Local  142      R(4)            4           scalar                    142,224                           
+ COEFLP                     Local  143      R(4)            4           scalar                    143,224                           
+ CONCFC                     Local  220      R(4)            4           scalar                    220,223                           
+ CONCFP                     Local  221      R(4)            4           scalar                    221,223                           
+ CONCLC                     Local  218      R(4)            4           scalar                    218,224                           
+ CONCLP                     Local  219      R(4)            4           scalar                    219,224                           
+ CONST1                     Local  150      R(4)            4           scalar                    150,228                           
+ CP                         Param  111      R(4)            4           scalar                    113,117                           
+ CPDR                       Param  113      R(4)            4           scalar                                                      
+ CTLBLK                     Common 122                                  96       SAVE                                               
+ D00                        Param  102      R(4)            4           scalar                                                      
+ D001                       Param  102      R(4)            4           scalar                                                      
+ D0065                      Param  106      R(4)            4           scalar                                                      
+ D01                        Param  102      R(4)            4           scalar                                                      
+ D05                        Param  106      R(4)            4           scalar                    110                               
+ D1                         Param  102      R(4)            4           scalar                                                      
+ D115                       Param  106      R(4)            4           scalar                                                      
+ D125                       Param  104      R(4)            4           scalar                                                      
+ D25                        Param  104      R(4)            4           scalar                                                      
+ D50                        Param  102      R(4)            4           scalar                                                      
+ D608                       Param  106      R(4)            4           scalar                    179                               
+ DP10M                      Param  112      R(4)            4           scalar                                                      
+ DTR                        Param  111      R(4)            4           scalar                    111                               
+ ELDR                       Param  113      R(4)            4           scalar                                                      
+ ELWV                       Param  113      R(4)            4           scalar                    113                               
+ EPS                        Param  116      R(4)            4           scalar                    116                               
+ EPSQ2                      Param  117      R(4)            4           scalar                                                      
+ ERAD                       Param  111      R(4)            4           scalar                                                      
+
+Page 5           Source Listing                  CALVIS
+2022-02-15 16:38 Symbol Table                    CALVIS.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ EXPONFC                    Local  148      R(4)            4           scalar                    148,223                           
+ EXPONFP                    Local  149      R(4)            4           scalar                    149,223                           
+ EXPONLC                    Local  146      R(4)            4           scalar                    146,224                           
+ EXPONLP                    Local  147      R(4)            4           scalar                    147,224                           
+ FMD                        Param  116      R(4)            4           scalar                    116                               
+ FMW                        Param  116      R(4)            4           scalar                    116                               
+ G                          Param  109      R(4)            4           scalar                    109                               
+ GI                         Param  109      R(4)            4           scalar                    113                               
+ H1                         Param  103      R(4)            4           scalar                    110,179                           
+ H100                       Param  104      R(4)            4           scalar                                                      
+ H1000                      Param  104      R(4)            4           scalar                                                      
+ H10000                     Param  105      R(4)            4           scalar                                                      
+ H10E5                      Param  105      R(4)            4           scalar                                                      
+ H1E2                       Param  107      R(4)            4           scalar                                                      
+ H1E4                       Param  107      R(4)            4           scalar                                                      
+ H1M12                      Param  103      R(4)            4           scalar                                                      
+ H1M2                       Param  107      R(4)            4           scalar                                                      
+ H1M5                       Param  104      R(4)            4           scalar                                                      
+ H2                         Param  103      R(4)            4           scalar                                                      
+ H4                         Param  103      R(4)            4           scalar                                                      
+ H999                       Param  102      R(4)            4           scalar                                                      
+ H99999                     Param  103      R(4)            4           scalar                                                      
+ I                          Local  155      I(4)            4           scalar                    155,171,172,173,174,175,176,179,18
+                                                                                                  0,216,228                         
+ IDIM1                      Param  73       I(4)            4           scalar                                                      
+ IDIM2                      Param  73       I(4)            4           scalar                                                      
+ IGSTL                      Param  68       I(4)            4           scalar                    73                                
+ IGSTR                      Param  68       I(4)            4           scalar                    73                                
+ IM                         Param  62       I(4)            4           scalar                    70,73,81,83,84,86,135,136,155     
+ IM1                        Param  83       I(4)            4           scalar                                                      
+ IMT                        Param  81       I(4)            4           scalar                                                      
+ INPES                      Param  65       I(4)            4           scalar                    70,73                             
+ ITAIL                      Param  70       I(4)            4           scalar                                                      
+ J                          Local  154      I(4)            4           scalar                    154,171,172,173,174,175,176,179,18
+                                                                                                  0,216,228                         
+ JAM                        Param  83       I(4)            4           scalar                                                      
+ JDIM1                      Param  74       I(4)            4           scalar                                                      
+ JDIM2                      Param  74       I(4)            4           scalar                                                      
+ JGSTL                      Param  69       I(4)            4           scalar                    74                                
+ JGSTR                      Param  69       I(4)            4           scalar                    74                                
+ JM                         Param  62       I(4)            4           scalar                    71,74,81,83,86,135,136            
+ JM2                        Param  83       I(4)            4           scalar                                                      
+ JMT                        Param  81       I(4)            4           scalar                                                      
+ JNPES                      Param  65       I(4)            4           scalar                    71,74                             
+ JTAIL                      Param  71       I(4)            4           scalar                                                      
+ KSAV                       Param  91       I(4)            4           scalar                                                      
+ KSFI                       Param  90       I(4)            4           scalar                                                      
+ KSLI                       Param  91       I(4)            4           scalar                                                      
+ KSLP                       Param  91       I(4)            4           scalar                                                      
+ KSLPD                      Param  90       I(4)            4           scalar                                                      
+ KSMUD                      Param  90       I(4)            4           scalar                                                      
+ KSRH                       Param  91       I(4)            4           scalar                                                      
+ KSSLP                      Param  90       I(4)            4           scalar                                                      
+ KST                        Param  90       I(4)            4           scalar                                                      
+ KSUV                       Param  91       I(4)            4           scalar                                                      
+
+Page 6           Source Listing                  CALVIS
+2022-02-15 16:38 Symbol Table                    CALVIS.f
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ LB                         Param  86       I(4)            4           scalar                                                      
+ LHEAT                      Param  117      I(4)            4           scalar                    117                               
+ LHTOCP                     Param  117      I(4)            4           scalar                                                      
+ LM                         Param  62       I(4)            4           scalar                    85,96                             
+ LM1                        Param  85       I(4)            4           scalar                                                      
+ LOG                        Func   150                                  scalar                    150                               
+ LP1                        Param  85       I(4)            4           scalar                                                      
+ LSM                        Param  62       I(4)            4           scalar                                                      
+ METH                       Local  137      CHAR            1           scalar                                                      
+ MIN                        Func   228                                  scalar                    228                               
+ NINC                       Param  84       I(4)            4           scalar                                                      
+ NSTAT                      Param  96       I(4)            4           scalar                                                      
+ NSUMD                      Param  92       I(4)            4           scalar                                                      
+ NWORD                      Param  96       I(4)            4           scalar                    96                                
+ NWORD3                     Param  96       I(4)            4           scalar                                                      
+ NWORD6                     Param  96       I(4)            4           scalar                                                      
+ ONEPS                      Param  116      R(4)            4           scalar                                                      
+ OVERRC                     Param  110      R(4)            4           scalar                    110                               
+ P1000                      Param  112      R(4)            4           scalar                                                      
+ PARALLEL                   Common 129                                  8240                                                        
+ PP                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        180                               
+ PQ0                        Param  118      R(4)            4           scalar                                                      
+ QC                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        172,175                           
+ QCLD                       Local  172      R(4)            4           scalar                    172                               
+ QCLICE                     Local  176      R(4)            4           scalar                    176,217,220                       
+ QCLW                       Local  175      R(4)            4           scalar                    175,216,218                       
+ QI                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        172,176                           
+ QPRC                       Local  171      R(4)            4           scalar                    171                               
+ QR                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        171,173                           
+ QRAIN                      Local  173      R(4)            4           scalar                    173,216,219                       
+ QS                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        171,174                           
+ QSNOW                      Local  174      R(4)            4           scalar                    174,217,221                       
+ QV                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        179,216                           
+ RCAPA                      Param  112      R(4)            4           scalar                                                      
+ RD                         Param  109      R(4)            4           scalar                    109,113,117,180                   
+ RDOCP                      Param  117      R(4)            4           scalar                                                      
+ RG                         Param  113      R(4)            4           scalar                                                      
+ RHOAIR                     Local  180      R(4)            4           scalar                    180,216                           
+ RHOICE                     Local  151      R(4)            4           scalar                    151,217                           
+ RHOWAT                     Local  152      R(4)            4           scalar                    152,216                           
+ ROG                        Param  109      R(4)            4           scalar                                                      
+ RTD                        Param  111      R(4)            4           scalar                                                      
+ SMTHA                      Param  92       R(4)            4           scalar                                                      
+ SMTHB                      Param  92       R(4)            4           scalar                                                      
+ TFRZ                       Param  116      R(4)            4           scalar                                                      
+ TICE                       Local  141      R(4)            4           scalar                    141                               
+ TT                         Dummy  2        R(4)            4     2     91719    ARG,INOUT        179                               
+ TV                         Local  179      R(4)            4           scalar                    179,180                           
+ VIS                        Dummy  2        R(4)            4     2     91719    ARG,INOUT        228                               
+ VOVERMD                    Local  216      R(4)            4           scalar                    216,218,219,220,221               
+
+
+
+Page 7           Source Listing                  CALVIS
+2022-02-15 16:38 Symbol Table                    CALVIS.f
+
+TYPE COMPONENTS/COMMON VARIABLES
+
+ Name                       Type            Bytes Offset   Dimen Elements Attributes       References                         
+                                                                                                                              
+ DT                         R(4)            4     48             scalar   COM                                                 
+ FIRST                      R(4)            4     24             scalar   COM                                                 
+ ICNT                       I(4)            4     40       1     1024     COM                                                 
+ IDAT                       I(4)            4     8        1     3        COM                                                 
+ IDN                        I(4)            4     36             scalar   COM                                                 
+ IDSP                       I(4)            4     4136     1     1024     COM                                                 
+ IDTAD                      I(4)            4     68             scalar   COM                                                 
+ IHRST                      I(4)            4     20             scalar   COM                                                 
+ IOUT                       I(4)            4     44             scalar   COM                                                 
+ IUP                        I(4)            4     32             scalar   COM                                                 
+ JEND                       I(4)            4     12             scalar   COM              154                                
+ JEND_2U                    I(4)            4     8236           scalar   COM                                                 
+ JEND_M                     I(4)            4     20             scalar   COM                                                 
+ JEND_M2                    I(4)            4     28             scalar   COM                                                 
+ JSTA                       I(4)            4     8              scalar   COM              154                                
+ JSTA_2L                    I(4)            4     8232           scalar   COM                                                 
+ JSTA_M                     I(4)            4     16             scalar   COM                                                 
+ JSTA_M2                    I(4)            4     24             scalar   COM                                                 
+ LIST                       I(4)            4     40             scalar   COM                                                 
+ ME                         I(4)            4     4              scalar   COM                                                 
+ NBC                        I(4)            4     36             scalar   COM                                                 
+ NBOCO                      I(4)            4     72             scalar   COM                                                 
+ NCP                        I(4)            4     80             scalar   COM                                                 
+ NDDAMP                     I(4)            4     60             scalar   COM                                                 
+ NFCST                      I(4)            4     32             scalar   COM                                                 
+ NPHS                       I(4)            4     84             scalar   COM                                                 
+ NPREC                      I(4)            4     64             scalar   COM                                                 
+ NRADL                      I(4)            4     92             scalar   COM                                                 
+ NRADS                      I(4)            4     88             scalar   COM                                                 
+ NSHDE                      I(4)            4     76             scalar   COM                                                 
+ NTSD                       I(4)            4     52             scalar   COM                                                 
+ NTSTM                      I(4)            4     56             scalar   COM                                                 
+ NUM_PROCS                  I(4)            4     0              scalar   COM                                                 
+ RESTRT                     R(4)            4     28             scalar   COM                                                 
+ RUN                        R(4)            4     4              scalar   COM                                                 
+ SIGMA                      R(4)            4     0              scalar   COM                                                 
+
+Page 8           Source Listing                  CALVIS
+2022-02-15 16:38 Subprograms/Common Blocks       CALVIS.f
+
+
+
+SUBPROGRAMS/COMMON BLOCKS
+
+ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References                        
+                                                                                                                                    
+ CALVIS                     Subr   2                                                                                                
+ CTLBLK                     Common 122                                  96       SAVE                                               
+ PARALLEL                   Common 129                                  8240                                                        
+
+COMPILER OPTIONS BEING USED
+
+       -align noall                          -align nonone
+       -align nocommons                      -align nodcommons
+       -align noqcommons                     -align nozcommons
+       -align records                        -align nosequence
+       -align norec1byte                     -align norec2byte
+       -align norec4byte                     -align norec8byte
+       -align norec16byte                    -align norec32byte
+       -align norec64byte                    -align noarray8byte
+       -align noarray16byte                  -align noarray32byte
+       -align noarray64byte                  -align noarray128byte
+       -align noarray256byte                 -altparam
+       -assume accuracy_sensitive            -assume nobscc
+       -assume nobuffered_io                 -assume nobuffered_stdout
+       -assume byterecl                      -assume nocontiguous_assumed_shape
+       -assume nocontiguous_pointer          -assume nocc_omp
+       -assume nocstring                     -assume nodummy_aliases
+       -assume nofpe_summary                 -assume noieee_fpe_flags
+       -assume nominus0                      -assume noold_boz
+       -assume old_complex_align             -assume old_unit_star
+       -assume old_inquire_recl              -assume old_ldout_format
+       -assume old_ldout_zero                -assume noold_logical_assign
+       -assume noold_logical_ldio            -assume old_maxminloc
+       -assume old_xor                       -assume noprotect_allocates
+       -assume protect_constants             -assume noprotect_parens
+       -assume split_common                  -assume source_include
+       -assume nostd_intent_in               -assume std_minus0_rounding
+       -assume nostd_mod_proc_name           -assume std_value
+       -assume realloc_lhs                   -assume underscore
+       -assume no2underscores                -assume norecursion
+  no   -auto                                 -auto_scalar
+  no   -bintext                              -ccdefault default
+       -check noarg_temp_created             -check noassume
+       -check nobounds                       -check nocontiguous
+       -check noformat                       -check nooutput_conversion
+       -check nooverflow                     -check nopointers
+       -check noshape                        -check nostack
+       -check nouninitialized                -check noudio_iostat
+       -coarray-num-procs 0             no   -coarray-config-file
+       -convert big_endian                   -cross_reference
+       -D __INTEL_COMPILER=1910              -D __INTEL_COMPILER_UPDATE=3
+       -D __unix__                           -D __unix
+       -D __linux__                          -D __linux
+       -D __gnu_linux__                      -D unix
+       -D linux                              -D __ELF__
+       -D __x86_64                           -D __x86_64__
+
+Page 9           Source Listing                  CALVIS
+2022-02-15 16:38                                 CALVIS.f
+
+       -D __amd64                            -D __amd64__
+       -D __INTEL_COMPILER_BUILD_DATE=20200925       -D __INTEL_OFFLOAD
+       -D __MMX__                            -D __SSE__
+       -D __SSE_MATH__                       -D __SSE2__
+       -D __SSE2_MATH__                      -D __SSE3__
+       -D __SSSE3__                          -D __SSE4_1__
+       -D __SSE4_2__                         -D __POPCNT__
+       -D __PCLMUL__                         -D __AES__
+       -D __AVX__                            -D __F16C__
+       -D __AVX_I__                          -D __RDRND__
+       -D __FMA__                            -D __FP_FAST_FMA
+       -D __FP_FAST_FMAF                     -D __BMI__
+       -D __LZCNT__                          -D __AVX2__
+       -D __haswell                          -D __haswell__
+       -D __tune_haswell__                   -D __core_avx2
+       -D __core_avx2__                      -D __tune_core_avx2__
+       -D __CRAY_X86_ROME                    -D __CRAYXT_COMPUTE_LINUX_TARGET
+       -double_size 64                  no   -d_lines
+  no   -Qdyncom                              -error_limit 30
+  no   -f66                             no   -f77rtl
+  no   -fast                                 -fpscomp nofilesfromcmd
+       -fpscomp nogeneral                    -fpscomp noioformat
+       -fpscomp noldio_spacing               -fpscomp nologicals
+       -fixed                           no   -fpconstant
+       -fpe3                                 -fprm nearest
+  no   -ftz                                  -fp_model noprecise
+       -fp_model fast                        -fp_model nostrict
+       -fp_model nosource                    -fp_model nodouble
+       -fp_model noextended                  -fp_model novery_fast
+       -fp_model noexcept                    -fp_model nono_except
+       -heap_arrays 0                   no   -threadprivate_compat
+       -g2                                   -iface nomixed_str_len_arg
+       -iface nono_mixed_str_len_arg         -init noarrays
+       -init nohuge                          -init noinfinity
+       -init nominus_huge                    -init nominus_infinity
+       -init nominus_tiny                    -init nonan
+       -init nosnan                          -init notiny
+       -init nozero                     no   -intconstant
+       -integer_size 32                 no   -mixed_str_len_arg
+  no   -module                               -names lowercase
+  no   -noinclude                       no   -o
+       -offload-build=host                   -openmp-simd
+       -O2                              no   -pad_source
+       -real_size 32                    no   -recursive
+       -reentrancy threaded                  -vec=simd
+       -show nofullpath                      -show noinclude
+       -show map                             -show options
+  no   -syntax_only                     no   -threadcom
+  no   -U                               no   -vms
+       -w noall                              -w nonone
+       -w alignments                         -w nodeclarations
+       -w noexternals                        -w general
+       -w noignore_bounds                    -w noignore_loc
+       -w nointerfaces                       -w noshape
+       -w notruncated_source                 -w uncalled
+       -w uninitialized                      -w nounused
+       -w usage                         no   -wrap-margins
+
+Page 10          Source Listing                  CALVIS
+2022-02-15 16:38                                 CALVIS.f
+
+       -includepath : /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/,
+           .f90,./.f90,/opt/cray/pe/mpich/8.1.9/ofi/intel/19.0/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/ipp/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/mkl/include/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/pstl/stdlib/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/tbb/include/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/intel64/.f90,/pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/icc/.f90,
+           /pe/intel/compilers_and_libraries_2020.4.304/linux/compiler/include/.f90,/usr/lib64/gcc/x86_64-suse-linux/7/include/.f90,
+           /usr/lib64/gcc/x86_64-suse-linux/7/include-fixed/.f90,/usr/include/.f90,/usr/include/.f90,/usr/include/.f90
+       -list filename : CALVIS.lst
+  no   -o
+
+COMPILER: Intel(R) Fortran 19.1-1655

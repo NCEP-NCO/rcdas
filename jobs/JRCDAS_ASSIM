@@ -1,0 +1,174 @@
+#! /bin/sh
+
+export RUN_ENVIR=${RUN_ENVIR:-prod}
+
+set -x
+
+export PS4='$SECONDS + '
+echo "$0 STRDATE "`date`
+
+fatal() {
+  msg="fatal error $*"
+  postmsg "$msg"
+  exit 8
+}
+
+####################################
+# obtain unique process id (pid) and make temp directory
+####################################
+export job=${job:-JOB}
+export outid=${outid:-OUTID}
+export pid=$$
+export DATA=${DATA:-$DATAROOT/${jobid}}
+mkdir -p $DATA
+cd $DATA || fatal "could not cd to $DATA"
+export cycle=t${cyc}z
+
+####################################
+# Specify NET and RUN Name and model
+# File To Log Msgs
+# SENDCOM  - Copy Files From TMPDIR to $COMOUT
+# SENDDBN  - Issue DBNet Client Calls
+####################################
+export NET=${NET:-rcdas}
+export RUN=${RUN:-rcdas}
+export model=${model:-rcdas}
+export version=${version:-$rcdas_ver}
+
+if [ $envir = "prod" ]
+then
+   export SENDDBN=${SENDDBN:-YES}
+else
+   export SENDDBN=${SENDDBN:-NO}
+fi
+export SENDCOM=${SENDCOM:-'YES'}
+
+####################################
+# Determine Job Output Name on System
+####################################
+export outid="LL$job"
+export pgmout="OUTPUT.${pid}"
+touch $pgmout
+export pgmerr=errfile
+
+####################################
+# Specify Execution Areas
+####################################
+export HOMErcdas=$PACKAGEROOT/${model}.${version}
+export EXECrcdas=${HOMErcdas}/exec
+export PARMrcdas=${HOMErcdas}/parm
+export USHrcdas=${HOMErcdas}/ush
+export SCRIPTSrcdas=${HOMErcdas}/scripts
+export FIXrcdas=${HOMErcdas}/fix
+
+##############################
+# Run setpdy and initialize PDY variables
+##############################
+set +x
+setpdy.sh
+. ./PDY
+set -x
+
+##############################
+# set DATE
+##############################
+export DATE=${DATE:-$PDYm2$cyc}
+#
+YEAR=`echo $DATE | cut -c1-4`
+export CDATE=`echo $DATE | cut -c1-8`
+export CYC=`echo $DATE | cut -c9-10`
+export DATE_M15=`$NDATE -15 $DATE`
+export CDATM15=`echo $DATE_M15 | cut -c1-8`
+export DATE_M12=`$NDATE -12 $DATE`
+export CDATM12=`echo $DATE_M12 | cut -c1-8`
+export DATE_M09=`$NDATE -9 $DATE`
+export DATE_M06=`$NDATE -6 $DATE`
+export DATE_M03=`$NDATE -3 $DATE`
+
+# time of latest snow/sst/ice analyses
+export CDATE_SNOW=`expr $DATE_M12 / 100`
+export DATE_SNOW=`expr $DATE_M12 / 100`00
+
+
+##############################################
+# Define COM directories
+##############################################
+set -x
+export COMIN=${COMIN:-$(compath.py ${envir}/com/${NET}/${version})}
+export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${version})/${RUN}.${CDATE}}
+
+export COMIN_M15=$COMIN/${RUN}.$CDATM15
+export COMIN_M12=$COMIN/${RUN}.$CDATM12
+export COMIN_SNOW=${COMIN_SNOW:-$COMIN/${RUN}.$CDATE_SNOW}
+
+[ ! -d $COMOUT ] && mkdir -p $COMOUT
+
+msg="HAS BEGUN on `hostname`"
+postmsg "$msg"
+
+env
+
+##############################################
+# some run-time parameters
+##############################################
+# assimilation of radiances?
+export DORAD='YES'
+
+# assimilation of precipitation?
+export DOPCP='YES'
+
+# assimilate obs
+export DOOBS='YES'
+
+##############################################
+# Run setup to initialize working directory and utility scripts
+##############################################
+
+export RUN_EDAS=$DATA/edas_$DATE_M12
+[ ! -d $RUN_EDAS ] && mkdir -p $RUN_EDAS
+cd $RUN_EDAS || fatal "cd $RUN_EDAS"
+rm -f $RUN_EDAS/*
+
+echo $DATE > curdate
+
+echo "$COMOUT $DATE edas        `date`" > curdate_edas
+
+echo DATEXX$DATE > nmcdate.tm00
+set +x
+echo " -----------------------------------------------"
+echo "   North American Regional Reanalysis"
+echo "   NCEP/EMC/MMB / ROOM 207 / 763-8000"
+echo " "
+echo "   ETA 3DVAR ANALYSIS TM12 TIME IS ${DATE_M12}"
+echo "   `date`"
+echo " _______________________________________________"
+echo "                                                "
+echo "environment info for this execution follows:"
+echo "stream ..................................... $COMOUT"
+echo "temporary processing file directory is ..... $RUN_EDAS"
+echo "executable UOI directory is ................ $EXECrcdas"
+echo "............................................"
+
+##############################################
+# ${HOMErcdas}/scripts/exrcdas_assim.sh.ecf
+${HOMErcdas}/scripts/exrcdas_assim_4x5.sh
+##############################################
+err=$?
+if [ $? -eq 0 ] ; then
+  msg="ENDED NORMALLY."
+else
+  msg="ERROR."
+fi
+
+cd $DATA 
+postmsg "$msg 4x5"
+
+##############################
+# Remove the Temporary working directory
+##############################
+if [ "$KEEPDATA" != YES ] ; then
+   rm -r $DATA
+fi
+
+date
+exit $err
